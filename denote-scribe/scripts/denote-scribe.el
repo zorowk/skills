@@ -14,25 +14,6 @@
   :type 'directory
   :group 'denote-scribe)
 
-(defcustom denote-scribe-extra-load-paths
-  '("~/.emacs.d/straight/build/denote"
-    "~/.emacs.d/straight/repos/denote")
-  "Extra directories to add to `load-path' before requiring Denote."
-  :type '(repeat directory)
-  :group 'denote-scribe)
-
-(defun denote-scribe--ensure-denote ()
-  "Ensure Denote is available in the current Emacs session."
-  (dolist (dir denote-scribe-extra-load-paths)
-    (let ((expanded (expand-file-name dir)))
-      (when (file-directory-p expanded)
-        (add-to-list 'load-path expanded))))
-  (unless (or (fboundp 'denote)
-              (require 'denote nil t)
-              (fboundp 'denote))
-    (error "Denote is unavailable in this Emacs server: pid=%s server-name=%S locate-library=%S"
-           (emacs-pid) server-name (locate-library "denote"))))
-
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
   (and (stringp value) (not (string= value "")) value))
@@ -57,7 +38,7 @@ Return the created file path."
     (error "TITLE must be a non-empty string"))
   (unless (and (stringp body-file) (file-readable-p body-file))
     (error "BODY-FILE is not readable: %S" body-file))
-  (denote-scribe--ensure-denote)
+  (require 'denote)
   (let* ((target-dir (file-name-as-directory
                       (file-truename
                        (expand-file-name

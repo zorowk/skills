@@ -84,10 +84,10 @@ Function:
 - `SIGNATURE`: Optional Denote signature.
 - `DATE`: Optional Denote date passed to Denote.
 
-## Failure Handling
+## Assumptions
 
-If `emacsclient` connects but Denote is unavailable, diagnose whether it is connected to the same Emacs session the user is using. Ask the user to evaluate `(list (emacs-pid) server-name (fboundp 'denote) (locate-library "denote"))` inside their Emacs, then rerun `emacsclient` with the correct socket/server if needed.
+- `emacsclient` can connect to the user's running Emacs server.
+- Denote is available in that Emacs session.
+- `scripts/denote-scribe.el` is loaded before calling `denote-scribe-create`.
 
-If `emacsclient` cannot connect to a running Emacs server, tell the user to start the server with `(server-start)` or run Emacs as a daemon, then keep the generated Org body available so they can retry. Do not silently create a non-Denote filename unless the user asks for a fallback.
-
-If Denote raises an argument/signature error, adjust `scripts/denote-scribe.el` for the installed Denote version. The current implementation targets Denote 4.x with the signature `denote TITLE KEYWORDS FILE-TYPE DIRECTORY DATE TEMPLATE SIGNATURE IDENTIFIER`.
+If creation fails, keep the generated Org body file and report the Emacs error directly.
