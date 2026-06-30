@@ -1,0 +1,4 @@
+interface:
+  display_name: "Emacs Code Navigator"
+  short_description: "Read code through Emacs project and LSP tools"
+  default_prompt: "Use $emacs-code-navigator to inspect this codebase through Emacs project, xref, and Eglot."
