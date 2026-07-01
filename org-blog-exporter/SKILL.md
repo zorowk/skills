@@ -73,6 +73,21 @@ HTML output preserves the note's path relative to `~/Dropbox/notes`. For example
 
 If the source file contains local image or attachment links, inspect them before publishing. Copying assets is not automatic unless the user asks; prefer preserving existing relative links when the blog repo already contains those assets.
 
+## Interactive JavaScript
+
+For Three.js or other browser-side demos, keep executable JavaScript in the blog repository under `/js/` rather than embedding long scripts in Org files.
+
+Use this Org pattern:
+
+```org
+#+begin_export html
+<div class="three-scene" data-three-scene="basic"></div>
+<script type="module" src="/js/three-basic-scene.js"></script>
+#+end_export
+```
+
+Put the JavaScript implementation in `~/zorowk.github.io/js/three-basic-scene.js` or another file under `~/zorowk.github.io/js/`. The Org article should own the content and markup hook; the blog repo should own reusable JavaScript assets.
+
 ## Verification
 
 After exporting, verify at least one generated file exists and contains HTML. For full rebuilds, summarize counts:
