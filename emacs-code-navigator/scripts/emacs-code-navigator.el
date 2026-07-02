@@ -8,6 +8,30 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'thingatpt)
+(require 'flymake nil t)
+
+(defconst emacs-code-navigator-ignored-directories
+  '(".git" "node_modules" "target" "build" "dist" ".cache" ".venv" "vendor" "__pycache__")
+  "Directory names skipped by fallback recursive file discovery.")
+
+(defun emacs-code-navigator--ignored-directory-p (directory)
+  "Return non-nil when DIRECTORY should be skipped during fallback traversal."
+  (member (file-name-nondirectory (directory-file-name directory))
+          emacs-code-navigator-ignored-directories))
+
+(defun emacs-code-navigator--directory-files (directory)
+  "Return regular files under DIRECTORY, skipping noisy generated directories."
+  (let (result)
+    (dolist (entry (directory-files directory t directory-files-no-dot-files-regexp))
+      (cond
+       ((and (file-directory-p entry)
+             (not (file-symlink-p entry))
+             (not (emacs-code-navigator--ignored-directory-p entry)))
+        (setq result
+              (append result (emacs-code-navigator--directory-files entry))))
+       ((file-regular-p entry)
+        (push entry result))))
+    (nreverse result)))
 
 (defun emacs-code-navigator--project (directory)
   "Return the project for DIRECTORY, or nil."
@@ -27,7 +51,7 @@
          (max-count (or limit 500))
          (files (if project
                     (project-files project)
-                  (directory-files-recursively root ".*" nil)))
+                  (emacs-code-navigator--directory-files root)))
          (relative-files (mapcar (lambda (file) (file-relative-name file root)) files)))
     (cl-subseq relative-files 0 (min max-count (length relative-files)))))
 
@@ -37,7 +61,7 @@
          (root (emacs-code-navigator-project-root directory)))
     (if project
         (project-files project)
-      (directory-files-recursively root ".*" nil))))
+      (emacs-code-navigator--directory-files root))))
 
 (defun emacs-code-navigator-read-region (file start-line &optional end-line)
   "Return FILE lines from START-LINE to END-LINE with line numbers."
@@ -137,6 +161,67 @@ actual search backend through `xref-search-program'."
   "Return xref references for IDENTIFIER from FILE context."
   (emacs-code-navigator--xref-at-identifier file identifier #'xref-backend-references))
 
+(defun emacs-code-navigator--goto-symbol-at-line (line &optional identifier)
+  "Move point to IDENTIFIER on LINE, or to the best symbol on LINE.
+
+When LINE starts with a defining form such as `defun' or `defconst', choose
+the defined name instead of the defining keyword.  Return the symbol string at
+point.  Signal an error when no matching symbol can be found."
+  (goto-char (point-min))
+  (forward-line (1- (max 1 line)))
+  (let ((line-end (line-end-position)))
+    (if identifier
+        (progn
+          (unless (search-forward identifier line-end t)
+            (error "Identifier not found on line %s: %s" line identifier))
+          (goto-char (match-beginning 0)))
+      (let ((line-symbols nil)
+            (scan-start (line-beginning-position)))
+        (save-excursion
+          (goto-char scan-start)
+          (while (re-search-forward "\\(\\sw\\|\\s_\\)+" line-end t)
+            (push (list (match-string-no-properties 0)
+                        (match-beginning 0))
+                  line-symbols)))
+        (setq line-symbols (nreverse line-symbols))
+        (cond
+         ((and (member (caar line-symbols)
+                       '("defun" "cl-defun" "defmacro" "defvar" "defconst" "defcustom"))
+               (cadr line-symbols))
+          (goto-char (cadr (cadr line-symbols))))
+         ((car line-symbols)
+          (goto-char (cadr (car line-symbols))))
+         (t
+          (error "No symbol found on line %s" line)))))
+    (or (thing-at-point 'symbol t)
+        (error "No symbol found on line %s" line))))
+
+(defun emacs-code-navigator--xref-at-line (file line identifier fn)
+  "Visit FILE, move to LINE/IDENTIFIER, and call xref function FN."
+  (with-current-buffer (find-file-noselect file)
+    (let* ((symbol (emacs-code-navigator--goto-symbol-at-line line identifier))
+           (backend (xref-find-backend)))
+      (unless backend
+        (error "No xref backend available for %s" file))
+      (mapcar #'emacs-code-navigator--xref-location-data
+              (funcall fn backend symbol)))))
+
+(defun emacs-code-navigator-xref-definitions-at-line (file line &optional identifier)
+  "Return xref definitions for symbol at FILE LINE.
+
+When IDENTIFIER is non-nil, use that identifier on LINE.  Otherwise use the
+first symbol found at or after indentation on LINE."
+  (emacs-code-navigator--xref-at-line
+   file line identifier #'xref-backend-definitions))
+
+(defun emacs-code-navigator-xref-references-at-line (file line &optional identifier)
+  "Return xref references for symbol at FILE LINE.
+
+When IDENTIFIER is non-nil, use that identifier on LINE.  Otherwise use the
+first symbol found at or after indentation on LINE."
+  (emacs-code-navigator--xref-at-line
+   file line identifier #'xref-backend-references))
+
 (defun emacs-code-navigator-eglot-managed-p (file)
   "Return non-nil if FILE is managed by Eglot."
   (with-current-buffer (find-file-noselect file)
@@ -230,17 +315,39 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
                (flymake-diagnostic-text diag)))
        (flymake-diagnostics)))))
 
-(defun emacs-code-navigator-project-diagnostics (directory &optional limit)
+(defun emacs-code-navigator-diagnostics-at-line (file line &optional radius)
+  "Return Flymake diagnostics near LINE in FILE.
+
+RADIUS defaults to 0, meaning only diagnostics whose range contains LINE are
+returned.  The result entries are (beg-line end-line type text)."
+  (let ((distance (or radius 0))
+        (start (max 1 (- line (or radius 0))))
+        (end (+ line (or radius 0))))
+    (cl-remove-if-not
+     (lambda (diag)
+       (let ((beg (nth 0 diag))
+             (diag-end (nth 1 diag)))
+         (and (<= beg end)
+              (>= diag-end start)
+              (<= (abs (- line beg)) (max distance (- diag-end beg))))))
+     (emacs-code-navigator-flymake-diagnostics file))))
+
+(defun emacs-code-navigator-project-diagnostics (directory &optional limit file-limit)
   "Return Flymake diagnostics for project files under DIRECTORY.
 
 The result entries are (file beg-line end-line type text).  LIMIT defaults
-to 200.  Diagnostics are whatever Flymake/Eglot currently knows after
-visiting the files."
+to 200 diagnostics.  FILE-LIMIT defaults to 50 visited files to avoid opening
+very large projects by accident.  Diagnostics are whatever Flymake/Eglot
+currently knows after visiting the files."
   (let ((max-count (or limit 200))
+        (max-files (or file-limit 50))
+        (visited 0)
         (results nil))
     (catch 'done
       (dolist (file (emacs-code-navigator--project-file-list directory))
-        (when (file-regular-p file)
+        (when (and (file-regular-p file)
+                   (< visited max-files))
+          (setq visited (1+ visited))
           (dolist (diag (emacs-code-navigator-flymake-diagnostics file))
             (push (cons file diag) results)
             (when (>= (length results) max-count)
@@ -270,6 +377,17 @@ plain strings delivered synchronously through their callbacks."
                  (push (string-trim (substring-no-properties doc)) docs))))
             (error nil)))
         (delete-dups (nreverse (cl-remove-if #'string-empty-p docs)))))))
+
+(defun emacs-code-navigator-context-at-line (file line &optional diagnostic-radius)
+  "Return compact Emacs context for FILE at LINE.
+
+The result is a plist containing symbol data, surrounding defun, Eldoc strings,
+and Flymake diagnostics near LINE.  DIAGNOSTIC-RADIUS defaults to 0."
+  (list :symbol (emacs-code-navigator-symbol-at-line file line)
+        :defun (emacs-code-navigator-defun-at-line file line)
+        :eldoc (emacs-code-navigator-eldoc-at-line file line)
+        :diagnostics (emacs-code-navigator-diagnostics-at-line
+                      file line diagnostic-radius)))
 
 (provide 'emacs-code-navigator)
 
