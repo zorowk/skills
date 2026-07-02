@@ -1,100 +1,44 @@
 ---
 name: org-blog-exporter
-description: Export Org-mode notes from ~/Dropbox/notes to static HTML blog files using the user's existing ~/Dropbox/notes/setupfile.org Blog HTML exporter configuration, including the blog output directory declared there. Use when the user asks to publish, export, rebuild, or preview Org notes as HTML blog posts, especially requests mentioning org, Org mode, notes, setupfile.org, blog HTML export, or ~/zorowk.github.io.
+description: Use when Codex should publish, export, rebuild, or preview Org notes from `~/Dropbox/notes` as static HTML blog posts through the user's Emacs Org exporter, especially with `setupfile.org`, blog HTML export, or `~/zorowk.github.io`.
 ---
 
 # Org Blog Exporter
 
 ## Purpose
 
-Export selected Org files from `~/Dropbox/notes` into the blog directory declared by `~/Dropbox/notes/setupfile.org` as static HTML blog files while reusing the existing blog export settings in that setupfile.
+Export selected Org files from `~/Dropbox/notes` to the blog directory declared by `~/Dropbox/notes/setupfile.org` (`#+BLOG_EXPORT_DIR:` preferred; fallback `~/zorowk.github.io/`). Export uses `scripts/org-blog-exporter.el` through the running Emacs session.
 
-The implementation lives in `scripts/org-blog-exporter.el`. Load it into the user's running Emacs session, then call one of its functions through `emacsclient --eval`.
+## Preflight
 
-## Defaults
+Before exporting, call `org-blog-exporter-preflight` or verify notes dir, setupfile, and output dir. Use Codex `read`/`grep`/`glob` for inspection; use Emacs only for Org HTML export.
 
-- Notes directory: `~/Dropbox/notes/`
-- Blog output directory: read from `#+BLOG_EXPORT_DIR:` in `~/Dropbox/notes/setupfile.org`; fallback `~/zorowk.github.io/`
-- Setupfile: `~/Dropbox/notes/setupfile.org`
-- Org setup directive inserted when missing: `#+SETUPFILE: /absolute/path/to/setupfile.org`
-- Export backend: `org-export-to-file` with the HTML backend
-- Default behavior: export `.org` files recursively, skip files tagged or placed in `noexport`, and preserve relative paths under the blog root.
+If the output directory is missing, ask before creating it unless the user explicitly requested export/rebuild with missing-directory creation.
 
 ## Workflow
 
-1. Identify whether the user wants one file, several files, or a full rebuild.
-2. Inspect the relevant Org files before exporting when the request is ambiguous. Do not publish private drafts unless the user explicitly asks.
-3. Use the bundled Elisp through `emacsclient --eval`:
+1. Determine one file, multiple files, or full rebuild.
+2. Run preflight.
+3. Inspect ambiguous requests; do not publish private drafts unless explicit.
+4. For local image/attachment/`file:` links, call `org-blog-exporter-local-assets` and report missing assets. Do not copy assets unless asked.
+5. Export with `org-blog-exporter-export-file`, `org-blog-exporter-export-files`, or `org-blog-exporter-export-all`.
+6. Report exported HTML paths plus skipped files/errors.
 
-```elisp
-(progn
-  (load-file "/path/to/org-blog-exporter/scripts/org-blog-exporter.el")
-  (org-blog-exporter-export-file "~/Dropbox/notes/example.org"))
-```
+## Key Helpers
 
-4. For a directory rebuild, call:
+| Need | Call |
+|---|---|
+| Preflight | `org-blog-exporter-preflight` |
+| Candidate files | `org-blog-exporter-list-candidates` |
+| Local assets | `org-blog-exporter-local-assets` |
+| Export one/many | `org-blog-exporter-export-file`, `org-blog-exporter-export-files` |
+| Full rebuild | `org-blog-exporter-export-all` |
 
-```elisp
-(progn
-  (load-file "/path/to/org-blog-exporter/scripts/org-blog-exporter.el")
-  (org-blog-exporter-export-all))
-```
+The helper skips setupfile, private/draft/noexport files, backup/hidden files, and excluded directories.
 
-5. Report exported HTML paths and any skipped files or errors.
+## Rules
 
-## Functions
-
-- `(org-blog-exporter-export-file ORG-FILE &optional OUTPUT-DIR SETUPFILE)`: export one Org file and return the HTML path.
-- `(org-blog-exporter-export-files ORG-FILES &optional OUTPUT-DIR SETUPFILE)`: export a list of Org files and return HTML paths.
-- `(org-blog-exporter-export-all &optional NOTES-DIR OUTPUT-DIR SETUPFILE)`: recursively export eligible Org files under the notes directory.
-- `(org-blog-exporter-list-candidates &optional NOTES-DIR)`: list exportable Org files before taking action.
-
-When `OUTPUT-DIR` is nil, the script reads the output directory from the setupfile. Supported setupfile keywords are `#+BLOG_EXPORT_DIR:`, `#+BLOG_OUTPUT_DIR:`, `#+BLOG_DIR:`, and `#+BLOG_DIRECTORY:`. Prefer `#+BLOG_EXPORT_DIR:`.
-
-## Selection Rules
-
-Treat a file as not exportable when any of these are true:
-
-- The file is `setupfile.org`.
-- The path contains `.git`, `.stversions`, `archive`, `archives`, `attach`, `attachments`, `assets`, `auto`, `backup`, `backups`, `draft`, `drafts`, `private`, `tmp`, or `trash` as a directory component.
-- The file has a top-level `#+FILETAGS:` line containing `noexport`, `private`, or `draft`.
-- The file name starts with `.` or `#`, or ends with `~`.
-
-When the user names an excluded file explicitly, ask before overriding the exclusion.
-
-## Export Notes
-
-The script creates a temporary export buffer that prepends an absolute `#+SETUPFILE:` directive when the source file does not already specify a setupfile. This makes Org load the user's current blog HTML settings without modifying the original note.
-
-HTML output preserves the note's path relative to `~/Dropbox/notes`. For example:
-
-- `~/Dropbox/notes/posts/foo.org` -> `~/zorowk.github.io/posts/foo.html`
-- `~/Dropbox/notes/foo.org` -> `~/zorowk.github.io/foo.html`
-
-If the source file contains local image or attachment links, inspect them before publishing. Copying assets is not automatic unless the user asks; prefer preserving existing relative links when the blog repo already contains those assets.
-
-## Interactive JavaScript
-
-For Three.js or other browser-side demos, keep executable JavaScript in the blog repository under `/js/` rather than embedding long scripts in Org files.
-
-Use this Org pattern:
-
-```org
-#+begin_export html
-<div class="three-scene" data-three-scene="basic"></div>
-<script type="module" src="/js/three-basic-scene.js"></script>
-#+end_export
-```
-
-Put the JavaScript implementation in `~/zorowk.github.io/js/three-basic-scene.js` or another file under `~/zorowk.github.io/js/`. The Org article should own the content and markup hook; the blog repo should own reusable JavaScript assets.
-
-## Verification
-
-After exporting, verify at least one generated file exists and contains HTML. For full rebuilds, summarize counts:
-
-- candidate Org files
-- exported HTML files
-- skipped files
-- errors, if any
-
-Do not run `git add`, `git commit`, or deploy from `~/zorowk.github.io` unless the user asks.
+- Preserve relative output paths under the blog root.
+- Keep reusable JavaScript in the blog repo and reference it from Org export blocks.
+- After export, verify at least one generated file exists and contains HTML; for rebuilds summarize counts.
+- Do not run `git add`, `git commit`, or deploy unless the user asks.

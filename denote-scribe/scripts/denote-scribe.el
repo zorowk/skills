@@ -14,9 +14,30 @@
   :type 'directory
   :group 'denote-scribe)
 
+(defvar denote-directory)
+(defvar denote-save-buffers)
+(declare-function denote "denote")
+
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
   (and (stringp value) (not (string= value "")) value))
+
+(defun denote-scribe-preflight (&optional notes-dir)
+  "Return a plist describing whether Denote report creation is available."
+  (let* ((target-dir (file-name-as-directory
+                      (expand-file-name
+                       (or (denote-scribe--nonempty notes-dir)
+                           denote-scribe-notes-directory))))
+         (denote-available (require 'denote nil t))
+         (errors nil))
+    (unless (file-directory-p target-dir)
+      (push (format "Notes directory does not exist: %s" target-dir) errors))
+    (unless denote-available
+      (push "Denote is not available in this Emacs session" errors))
+    (list :notes-directory target-dir
+          :notes-directory-exists (file-directory-p target-dir)
+          :denote-available (and denote-available t)
+          :errors (nreverse errors))))
 
 (defun denote-scribe--result-file (result)
   "Return a file path from Denote RESULT or the current buffer."

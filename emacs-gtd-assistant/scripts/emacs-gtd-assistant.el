@@ -45,6 +45,20 @@
   "Return Org timestamp string for special property NAME."
   (org-entry-get (point) name))
 
+;;;###autoload
+(defun emacs-gtd-normalize-timestamp (text &optional inactive)
+  "Return TEXT parsed as an Org timestamp string.
+
+When INACTIVE is non-nil, return an inactive timestamp like
+\"[2026-07-03 Fri 15:00]\".  Otherwise return an active timestamp like
+\"<2026-07-03 Fri 15:00>\"."
+  (unless (and (stringp text) (not (string-empty-p text)))
+    (error "TEXT must be a non-empty string"))
+  (let* ((time (org-read-date nil t text))
+         (open (if inactive "[" "<"))
+         (close (if inactive "]" ">")))
+    (concat open (format-time-string "%Y-%m-%d %a %H:%M" time) close)))
+
 (defun emacs-gtd--item-at-point (&optional create-id)
   "Return an alist for the Org heading at point.
 

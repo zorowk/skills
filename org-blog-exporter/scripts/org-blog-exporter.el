@@ -75,6 +75,37 @@ instead."
        (org-blog-exporter--configured-output-directory setupfile)
        org-blog-exporter-output-directory)))
 
+(defun org-blog-exporter-preflight (&optional notes-dir output-dir setupfile)
+  "Return a plist describing whether blog export prerequisites are available."
+  (let* ((notes (org-blog-exporter--notes-directory notes-dir))
+         (setup (org-blog-exporter--setupfile setupfile))
+         (output (org-blog-exporter--output-directory output-dir setupfile))
+         (errors nil)
+         (candidates nil))
+    (unless (file-directory-p notes)
+      (push (format "Notes directory does not exist: %s" notes) errors))
+    (unless (file-readable-p setup)
+      (push (format "Setupfile is not readable: %s" setup) errors))
+    (unless (file-directory-p output)
+      (push (format "Output directory does not exist: %s" output) errors))
+    (when (file-directory-p notes)
+      (setq candidates
+            (condition-case err
+                (org-blog-exporter-list-candidates notes)
+              (error
+               (push (format "Candidate scan failed: %s"
+                             (error-message-string err))
+                     errors)
+               nil))))
+    (list :notes-directory notes
+          :notes-directory-exists (file-directory-p notes)
+          :setupfile setup
+          :setupfile-readable (file-readable-p setup)
+          :output-directory output
+          :output-directory-exists (file-directory-p output)
+          :candidate-count (length candidates)
+          :errors (nreverse errors))))
+
 (defun org-blog-exporter--setupfile (&optional setupfile)
   "Return the absolute setupfile path."
   (expand-file-name (or setupfile org-blog-exporter-setupfile)))
@@ -102,12 +133,11 @@ instead."
   "Return FILE-level Org tags declared in FILE."
   (with-temp-buffer
     (insert-file-contents file nil 0 4096)
-    (goto-char (point-min))
-    (let (tags)
-      (while (re-search-forward "^#\\+FILETAGS:[ \t]*\\(.*\\)$" nil t)
-        (setq tags
-              (append tags
-                      (split-string (match-string-no-properties 1) "[: \t]+" t))))
+    (org-mode)
+    (let* ((keywords (org-collect-keywords '("FILETAGS")))
+           (values (cdr (assoc "FILETAGS" keywords)))
+           (tags (and values
+                      (split-string (string-join values " ") "[: \t]+" t))))
       (delete-dups (mapcar #'downcase tags)))))
 
 (defun org-blog-exporter--excluded-tags-p (file)
@@ -134,6 +164,37 @@ instead."
      (lambda (file)
        (org-blog-exporter-exportable-file-p file root))
      (directory-files-recursively root "\\.org\\'"))))
+
+(defun org-blog-exporter--local-link-target-p (target)
+  "Return non-nil when TARGET looks like a local file link."
+  (and (stringp target)
+       (not (string-empty-p target))
+       (not (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" target))
+       (not (string-prefix-p "#" target))))
+
+(defun org-blog-exporter--asset-path (target org-file)
+  "Return absolute path for local link TARGET in ORG-FILE."
+  (expand-file-name target (file-name-directory (expand-file-name org-file))))
+
+(defun org-blog-exporter-local-assets (org-file)
+  "Return local assets referenced by ORG-FILE.
+
+Each result entry is (raw-link absolute-path exists)."
+  (let ((source (expand-file-name org-file))
+        (assets nil))
+    (with-temp-buffer
+      (insert-file-contents source)
+      (org-mode)
+      (org-element-map (org-element-parse-buffer) 'link
+        (lambda (link)
+          (let ((raw (org-element-property :raw-link link))
+                (type (org-element-property :type link))
+                (path (org-element-property :path link)))
+            (when (and (string= type "file")
+                       (org-blog-exporter--local-link-target-p path))
+              (let ((absolute (org-blog-exporter--asset-path path source)))
+                (push (list raw absolute (file-exists-p absolute)) assets)))))))
+    (nreverse assets)))
 
 (defun org-blog-exporter--target-file (org-file &optional output-dir notes-dir setupfile)
   "Return the HTML target path for ORG-FILE."

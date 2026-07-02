@@ -122,9 +122,12 @@
                    (error nil)))
          (file (or (xref-location-group location)
                    (and marker (buffer-file-name (marker-buffer marker)))))
-         (line (and marker
-                    (with-current-buffer (marker-buffer marker)
-                      (line-number-at-pos marker))))
+         (line (or (condition-case nil
+                       (xref-location-line location)
+                     (error nil))
+                   (and marker
+                        (with-current-buffer (marker-buffer marker)
+                          (line-number-at-pos marker)))))
          (summary (substring-no-properties (xref-item-summary xref))))
     (list file line summary)))
 
@@ -298,8 +301,11 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
           (forward-line 1))
         (list start-line (line-number-at-pos end) (string-join (nreverse result) "\n"))))))
 
-(defun emacs-code-navigator-flymake-diagnostics (file)
-  "Return Flymake diagnostics for FILE as (beg-line end-line type text)."
+(defun emacs-code-navigator-flymake-diagnostics (file &optional start-line end-line)
+  "Return Flymake diagnostics for FILE as (beg-line end-line type text).
+
+When START-LINE and END-LINE are non-nil, ask Flymake only for diagnostics
+intersecting that buffer range."
   (with-current-buffer (find-file-noselect file)
     (when (fboundp 'flymake-mode)
       (flymake-mode 1))
@@ -307,13 +313,26 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
       (ignore-errors (flymake-start t)))
     (if (not (fboundp 'flymake-diagnostics))
         nil
-      (mapcar
-       (lambda (diag)
-         (list (line-number-at-pos (flymake-diagnostic-beg diag))
-               (line-number-at-pos (flymake-diagnostic-end diag))
-               (flymake-diagnostic-type diag)
-               (flymake-diagnostic-text diag)))
-       (flymake-diagnostics)))))
+      (let* ((beg-pos (and start-line
+                           (save-excursion
+                             (goto-char (point-min))
+                             (forward-line (1- start-line))
+                             (line-beginning-position))))
+             (end-pos (and end-line
+                           (save-excursion
+                             (goto-char (point-min))
+                             (forward-line (1- end-line))
+                             (line-end-position))))
+             (diagnostics (if beg-pos
+                              (flymake-diagnostics beg-pos end-pos)
+                            (flymake-diagnostics))))
+        (mapcar
+         (lambda (diag)
+           (list (line-number-at-pos (flymake-diagnostic-beg diag))
+                 (line-number-at-pos (flymake-diagnostic-end diag))
+                 (flymake-diagnostic-type diag)
+                 (flymake-diagnostic-text diag)))
+         diagnostics)))))
 
 (defun emacs-code-navigator-diagnostics-at-line (file line &optional radius)
   "Return Flymake diagnostics near LINE in FILE.
@@ -330,7 +349,7 @@ returned.  The result entries are (beg-line end-line type text)."
          (and (<= beg end)
               (>= diag-end start)
               (<= (abs (- line beg)) (max distance (- diag-end beg))))))
-     (emacs-code-navigator-flymake-diagnostics file))))
+     (emacs-code-navigator-flymake-diagnostics file start end))))
 
 (defun emacs-code-navigator-project-diagnostics (directory &optional limit file-limit)
   "Return Flymake diagnostics for project files under DIRECTORY.
