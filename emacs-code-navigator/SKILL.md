@@ -1,6 +1,6 @@
 ---
 name: emacs-code-navigator
-description: Use when Codex needs targeted code context from the user's running Emacs server: project files, imenu symbols, exact-line xref definitions/references, Eldoc/Eglot hints, Flymake diagnostics, or current Emacs buffer state instead of broad cat/grep/rg/sed reads.
+description: "Use when Codex needs targeted code context from the user's running Emacs server: project files, imenu symbols, exact-line xref definitions/references, Eldoc/Eglot hints, Flymake diagnostics, or current Emacs buffer state instead of broad cat/grep/rg/sed reads."
 ---
 
 # Emacs Code Navigator

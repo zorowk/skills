@@ -1,6 +1,6 @@
 ---
 name: treeland-commit
-description: Use when Codex must generate a Treeland-style commit message: the user explicitly asks for Treeland format, names the Treeland commit convention, or the active Treeland project context clearly requires the fixed `Log`/`PMS`/`Influence` fields. Do not use for ordinary commit-message requests outside Treeland context.
+description: "Use when Codex must generate a Treeland-style commit message: the user explicitly asks for Treeland format, names the Treeland commit convention, or the active Treeland project context clearly requires the fixed `Log`/`PMS`/`Influence` fields. Do not use for ordinary commit-message requests outside Treeland context."
 ---
 
 # Treeland Commit
