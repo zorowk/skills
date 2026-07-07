@@ -9,6 +9,23 @@ description: Use when Codex should publish, export, rebuild, or preview Org note
 
 Export selected Org files from `~/Dropbox/notes` to the blog directory declared by `~/Dropbox/notes/setupfile.org` (`#+BLOG_EXPORT_DIR:` preferred; fallback `~/zorowk.github.io/`). Export uses `scripts/org-blog-exporter.el` through the running Emacs session.
 
+## Load Helper
+
+Load the helper before calling `org-blog-exporter-preflight`,
+`org-blog-exporter-local-assets`, or any export function; the functions are not
+available until the script is loaded into the running Emacs server.
+
+```elisp
+(load-file (expand-file-name "~/.codex/skills/org-blog-exporter/scripts/org-blog-exporter.el"))
+```
+
+When working from this source repository instead of the installed Codex skill,
+use:
+
+```elisp
+(load-file (expand-file-name "~/Documents/Code/skills/org-blog-exporter/scripts/org-blog-exporter.el"))
+```
+
 ## Preflight
 
 Before exporting, call `org-blog-exporter-preflight` or verify notes dir, setupfile, and output dir. Use Codex `read`/`grep`/`glob` for inspection; use Emacs only for Org HTML export.

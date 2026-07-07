@@ -9,7 +9,18 @@ description: "Use when Codex should manage the user's Emacs Org GTD tasks throug
 
 Manage the user's Org GTD file through Emacs, not ad hoc text edits. Defaults: GTD file `~/Dropbox/brain/gtd.org`, agenda dir `~/Dropbox/brain/`. Use `Personal` for personal tasks and `Deepin` for work tasks unless the user says otherwise.
 
-Load `scripts/emacs-gtd-assistant.el` and call helpers through `emacsclient --eval`.
+Load the helper before calling any GTD function; the functions are not available until the script is loaded into the running Emacs server.
+For the installed Codex skill:
+
+```elisp
+(load-file (expand-file-name "~/.codex/skills/emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"))
+```
+
+When working from this source repository instead:
+
+```elisp
+(load-file (expand-file-name "~/Documents/Code/skills/emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"))
+```
 
 ## Preflight
 

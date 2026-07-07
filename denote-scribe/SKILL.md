@@ -9,6 +9,23 @@ description: Use when Codex should save, export, or summarize a completed AI tro
 
 Turn a completed AI problem-solving conversation into a concise Org Denote report. Codex writes the report body; Emacs/Denote creates the note with correct filename and metadata.
 
+## Load Helper
+
+Load the helper before calling `denote-scribe-preflight` or
+`denote-scribe-create`; the functions are not available until the script is
+loaded into the running Emacs server.
+
+```elisp
+(load-file (expand-file-name "~/.codex/skills/denote-scribe/scripts/denote-scribe.el"))
+```
+
+When working from this source repository instead of the installed Codex skill,
+use:
+
+```elisp
+(load-file (expand-file-name "~/Documents/Code/skills/denote-scribe/scripts/denote-scribe.el"))
+```
+
 ## Preflight
 
 Call `denote-scribe-preflight` or verify `~/Dropbox/notes`, `emacsclient`, helper loading, and Denote availability. If a prerequisite fails, keep any generated Org body file and report the exact error.

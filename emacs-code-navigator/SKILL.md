@@ -9,10 +9,17 @@ description: "Use when Codex needs targeted code context from the user's running
 
 Use the running Emacs session as a compact code-context provider. Prefer it when Emacs project, buffers, imenu, xref, Eglot/Eldoc, Flymake, or unsaved buffer state can narrow what Codex needs to read.
 
-Load the helper before calling functions:
+Load the helper before calling any navigator function; the functions are not available until the script is loaded into the running Emacs server.
+For the installed Codex skill:
 
 ```elisp
-(load-file "/path/to/emacs-code-navigator/scripts/emacs-code-navigator.el")
+(load-file (expand-file-name "~/.codex/skills/emacs-code-navigator/scripts/emacs-code-navigator.el"))
+```
+
+When working from this source repository instead:
+
+```elisp
+(load-file (expand-file-name "~/Documents/Code/skills/emacs-code-navigator/scripts/emacs-code-navigator.el"))
 ```
 
 Call through `emacsclient --eval`. If Emacs cannot connect, report the exact error and fall back to shell tools.
