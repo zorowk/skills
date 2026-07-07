@@ -1,13 +1,13 @@
 ---
 name: denote-scribe
-description: Use when Codex should save, export, or summarize a completed AI troubleshooting, coding, research, or problem-solving conversation as a Denote Org report in `~/Dropbox/notes` through the running Emacs server.
+description: Use when an AI assistant should save, export, or summarize a completed troubleshooting, coding, research, or problem-solving conversation as a Denote Org report in `~/Dropbox/notes` through the running Emacs server.
 ---
 
 # Denote Scribe
 
 ## Purpose
 
-Turn a completed AI problem-solving conversation into a concise Org Denote report. Codex writes the report body; Emacs/Denote creates the note with correct filename and metadata.
+Turn a completed AI problem-solving conversation into a concise Org Denote report. The assistant writes the report body; Emacs/Denote creates the note with correct filename and metadata.
 
 ## Load Helper
 
@@ -16,15 +16,13 @@ Load the helper before calling `denote-scribe-preflight` or
 loaded into the running Emacs server.
 
 ```elisp
-(load-file (expand-file-name "~/.codex/skills/denote-scribe/scripts/denote-scribe.el"))
+(let ((skill-root (or (getenv "SKILL_ROOT")
+                      (expand-file-name "~/Documents/Code/skills/denote-scribe"))))
+  (load-file (expand-file-name "scripts/denote-scribe.el" skill-root)))
 ```
 
-When working from this source repository instead of the installed Codex skill,
-use:
-
-```elisp
-(load-file (expand-file-name "~/Documents/Code/skills/denote-scribe/scripts/denote-scribe.el"))
-```
+If the skill is installed somewhere else, set `SKILL_ROOT` to this skill's
+directory before evaluating the load form.
 
 ## Preflight
 

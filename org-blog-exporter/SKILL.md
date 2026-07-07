@@ -1,6 +1,6 @@
 ---
 name: org-blog-exporter
-description: Use when Codex should publish, export, rebuild, or preview Org notes from `~/Dropbox/notes` as static HTML blog posts through the user's Emacs Org exporter, especially with `setupfile.org`, blog HTML export, or `~/zorowk.github.io`.
+description: Use when an AI assistant should publish, export, rebuild, or preview Org notes from `~/Dropbox/notes` as static HTML blog posts through the user's Emacs Org exporter, especially with `setupfile.org`, blog HTML export, or `~/zorowk.github.io`.
 ---
 
 # Org Blog Exporter
@@ -16,19 +16,17 @@ Load the helper before calling `org-blog-exporter-preflight`,
 available until the script is loaded into the running Emacs server.
 
 ```elisp
-(load-file (expand-file-name "~/.codex/skills/org-blog-exporter/scripts/org-blog-exporter.el"))
+(let ((skill-root (or (getenv "SKILL_ROOT")
+                      (expand-file-name "~/Documents/Code/skills/org-blog-exporter"))))
+  (load-file (expand-file-name "scripts/org-blog-exporter.el" skill-root)))
 ```
 
-When working from this source repository instead of the installed Codex skill,
-use:
-
-```elisp
-(load-file (expand-file-name "~/Documents/Code/skills/org-blog-exporter/scripts/org-blog-exporter.el"))
-```
+If the skill is installed somewhere else, set `SKILL_ROOT` to this skill's
+directory before evaluating the load form.
 
 ## Preflight
 
-Before exporting, call `org-blog-exporter-preflight` or verify notes dir, setupfile, and output dir. Use Codex `read`/`grep`/`glob` for inspection; use Emacs only for Org HTML export.
+Before exporting, call `org-blog-exporter-preflight` or verify notes dir, setupfile, and output dir. Use file-reading/search tools for inspection; use Emacs only for Org HTML export.
 
 If the output directory is missing, ask before creating it unless the user explicitly requested export/rebuild with missing-directory creation.
 

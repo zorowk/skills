@@ -1,6 +1,6 @@
 ---
 name: emacs-gtd-assistant
-description: "Use when Codex should manage the user's Emacs Org GTD tasks through the running Emacs server: list agenda items, add or reschedule tasks, set deadlines, mark tasks done/cancelled, delete/archive chosen tasks, or manage items in `~/Dropbox/brain/gtd.org`."
+description: "Use when an AI assistant should manage the user's Emacs Org GTD tasks through the running Emacs server: list agenda items, add or reschedule tasks, set deadlines, mark tasks done/cancelled, delete/archive chosen tasks, or manage items in `~/Dropbox/brain/gtd.org`."
 ---
 
 # Emacs GTD Assistant
@@ -10,17 +10,16 @@ description: "Use when Codex should manage the user's Emacs Org GTD tasks throug
 Manage the user's Org GTD file through Emacs, not ad hoc text edits. Defaults: GTD file `~/Dropbox/brain/gtd.org`, agenda dir `~/Dropbox/brain/`. Use `Personal` for personal tasks and `Deepin` for work tasks unless the user says otherwise.
 
 Load the helper before calling any GTD function; the functions are not available until the script is loaded into the running Emacs server.
-For the installed Codex skill:
+Use this default source-repository load form:
 
 ```elisp
-(load-file (expand-file-name "~/.codex/skills/emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"))
+(let ((skill-root (or (getenv "SKILL_ROOT")
+                      (expand-file-name "~/Documents/Code/skills/emacs-gtd-assistant"))))
+  (load-file (expand-file-name "scripts/emacs-gtd-assistant.el" skill-root)))
 ```
 
-When working from this source repository instead:
-
-```elisp
-(load-file (expand-file-name "~/Documents/Code/skills/emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"))
-```
+If the skill is installed somewhere else, set `SKILL_ROOT` to this skill's
+directory before evaluating the load form.
 
 ## Preflight
 

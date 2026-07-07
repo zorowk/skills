@@ -1,30 +1,29 @@
 ---
 name: emacs-code-navigator
-description: "Use when Codex needs targeted code context from the user's running Emacs server: project files, imenu symbols, exact-line xref definitions/references, Eldoc/Eglot hints, Flymake diagnostics, or current Emacs buffer state instead of broad cat/grep/rg/sed reads."
+description: "Use when an AI assistant needs targeted code context from the user's running Emacs server: project files, imenu symbols, exact-line xref definitions/references, Eldoc/Eglot hints, Flymake diagnostics, or current Emacs buffer state instead of broad file reads."
 ---
 
 # Emacs Code Navigator
 
 ## Purpose
 
-Use the running Emacs session as a compact code-context provider. Prefer it when Emacs project, buffers, imenu, xref, Eglot/Eldoc, Flymake, or unsaved buffer state can narrow what Codex needs to read.
+Use the running Emacs session as a compact code-context provider. Prefer it when Emacs project, buffers, imenu, xref, Eglot/Eldoc, Flymake, or unsaved buffer state can narrow what the assistant needs to read.
 
 Load the helper before calling any navigator function; the functions are not available until the script is loaded into the running Emacs server.
-For the installed Codex skill:
+Use this default source-repository load form:
 
 ```elisp
-(load-file (expand-file-name "~/.codex/skills/emacs-code-navigator/scripts/emacs-code-navigator.el"))
+(let ((skill-root (or (getenv "SKILL_ROOT")
+                      (expand-file-name "~/Documents/Code/skills/emacs-code-navigator"))))
+  (load-file (expand-file-name "scripts/emacs-code-navigator.el" skill-root)))
 ```
 
-When working from this source repository instead:
-
-```elisp
-(load-file (expand-file-name "~/Documents/Code/skills/emacs-code-navigator/scripts/emacs-code-navigator.el"))
-```
+If the skill is installed somewhere else, set `SKILL_ROOT` to this skill's
+directory before evaluating the load form.
 
 Call through `emacsclient --eval`. If Emacs cannot connect, report the exact error and fall back to shell tools.
 
-## Bare Codex Workflow
+## Bare Workflow
 
 1. Map: `project-root`, then `project-files` with a small limit.
 2. Find: `search` for user-mentioned symbols, errors, strings, or keys.

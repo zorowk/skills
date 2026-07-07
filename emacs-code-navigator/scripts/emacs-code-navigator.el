@@ -1,4 +1,4 @@
-;;; emacs-code-navigator.el --- Emacs helpers for Codex code reading -*- lexical-binding: t; -*-
+;;; emacs-code-navigator.el --- Emacs helpers for compact code reading -*- lexical-binding: t; -*-
 
 ;;; Code:
 
