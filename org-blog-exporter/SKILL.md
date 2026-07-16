@@ -1,6 +1,6 @@
 ---
 name: org-blog-exporter
-description: Export, preview, rebuild, or explicitly publish Org notes from `~/Dropbox/notes` as static HTML through the user's Emacs exporter. Use for `setupfile.org`, blog HTML export, or publishing to `zorowk/zorowk.github.io`; publishing can clone the repository into `~/Documents/zorowk.github.io`, commit generated HTML, and push it.
+description: Export, preview, rebuild, or explicitly publish Org notes from `~/Dropbox/notes` as static HTML through the user's Emacs exporter. Use for `setupfile.org`, blog HTML export, or publishing a configured blog repository; publishing can clone the configured repository, commit generated HTML, and push it.
 ---
 
 # Org Blog Exporter
@@ -21,10 +21,11 @@ Call `org-blog-exporter-preflight` before export-only work.
    `org-blog-exporter-export-files`, or `org-blog-exporter-export-all` and report
    returned paths and errors.
 5. For an explicit publish, call `org-blog-exporter-publish-files` or
-   `org-blog-exporter-publish-all`. These functions use
-   `https://github.com/zorowk/zorowk.github.io.git`, clone it into
-   `~/Documents/zorowk.github.io` when absent, fast-forward it, export, commit only
-   changed HTML paths, and push.
+   `org-blog-exporter-publish-all`. These functions read `BLOG_REPOSITORY_URL`
+   and `BLOG_EXPORT_DIR` from `setupfile.org`, clone the repository when absent,
+   fast-forward it, export, commit only changed HTML paths, and push. Explicit
+   function arguments override setupfile values; Elisp defaults are the final
+   fallback.
 
 Publishing refuses a dirty worktree, an unexpected remote, a non-fast-forward
 update, or pre-existing unpushed commits. Do not commit, push, or clone for a

@@ -37,7 +37,7 @@ instead."
 
 (defcustom org-blog-exporter-repository-url
   "https://github.com/zorowk/zorowk.github.io.git"
-  "Canonical Git repository used for explicit blog publishing."
+  "Fallback Git repository used when the setupfile does not configure one."
   :type 'string
   :group 'org-blog-exporter)
 
@@ -55,6 +55,9 @@ instead."
 
 (defconst org-blog-exporter--output-directory-keywords
   '("BLOG_EXPORT_DIR" "BLOG_OUTPUT_DIR" "BLOG_DIR" "BLOG_DIRECTORY"))
+
+(defconst org-blog-exporter--repository-url-keywords
+  '("BLOG_REPOSITORY_URL" "BLOG_REPO_URL"))
 
 (defun org-blog-exporter--expand-directory (directory)
   "Return DIRECTORY as an absolute directory name."
@@ -83,6 +86,13 @@ instead."
   (cl-some (lambda (keyword)
              (org-blog-exporter--setupfile-keyword keyword setupfile))
            org-blog-exporter--output-directory-keywords))
+
+(defun org-blog-exporter--repository-url (&optional setupfile)
+  "Return the repository URL declared in SETUPFILE, or the fallback value."
+  (or (cl-some (lambda (keyword)
+                 (org-blog-exporter--setupfile-keyword keyword setupfile))
+               org-blog-exporter--repository-url-keywords)
+      org-blog-exporter-repository-url))
 
 (defun org-blog-exporter--output-directory (&optional output-dir setupfile)
   "Return the absolute blog output directory."
@@ -119,7 +129,7 @@ instead."
           :setupfile-readable (file-readable-p setup)
           :output-directory output
           :output-directory-exists (file-directory-p output)
-          :repository-url org-blog-exporter-repository-url
+          :repository-url (org-blog-exporter--repository-url setupfile)
           :repository-clone-required (not (file-exists-p output))
           :candidate-count (length candidates)
           :errors (nreverse errors))))
@@ -279,14 +289,15 @@ Each result entry is (raw-link absolute-path exists)."
           :error-count (length errors)
           :errors (nreverse errors))))
 
-(defun org-blog-exporter--prepare-publish-repository (&optional repository-dir)
-  "Prepare REPOSITORY-DIR for a safe publish and return its state plist."
+(defun org-blog-exporter--prepare-publish-repository
+    (&optional repository-dir setupfile)
+  "Prepare REPOSITORY-DIR for a safe publish using SETUPFILE configuration."
   (let* ((directory
-          (org-blog-exporter--expand-directory
-           (or repository-dir org-blog-exporter-output-directory)))
+          (org-blog-exporter--output-directory repository-dir setupfile))
+         (repository-url (org-blog-exporter--repository-url setupfile))
          (repository
           (skill-git-ensure-repository
-           org-blog-exporter-repository-url directory))
+           repository-url directory))
          (root (plist-get repository :git-root)))
     (skill-git-assert-clean root)
     (skill-git-pull-ff-only root)
@@ -330,11 +341,12 @@ Each result entry is (raw-link absolute-path exists)."
   "Export ORG-FILES, commit changed HTML, and push the blog repository.
 
 TITLE is used in the commit subject and defaults to `Publish Org HTML'.
-Clone `org-blog-exporter-repository-url' into REPOSITORY-DIR when absent."
+Read repository defaults from SETUPFILE and clone when absent."
   (unless (and (listp org-files) org-files)
     (error "ORG-FILES must be a non-empty list"))
   (let* ((repository
-          (org-blog-exporter--prepare-publish-repository repository-dir))
+          (org-blog-exporter--prepare-publish-repository
+           repository-dir setupfile))
          (root (plist-get repository :git-root))
          (exported (org-blog-exporter-export-files org-files root setupfile))
          (subject (format "chore(blog): %s" (or title "Publish Org HTML"))))
@@ -346,9 +358,10 @@ Clone `org-blog-exporter-repository-url' into REPOSITORY-DIR when absent."
   "Export all public notes, commit changed HTML, and push the blog repository.
 
 TITLE is used in the commit subject and defaults to `Publish Org HTML'.
-Clone `org-blog-exporter-repository-url' into REPOSITORY-DIR when absent."
+Read repository defaults from SETUPFILE and clone when absent."
   (let* ((repository
-          (org-blog-exporter--prepare-publish-repository repository-dir))
+          (org-blog-exporter--prepare-publish-repository
+           repository-dir setupfile))
          (root (plist-get repository :git-root))
          (summary (org-blog-exporter-export-all notes-dir root setupfile)))
     (unless (zerop (plist-get summary :error-count))
