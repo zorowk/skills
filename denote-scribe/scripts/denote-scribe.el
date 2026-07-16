@@ -367,7 +367,9 @@ Return the created file path."
                                       denote-scribe-notes-directory))))
          (denote-directory target-dir)
          (denote-save-buffers t)
-         (file (denote title keywords 'org target-dir date nil signature nil)))
+         (file
+          (save-window-excursion
+            (denote title keywords 'org target-dir date nil signature nil))))
     (unless file
       (error "Denote did not return or visit a file"))
     (with-current-buffer (find-file-noselect file)
