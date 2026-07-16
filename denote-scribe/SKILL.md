@@ -11,6 +11,9 @@ Treat Denote as reasoning history and HyWiki as stable knowledge.
 
 Load `scripts/denote-scribe.el`; it loads the sibling
 `common/scripts/skill-git.el` helper. Then call `denote-scribe-preflight`.
+Treat bundled scripts as executable implementations: during normal use, load and
+call documented entry points without reading source. Inspect source only when
+debugging, modifying a script, or resolving undocumented behavior.
 Preserve generated content and report exact errors. Read
 `references/hywiki-denote-interface.md` only when integration details are needed.
 

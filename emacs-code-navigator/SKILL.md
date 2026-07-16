@@ -8,6 +8,9 @@ description: "Use when an AI assistant needs targeted code context from the user
 Use the running Emacs session for compact context, including unsaved buffers. Load
 `scripts/emacs-code-navigator.el` from this skill directory. If the server is
 unavailable, report the error and fall back to disk-based tools.
+Treat bundled scripts as executable implementations: during normal use, load and
+call documented entry points without reading source. Inspect source only when
+debugging, modifying a script, or resolving undocumented behavior.
 Helper names below use the `emacs-code-navigator-` prefix.
 
 ## Workflow

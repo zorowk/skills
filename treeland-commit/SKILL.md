@@ -16,6 +16,9 @@ conversation clearly uses `Log`/`PMS`/`Influence`.
 Load `scripts/treeland-commit.el` from this skill directory. Use
 `treeland-commit-format` to produce the final message; return its string without a
 Markdown fence unless requested.
+Treat bundled scripts as executable implementations: during normal use, load and
+call documented entry points without reading source. Inspect source only when
+debugging, modifying a script, or resolving undocumented behavior.
 
 ## Workflow
 

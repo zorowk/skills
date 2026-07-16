@@ -8,6 +8,9 @@ description: Export, preview, rebuild, or explicitly publish Org notes from `~/D
 Export through the running Emacs server. Load `scripts/org-blog-exporter.el` from
 this skill directory; it loads the sibling `common/scripts/skill-git.el` helper.
 Call `org-blog-exporter-preflight` before export-only work.
+Treat bundled scripts as executable implementations: during normal use, load and
+call documented entry points without reading source. Inspect source only when
+debugging, modifying a script, or resolving undocumented behavior.
 
 ## Workflow
 

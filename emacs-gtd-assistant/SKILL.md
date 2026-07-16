@@ -8,6 +8,9 @@ description: "Use when an AI assistant should manage the user's Emacs Org GTD ta
 Manage GTD through the running Emacs server. Load
 `scripts/emacs-gtd-assistant.el` from this skill directory and call
 `emacs-gtd-preflight`; report exact failures.
+Treat bundled scripts as executable implementations: during normal use, load and
+call documented entry points without reading source. Inspect source only when
+debugging, modifying a script, or resolving undocumented behavior.
 
 ## Workflow
 
