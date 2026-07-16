@@ -62,6 +62,11 @@ Then call `denote-scribe-preflight` or verify `~/Dropbox/notes`, `emacsclient`, 
 * 后续事项
 ```
 
+## Line Width
+
+- Prefer wrapping generated Org content at 100 columns.
+- Never let a generated line exceed 120 columns; reflow prose or restructure long content.
+
 ## Helpers
 
 - Helper file: `scripts/denote-scribe.el` relative to this skill directory.

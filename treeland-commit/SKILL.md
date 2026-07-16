@@ -37,6 +37,8 @@ No Markdown fence unless the user asks for one.
 ## Rules
 
 - Keep `fix` by default unless the user requests another type.
+- Prefer wrapping body and field text at 100 columns.
+- Never let a generated line exceed 120 columns; indent continuation lines by two spaces.
 - Do not output placeholders like `修复的模块`, `摘要`, or `详细描述`.
 - Do not invent issue IDs, test results, product names, or impact.
 - If unrelated changes would make one commit misleading, ask a short clarification.
