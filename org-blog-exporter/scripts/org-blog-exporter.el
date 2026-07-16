@@ -284,10 +284,143 @@ Each result entry is (raw-link absolute-path exists)."
     (list :notes-directory root
           :output-directory (org-blog-exporter--output-directory output-dir setupfile)
           :candidate-count (length files)
+          :candidates files
           :exported-count (length exported)
           :exported (nreverse exported)
           :error-count (length errors)
           :errors (nreverse errors))))
+
+(defun org-blog-exporter--file-keyword (file keyword)
+  "Return FILE's first Org KEYWORD value, ignoring case."
+  (let ((case-fold-search t))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (when (re-search-forward
+             (format "^#\\+%s:[ \\t]*\\(.+?\\)[ \\t]*$"
+                     (regexp-quote keyword))
+             nil t)
+        (string-trim (match-string-no-properties 1))))))
+
+(defun org-blog-exporter--post-date (org-file)
+  "Return ORG-FILE's publication date as YYYY-MM-DD."
+  (let ((declared (org-blog-exporter--file-keyword org-file "DATE"))
+        (base (file-name-base org-file)))
+    (cond
+     ((and declared
+           (string-match
+            "[<[]\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" declared))
+      (match-string 1 declared))
+     ((string-match
+       "\\`\\([0-9]\\{4\\}\\)\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)T" base)
+      (format "%s-%s-%s"
+              (match-string 1 base)
+              (match-string 2 base)
+              (match-string 3 base)))
+     (t
+      (format-time-string "%Y-%m-%d"
+                          (file-attribute-modification-time
+                           (file-attributes org-file)))))))
+
+(defun org-blog-exporter--html-unescape (text)
+  "Decode the small HTML entity set used in generated index TEXT."
+  (let ((value text))
+    (dolist (pair '(("&quot;" . "\"") ("&gt;" . ">") ("&lt;" . "<")
+                    ("&amp;" . "&")))
+      (setq value (string-replace (car pair) (cdr pair) value)))
+    value))
+
+(defun org-blog-exporter--html-escape (text)
+  "Escape TEXT for generated HTML content and attributes."
+  (let ((value text))
+    (dolist (pair '(("&" . "&amp;") ("<" . "&lt;") (">" . "&gt;")
+                    ("\"" . "&quot;")))
+      (setq value (string-replace (car pair) (cdr pair) value)))
+    value))
+
+(defun org-blog-exporter--index-entries (index-file)
+  "Return existing blog entries parsed from INDEX-FILE."
+  (let ((entries nil))
+    (when (file-readable-p index-file)
+      (with-temp-buffer
+        (insert-file-contents index-file)
+        (goto-char (point-min))
+        (while (re-search-forward
+                (concat
+                 "<li><time datetime=\\\"\\([^\\\"]+\\)\\\">[^<]*</time>"
+                 "<a href=\\\"\\([^\\\"]+\\)\\\">\\([^<]+\\)</a></li>")
+                nil t)
+          (push (list :date (match-string-no-properties 1)
+                      :href (org-blog-exporter--html-unescape
+                             (match-string-no-properties 2))
+                      :title (org-blog-exporter--html-unescape
+                              (match-string-no-properties 3)))
+                entries))))
+    (nreverse entries)))
+
+(defun org-blog-exporter--post-entry (org-file output-dir setupfile)
+  "Return the homepage entry for ORG-FILE."
+  (let* ((target
+          (org-blog-exporter--target-file org-file output-dir nil setupfile))
+         (relative
+          (file-relative-name target
+                              (org-blog-exporter--output-directory
+                               output-dir setupfile))))
+    (list :date (org-blog-exporter--post-date org-file)
+          :href (concat "./" relative)
+          :title (or (org-blog-exporter--file-keyword org-file "TITLE")
+                     (file-name-base org-file)))))
+
+(defun org-blog-exporter--merge-index-entries (existing updates)
+  "Merge UPDATES into EXISTING entries by href and sort newest first."
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (entry existing)
+      (puthash (plist-get entry :href) entry table))
+    (dolist (entry updates)
+      (puthash (plist-get entry :href) entry table))
+    (let (merged)
+      (maphash (lambda (_href entry) (push entry merged)) table)
+      (sort merged
+            (lambda (left right)
+              (let ((left-date (plist-get left :date))
+                    (right-date (plist-get right :date)))
+                (if (string= left-date right-date)
+                    (string< (plist-get left :title)
+                             (plist-get right :title))
+                  (string> left-date right-date))))))))
+
+(defun org-blog-exporter-update-index
+    (org-files &optional output-dir setupfile)
+  "Update index.html with ORG-FILES and return its absolute path."
+  (let* ((output (org-blog-exporter--output-directory output-dir setupfile))
+         (index-file (expand-file-name "index.html" output))
+         (entries
+          (org-blog-exporter--merge-index-entries
+           (org-blog-exporter--index-entries index-file)
+           (mapcar (lambda (file)
+                     (org-blog-exporter--post-entry file output setupfile))
+                   org-files)))
+         (system-time-locale "C"))
+    (make-directory output t)
+    (with-temp-file index-file
+      (insert "<!doctype html>\n<html lang=\"en-US\">\n<head>\n"
+              "<meta charset=\"utf-8\"/>\n"
+              "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>\n"
+              "<title>Home</title>\n"
+              "<link rel=\"stylesheet\" href=\"/style.css\"/>\n"
+              "</head>\n<body>\n"
+              "<header><nav><a href=\"/\">Home</a></nav></header>\n"
+              "<main>\n<ul class=\"blog-posts\">\n")
+      (dolist (entry entries)
+        (let* ((date (plist-get entry :date))
+               (time (date-to-time (concat date " 00:00:00"))))
+          (insert (format
+                   "<li><time datetime=\"%s\">%s</time><a href=\"%s\">%s</a></li>\n"
+                   date (format-time-string "%d %b, %Y" time)
+                   (org-blog-exporter--html-escape (plist-get entry :href))
+                   (org-blog-exporter--html-escape (plist-get entry :title))))))
+      (insert "</ul>\n</main>\n<footer></footer>\n</body>\n</html>\n"))
+    index-file))
 
 (defun org-blog-exporter--prepare-publish-repository
     (&optional repository-dir setupfile)
@@ -349,8 +482,12 @@ Read repository defaults from SETUPFILE and clone when absent."
            repository-dir setupfile))
          (root (plist-get repository :git-root))
          (exported (org-blog-exporter-export-files org-files root setupfile))
+         (index-file
+          (org-blog-exporter-update-index org-files root setupfile))
          (subject (format "chore(blog): %s" (or title "Publish Org HTML"))))
-    (org-blog-exporter--finish-publish repository exported subject)))
+    (append (org-blog-exporter--finish-publish
+             repository (append exported (list index-file)) subject)
+            (list :index index-file))))
 
 ;;;###autoload
 (defun org-blog-exporter-publish-all
@@ -366,11 +503,15 @@ Read repository defaults from SETUPFILE and clone when absent."
          (summary (org-blog-exporter-export-all notes-dir root setupfile)))
     (unless (zerop (plist-get summary :error-count))
       (error "Blog export failed: %S" (plist-get summary :errors)))
-    (append
-     summary
-     (org-blog-exporter--finish-publish
-      repository (plist-get summary :exported)
-      (format "chore(blog): %s" (or title "Publish Org HTML"))))))
+    (let ((index-file
+           (org-blog-exporter-update-index
+            (plist-get summary :candidates) root setupfile)))
+      (append
+       summary
+       (org-blog-exporter--finish-publish
+        repository (append (plist-get summary :exported) (list index-file))
+        (format "chore(blog): %s" (or title "Publish Org HTML")))
+       (list :index index-file)))))
 
 (provide 'org-blog-exporter)
 

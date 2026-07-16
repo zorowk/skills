@@ -26,9 +26,9 @@ debugging, modifying a script, or resolving undocumented behavior.
 5. For an explicit publish, call `org-blog-exporter-publish-files` or
    `org-blog-exporter-publish-all`. These functions read `BLOG_REPOSITORY_URL`
    and `BLOG_EXPORT_DIR` from `setupfile.org`, clone the repository when absent,
-   fast-forward it, export, commit only changed HTML paths, and push. Explicit
-   function arguments override setupfile values; Elisp defaults are the final
-   fallback.
+   fast-forward it, export, merge published posts into `index.html`, commit only
+   changed HTML paths, and push. Explicit function arguments override setupfile
+   values; Elisp defaults are the final fallback.
 
 Publishing refuses a dirty worktree, an unexpected remote, a non-fast-forward
 update, or pre-existing unpushed commits. Do not commit, push, or clone for a
