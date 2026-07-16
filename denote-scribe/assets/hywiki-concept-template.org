@@ -1,0 +1,36 @@
+#+title: ConceptName
+
+* Context
+The recurring problem, domain, constraints, and situations in which this concept
+appears.
+
+* Definition
+A concise, domain-correct definition.
+
+* My Understanding
+Explain the concept in my own words: its mental model, causal mechanism, important
+distinctions, and how it connects to what I already know.
+
+* Why It Matters
+What recurring questions or decisions this concept helps answer.
+
+* Evidence
+The observations, sources, or experiments supporting this concept.
+
+* Reasoning
+How the evidence supports the definition; include competing interpretations and
+counter-evidence.
+
+* Boundaries
+What the concept does not mean, prerequisites, failure cases, and scope limits.
+
+* Related Concepts
+Use existing HyWikiWords or explicit =[[hy:ConceptName]]= links.
+
+* Open Questions
+Unresolved points and evidence that could change the concept.
+
+* Provenance
+- Confidence: low | medium | high
+- Reviewed period:
+- Denote sources: [[denote:IDENTIFIER][Source title]]

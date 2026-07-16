@@ -1,4 +1,4 @@
 interface:
   display_name: "Denote Scribe"
-  short_description: "Turn AI chats into Denote org reports"
-  default_prompt: "Use $denote-scribe to save this completed AI chat as a Denote org report."
+  short_description: "Create and commit critical notes with Magit"
+  default_prompt: "Use $denote-scribe to save this discussion, check the five-commit HyWiki cadence, and commit generated files through Magit."

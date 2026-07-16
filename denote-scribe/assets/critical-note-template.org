@@ -1,0 +1,44 @@
+* Goal
+What outcome was sought, and why did it matter?
+
+* Question
+What precise question or decision drove the work?
+
+* Context
+What constraints, prior knowledge, environment, and assumptions shaped the problem?
+
+* Evidence
+List observations, measurements, traces, source material, and confirmed facts.
+Label source and reliability where relevant. Keep inference out of this section.
+
+* Hypotheses
+State the candidate explanations or proposed answers and their predictions.
+
+* Investigation
+Describe tests, experiments, comparisons, or reasoning steps actually performed.
+Record negative results and failed approaches when they affect the conclusion.
+
+* Analysis
+Explain how the evidence changes the hypotheses. Compare alternatives, identify
+counter-evidence, and distinguish correlation from causation.
+
+* Conclusion
+- Status: tentative | supported | stable
+- Confidence: low | medium | high
+- Answer:
+- Decision or result:
+
+* Reflection
+What assumptions, blind spots, limitations, or process improvements remain?
+
+* Open Questions
+What is unresolved, and what evidence would resolve it?
+
+* Extract Concepts
+** ConceptName
+- Maturity: provisional | supported | stable
+- Definition:
+- Evidence:
+- Boundary:
+- Reuse:
+- HyWiki candidate: yes | no

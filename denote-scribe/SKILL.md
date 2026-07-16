@@ -1,76 +1,40 @@
 ---
 name: denote-scribe
-description: Use when an AI assistant should save, export, or summarize a completed troubleshooting, coding, research, or problem-solving conversation as a Denote Org report in `~/Dropbox/notes` through the running Emacs server.
+description: Save completed AI troubleshooting, coding, or research conversations as critical-thinking Denote Org notes, periodically consolidate concepts into HyWiki, and commit generated files through noninteractive Magit.
 ---
 
 # Denote Scribe
 
-## Purpose
+Treat Denote as reasoning history and HyWiki as stable knowledge.
 
-Turn a completed AI problem-solving conversation into a concise Org Denote report. The assistant writes the report body; Emacs/Denote creates the note with correct filename and metadata.
+## Setup
 
-## Load Helper
-
-Load the helper before calling `denote-scribe-preflight` or
-`denote-scribe-create`; the functions are not available until the script is
-loaded into the running Emacs server.
-
-```elisp
-(let ((skill-root (or (getenv "SKILL_ROOT")
-                      (expand-file-name "~/Documents/Code/skills/denote-scribe"))))
-  (load-file (expand-file-name "scripts/denote-scribe.el" skill-root)))
-```
-
-If the skill is installed somewhere else, set `SKILL_ROOT` to this skill's
-directory before evaluating the load form.
-
-## Preflight
-
-Load the bundled helper before calling its functions. Resolve the helper path relative to this skill directory:
-
-```elisp
-(load-file "/path/to/denote-scribe/scripts/denote-scribe.el")
-```
-
-Then call `denote-scribe-preflight` or verify `~/Dropbox/notes`, `emacsclient`, helper loading, and Denote availability. If a prerequisite fails, keep any generated Org body file and report the exact error.
+Load `scripts/denote-scribe.el`, then call `denote-scribe-preflight`. Preserve
+generated content and report exact errors. Read
+`references/hywiki-denote-interface.md` only when integration details are needed.
 
 ## Workflow
 
-1. Confirm the user wants a Denote report, not ordinary note-taking.
-2. Extract problem, context, key investigation, decisions, solution/result, verification, and follow-ups.
-3. Generate a concrete title from the solved topic.
-4. Write a clean Org body to a temporary `.org` file.
-5. Call `denote-scribe-create`.
-6. Report the created Denote file path.
+1. Summarize a completed conversation or useful checkpoint with
+   `assets/critical-note-template.org`. Keep evidence separate from inference;
+   compare alternatives and counter-evidence; state uncertainty honestly.
+2. Choose a concrete title in the conversation language. Preserve useful commands,
+   paths, errors, identifiers, measurements, and links.
+3. Call `denote-scribe-create`, then `denote-scribe-git-hywiki-state`.
+4. When `:due` is non-nil, consolidate concepts. On `:bootstrap`, scan the full
+   corpus; otherwise scan from the marker through the new note. Merge aliases and
+   promote only reusable concepts with evidence and clear boundaries. Use
+   `assets/hywiki-concept-template.org`; prefer English canonical technical names.
+   Preserve existing page content and provenance, deduplicate, and skip unchanged
+   pages.
+5. Call `denote-scribe-git-commit` with the new Denote and only HyWiki pages changed
+   by this run. Pass a true HyWiki flag only after a successful extraction pass,
+   including a valid no-candidate result. On failure, commit the Denote with a
+   false flag so the next run retries.
 
-## Title
+Before writing, inspect `~/Dropbox` status. Never include a pre-existing dirty
+path, directory, wildcard, or unrelated staged change. Do not push.
 
-- Same language as conversation.
-- Concrete topic, not "AI chat/report".
-- Chinese: 6-14 chars when practical. English: 3-8 words.
-- Omit dates, serial numbers, `ai`, `report`, and Denote keywords.
-
-## Default Report Shape
-
-```org
-* 摘要
-* 背景
-* 处理过程
-* 关键决策
-* 结果
-* 验证
-* 后续事项
-```
-
-## Line Width
-
-- Prefer wrapping generated Org content at 100 columns.
-- Never let a generated line exceed 120 columns; reflow prose or restructure long content.
-
-## Helpers
-
-- Helper file: `scripts/denote-scribe.el` relative to this skill directory.
-- `(denote-scribe-preflight &optional NOTES-DIR)`: check notes directory and Denote availability.
-- `(denote-scribe-create TITLE BODY-FILE &optional KEYWORDS NOTES-DIR SIGNATURE DATE)`: create note; default keywords `("ai" "report")`.
-
-Preserve exact commands, paths, errors, and identifiers where useful.
+For an explicit period or full review, use `denote-scribe-list-notes`; use
+`denote-scribe-hywiki-create` for confirmed pages. Older unstructured notes remain
+valid sources, but missing evidence lowers confidence.

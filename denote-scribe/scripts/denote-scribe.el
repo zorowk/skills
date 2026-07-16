@@ -5,6 +5,9 @@
 
 ;;; Code:
 
+(require 'seq)
+(require 'subr-x)
+
 (defgroup denote-scribe nil
   "Create Denote reports from AI conversation summaries."
   :group 'denote)
@@ -14,43 +17,323 @@
   :type 'directory
   :group 'denote-scribe)
 
+(defcustom denote-scribe-hywiki-directory "~/Dropbox/hywiki/"
+  "Directory where Denote Scribe creates stable HyWiki concept pages."
+  :type 'directory
+  :group 'denote-scribe)
+
+(defcustom denote-scribe-git-directory "~/Dropbox/"
+  "Git repository containing Denote notes and HyWiki pages."
+  :type 'directory
+  :group 'denote-scribe)
+
+(defcustom denote-scribe-hywiki-commit-interval 5
+  "Number of commits between HyWiki concept extraction commits."
+  :type 'positive-integer
+  :group 'denote-scribe)
+
+(defcustom denote-scribe-fill-column 100
+  "Column used to fill prose paragraphs in generated Org files."
+  :type 'positive-integer
+  :group 'denote-scribe)
+
+(defconst denote-scribe-hywiki-commit-marker "🔒"
+  "Literal commit-subject marker for a successful HyWiki extraction.")
+
 (defvar denote-directory)
 (defvar denote-save-buffers)
+(defvar hywiki-directory)
 (declare-function denote "denote")
+(declare-function hywiki-add-page "hywiki" (page-name &optional force-flag))
+(declare-function hywiki-get-existing-page-file "hywiki" (reference))
+(declare-function hywiki-word-is-p "hywiki" (word))
+(declare-function magit-call-git "magit-process" (&rest args))
+(declare-function magit-git-string "magit-git" (&rest args))
+(declare-function magit-git-success "magit-git" (&rest args))
+(declare-function magit-toplevel "magit-git" (&optional directory))
+(declare-function org-element-lineage "org-element" (datum &optional types with-self))
+(declare-function org-element-map "org-element" (data types fun &rest args))
+(declare-function org-element-parse-buffer "org-element" (&rest args))
+(declare-function org-element-property "org-element" (property node &rest args))
+(declare-function org-fill-paragraph "org" (&optional justify region))
+
+(defconst denote-scribe-critical-headings
+  '("Goal" "Question" "Context" "Evidence" "Hypotheses" "Investigation"
+    "Analysis" "Conclusion" "Reflection" "Open Questions" "Extract Concepts")
+  "Required top-level headings for a critical Denote body, in order.")
+
+(defconst denote-scribe-hywiki-headings
+  '("Context" "Definition" "My Understanding" "Why It Matters" "Evidence"
+    "Reasoning" "Boundaries" "Related Concepts" "Open Questions" "Provenance")
+  "Required top-level headings for a HyWiki concept body, in order.")
 
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
-  (and (stringp value) (not (string= value "")) value))
+  (and (stringp value) (not (string-empty-p value)) value))
 
-(defun denote-scribe-preflight (&optional notes-dir)
-  "Return a plist describing whether Denote report creation is available."
-  (let* ((target-dir (file-name-as-directory
-                      (expand-file-name
-                       (or (denote-scribe--nonempty notes-dir)
-                           denote-scribe-notes-directory))))
+(defun denote-scribe--directory (override default)
+  "Return OVERRIDE or DEFAULT expanded as a directory name."
+  (file-name-as-directory
+   (expand-file-name (or (denote-scribe--nonempty override) default))))
+
+(defun denote-scribe--org-tree ()
+  "Return a parsed Org tree for the current buffer."
+  (require 'org-element)
+  (org-element-parse-buffer))
+
+(defun denote-scribe--top-level-headings (tree)
+  "Return the level-1 heading names in Org TREE."
+  (org-element-map tree 'headline
+    (lambda (headline)
+      (when (= (org-element-property :level headline) 1)
+        (org-element-property :raw-value headline)))))
+
+(defun denote-scribe--validate-headings (tree expected label)
+  "Require Org TREE to have EXPECTED top-level headings for LABEL."
+  (let ((actual (denote-scribe--top-level-headings tree)))
+    (unless (equal actual expected)
+      (error "%s has invalid top-level headings: %S" label actual))))
+
+(defun denote-scribe--validate-critical-body (body-file)
+  "Validate critical-note structure in readable Org BODY-FILE."
+  (with-temp-buffer
+    (insert-file-contents body-file)
+    (delay-mode-hooks (org-mode))
+    (let* ((tree (denote-scribe--org-tree))
+           (concept
+            (org-element-map
+                tree 'headline
+              (lambda (headline)
+                (when (= (org-element-property :level headline) 2)
+                  (let ((parent (org-element-lineage headline 'headline)))
+                    (and parent
+                         (string= (org-element-property :raw-value parent)
+                                  "Extract Concepts")))))
+              nil t)))
+      (denote-scribe--validate-headings
+       tree denote-scribe-critical-headings "Critical body")
+      (unless concept
+        (error "Extract Concepts must contain a level-2 concept heading")))))
+
+(defun denote-scribe--validate-hywiki-body (body-file)
+  "Validate concept-page structure in readable Org BODY-FILE."
+  (with-temp-buffer
+    (insert-file-contents body-file)
+    (delay-mode-hooks (org-mode))
+    (denote-scribe--validate-headings
+     (denote-scribe--org-tree) denote-scribe-hywiki-headings "HyWiki body")))
+
+(defun denote-scribe--fill-org-buffer ()
+  "Fill prose paragraphs in the current Org buffer."
+  (let* ((tree (denote-scribe--org-tree))
+         (positions
+          (org-element-map tree 'paragraph
+            (lambda (paragraph)
+              (org-element-property :begin paragraph))))
+         (fill-column denote-scribe-fill-column))
+    (save-excursion
+      (dolist (position (sort positions #'>))
+        (goto-char position)
+        (org-fill-paragraph)))))
+
+(defun denote-scribe-preflight (&optional notes-dir hywiki-dir git-dir)
+  "Return a plist describing whether Denote, HyWiki, and Magit are available."
+  (let* ((target-dir
+          (denote-scribe--directory notes-dir denote-scribe-notes-directory))
+         (target-hywiki-dir
+          (denote-scribe--directory hywiki-dir
+                                    denote-scribe-hywiki-directory))
          (denote-available (require 'denote nil t))
+         (hywiki-available (require 'hywiki nil t))
+         (magit-available (require 'magit nil t))
+         (target-git-dir
+          (denote-scribe--directory git-dir denote-scribe-git-directory))
+         (git-root (and magit-available
+                        (ignore-errors (magit-toplevel target-git-dir))))
          (errors nil))
     (unless (file-directory-p target-dir)
       (push (format "Notes directory does not exist: %s" target-dir) errors))
     (unless denote-available
       (push "Denote is not available in this Emacs session" errors))
+    (unless (file-directory-p target-hywiki-dir)
+      (push (format "HyWiki directory does not exist: %s" target-hywiki-dir)
+            errors))
+    (unless hywiki-available
+      (push "HyWiki is not available in this Emacs session" errors))
+    (unless magit-available
+      (push "Magit is not available in this Emacs session" errors))
+    (unless git-root
+      (push (format "Not inside a Git repository: %s" target-git-dir) errors))
     (list :notes-directory target-dir
           :notes-directory-exists (file-directory-p target-dir)
           :denote-available (and denote-available t)
+          :hywiki-directory target-hywiki-dir
+          :hywiki-directory-exists (file-directory-p target-hywiki-dir)
+          :hywiki-available (and hywiki-available t)
+          :git-directory target-git-dir
+          :git-root git-root
+          :magit-available (and magit-available t)
           :errors (nreverse errors))))
 
-(defun denote-scribe--result-file (result)
-  "Return a file path from Denote RESULT or the current buffer."
-  (cond
-   ((stringp result) result)
-   ((buffer-file-name) (buffer-file-name))
-   (t nil)))
+(defun denote-scribe--git-root (&optional git-dir)
+  "Return the Magit repository root for GIT-DIR or signal an error."
+  (unless (require 'magit nil t)
+    (error "Magit is not available in this Emacs session"))
+  (let* ((directory
+          (denote-scribe--directory git-dir denote-scribe-git-directory))
+         (root (magit-toplevel directory)))
+    (unless root
+      (error "Not inside a Git repository: %s" directory))
+    (file-name-as-directory (file-truename root))))
+
+(defun denote-scribe--git-marker-commit (root)
+  "Return the newest commit in ROOT with the HyWiki marker in its subject."
+  (let ((default-directory root))
+    (magit-git-string
+     "log" "-1" "--perl-regexp"
+     (concat "--grep=^[^\\n]*" denote-scribe-hywiki-commit-marker)
+     "--format=%H")))
+
+(defun denote-scribe-git-hywiki-state (&optional git-dir)
+  "Return HyWiki commit cadence state for GIT-DIR.
+
+The returned plist contains :marker-commit, :existing-distance,
+:pending-distance, :due, and :bootstrap.  The pending distance includes the
+Denote commit that has not yet been created."
+  (let* ((root (denote-scribe--git-root git-dir))
+         (default-directory root)
+         (marker (denote-scribe--git-marker-commit root))
+         (existing-distance
+          (when marker
+            (string-to-number
+             (magit-git-string "rev-list" "--count"
+                               (concat marker "..HEAD")))))
+         (pending-distance (and existing-distance (1+ existing-distance)))
+         (bootstrap (null marker))
+         (due (or bootstrap
+                  (>= pending-distance denote-scribe-hywiki-commit-interval))))
+    (list :git-root root
+          :marker-commit marker
+          :existing-distance existing-distance
+          :pending-distance pending-distance
+          :due due
+          :bootstrap bootstrap)))
+
+(defun denote-scribe--git-relative-path (root path)
+  "Return validated repository-relative Org PATH below ROOT."
+  (unless (and (stringp path) (file-regular-p path))
+    (error "Commit path is not a regular file: %S" path))
+  (let ((relative (file-relative-name (file-truename path) root)))
+    (unless (string-match-p
+             "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative)
+      (error "Refusing path outside notes/*.org or hywiki/*.org: %s" path))
+    relative))
+
+;;;###autoload
+(defun denote-scribe-git-commit
+    (title paths hywiki-triggered &optional kind git-dir)
+  "Commit explicit PATHS with TITLE through noninteractive Magit APIs.
+
+HYWIKI-TRIGGERED non-nil inserts `denote-scribe-hywiki-commit-marker' in the
+subject.  KIND defaults to \"feat\" and may be \"feat\" or \"fix\".  Return
+a plist containing the new commit hash, subject, and committed relative paths."
+  (unless (and (stringp title) (not (string-empty-p title))
+               (not (string-match-p "[\n\r]" title)))
+    (error "TITLE must be non-empty and contain no newline"))
+  (setq kind (or kind "feat"))
+  (unless (member kind '("feat" "fix"))
+    (error "KIND must be feat or fix: %S" kind))
+  (unless (and (listp paths) paths)
+    (error "PATHS must be a non-empty list"))
+  (let* ((root (denote-scribe--git-root git-dir))
+         (default-directory root)
+         (relative-paths
+          (delete-dups
+           (mapcar (lambda (path)
+                     (denote-scribe--git-relative-path root path))
+                   paths)))
+         (subject
+          (format "%s(notes): %s%s"
+                  kind
+                  (if hywiki-triggered
+                      (concat denote-scribe-hywiki-commit-marker " ")
+                    "")
+                  title)))
+    (unless (zerop (magit-call-git "add" "--" relative-paths))
+      (error "Magit failed to stage the explicit path set"))
+    (when (magit-git-success "diff" "--cached" "--quiet" "--"
+                             relative-paths)
+      (error "No changes to commit in the explicit path set"))
+    (unless (zerop (magit-call-git "commit" "--only" "-m" subject "--"
+                                   relative-paths))
+      (error "Magit failed to create the path-scoped commit"))
+    (list :commit (magit-git-string "rev-parse" "--short" "HEAD")
+          :subject subject
+          :paths relative-paths)))
+
+(defun denote-scribe--date-id (date label)
+  "Normalize DATE to YYYYMMDD or signal an error mentioning LABEL."
+  (unless (and (stringp date)
+               (string-match
+                "\\`\\([0-9]\\{4\\}\\)-?\\([0-9]\\{2\\}\\)-?\\([0-9]\\{2\\}\\)\\'"
+                date))
+    (error "%s must use YYYY-MM-DD or YYYYMMDD: %S" label date))
+  (let* ((year (string-to-number (match-string 1 date)))
+         (month (string-to-number (match-string 2 date)))
+         (day (string-to-number (match-string 3 date)))
+         (normalized (format "%04d%02d%02d" year month day)))
+    (condition-case nil
+        (let ((encoded (encode-time 0 0 12 day month year)))
+          (unless (string= normalized (format-time-string "%Y%m%d" encoded))
+            (error "Normalized calendar date differs"))
+          normalized)
+      (error (error "%s is not a valid calendar date: %S" label date)))))
+
+(defun denote-scribe--filename-keywords (file)
+  "Return Denote keywords encoded in FILE's base name."
+  (let ((base (file-name-base file)))
+    (when (string-match "__\\(.+\\)\\'" base)
+      (split-string (match-string 1 base) "_" t))))
+
+(defun denote-scribe-list-notes (start end &optional notes-dir keywords)
+  "List Denote Org files from inclusive START through END.
+
+START and END use YYYY-MM-DD or YYYYMMDD.  When both are nil, list the full
+Denote corpus.  Supplying only one date is an error.  NOTES-DIR defaults to
+`denote-scribe-notes-directory'.  When KEYWORDS is non-nil, require every listed
+keyword; otherwise do not filter by keywords."
+  (unless (eq (null start) (null end))
+    (error "START and END must either both be dates or both be nil"))
+  (let* ((start-id (and start (denote-scribe--date-id start "START")))
+         (end-id (and end (denote-scribe--date-id end "END")))
+         (target-dir
+          (denote-scribe--directory notes-dir denote-scribe-notes-directory)))
+    (unless (file-directory-p target-dir)
+      (error "Notes directory does not exist: %s" target-dir))
+    (when (and start-id (string> start-id end-id))
+      (error "START must not be after END: %s > %s" start end))
+    (seq-filter
+     (lambda (file)
+       (let* ((base (file-name-nondirectory file))
+              (date-id (substring base 0 8))
+              (file-keywords (denote-scribe--filename-keywords file)))
+         (and (or (null start-id)
+                  (and (not (string< date-id start-id))
+                       (not (string> date-id end-id))))
+              (seq-every-p (lambda (keyword)
+                             (member keyword file-keywords))
+                           keywords))))
+     (directory-files
+      target-dir t
+      "\\`[0-9]\\{8\\}T[0-9]\\{6\\}--.+\\.org\\'"))))
+
+(defalias 'denote-scribe-list-reports #'denote-scribe-list-notes)
 
 ;;;###autoload
 (defun denote-scribe-create (title body-file &optional keywords notes-dir signature date)
   "Create an Org Denote report with TITLE and insert BODY-FILE.
 
-KEYWORDS is a list of strings.  When nil, use (\"ai\" \"report\").
+KEYWORDS is a list of strings.  When nil, do not add keywords.
 NOTES-DIR overrides `denote-scribe-notes-directory'.
 SIGNATURE and DATE are passed to Denote when non-nil.
 
@@ -59,27 +342,71 @@ Return the created file path."
     (error "TITLE must be a non-empty string"))
   (unless (and (stringp body-file) (file-readable-p body-file))
     (error "BODY-FILE is not readable: %S" body-file))
+  (denote-scribe--validate-critical-body body-file)
   (require 'denote)
-  (let* ((target-dir (file-name-as-directory
-                      (file-truename
-                       (expand-file-name
-                        (or (denote-scribe--nonempty notes-dir)
-                            denote-scribe-notes-directory)))))
+  (let* ((target-dir
+          (file-name-as-directory
+           (file-truename
+            (denote-scribe--directory notes-dir
+                                      denote-scribe-notes-directory))))
          (denote-directory target-dir)
          (denote-save-buffers t)
-         (keyword-list (or keywords '("ai" "report")))
-         (file (denote-scribe--result-file
-                (denote title keyword-list 'org target-dir date nil signature nil))))
+         (file (denote title keywords 'org target-dir date nil signature nil)))
     (unless file
       (error "Denote did not return or visit a file"))
-    (find-file file)
-    (goto-char (point-max))
-    (unless (bolp)
-      (insert "\n"))
-    (insert "\n")
-    (insert-file-contents body-file)
-    (save-buffer)
+    (with-current-buffer (find-file-noselect file)
+      (goto-char (point-max))
+      (unless (bolp)
+        (insert "\n"))
+      (insert "\n")
+      (insert-file-contents body-file)
+      (denote-scribe--fill-org-buffer)
+      (save-buffer))
     file))
+
+;;;###autoload
+(defun denote-scribe-hywiki-create
+    (page-name body-file &optional replace hywiki-dir)
+  "Create HyWiki PAGE-NAME from BODY-FILE and return a result plist.
+
+Refuse to replace an existing non-empty page unless REPLACE is non-nil.
+HYWIKI-DIR overrides `denote-scribe-hywiki-directory'.  PAGE-NAME must be a
+plain HyWikiWord without a section suffix."
+  (unless (and (stringp page-name) (not (string-empty-p page-name)))
+    (error "PAGE-NAME must be a non-empty string"))
+  (unless (and (stringp body-file) (file-readable-p body-file))
+    (error "BODY-FILE is not readable: %S" body-file))
+  (denote-scribe--validate-hywiki-body body-file)
+  (unless (require 'hywiki nil t)
+    (error "HyWiki is not available in this Emacs session"))
+  (unless (and (hywiki-word-is-p page-name)
+               (not (string-match-p "#" page-name)))
+    (error "Invalid HyWiki PAGE-NAME (uppercase initial and letters only): %S"
+           page-name))
+  (let* ((target-dir
+          (denote-scribe--directory hywiki-dir
+                                    denote-scribe-hywiki-directory))
+         (hywiki-directory target-dir)
+         (existing (hywiki-get-existing-page-file page-name))
+         (existing-nonempty
+          (and existing (> (file-attribute-size (file-attributes existing)) 0))))
+    (unless (file-directory-p target-dir)
+      (error "HyWiki directory does not exist: %s" target-dir))
+    (when (and existing-nonempty (not replace))
+      (error "Refusing to replace non-empty HyWiki page: %s" existing))
+    ;; Programmatic creation is already authorized by this helper call.  Binding
+    ;; `noninteractive' avoids HyWiki's special prompt for the very first page.
+    (let* ((noninteractive t)
+           (page-file (cdr (hywiki-add-page page-name (and replace t)))))
+      (unless page-file
+        (error "HyWiki did not create or return page: %s" page-name))
+      (with-current-buffer (find-file-noselect page-file)
+        (insert-file-contents body-file nil nil nil t)
+        (denote-scribe--fill-org-buffer)
+        (save-buffer))
+      (list :page-name page-name
+            :file page-file
+            :status (if existing-nonempty 'replaced 'created)))))
 
 (provide 'denote-scribe)
 
