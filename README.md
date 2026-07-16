@@ -32,15 +32,17 @@ The skill itself contains no shell wrapper script; Denote integration lives in
 
 ## Install
 
-Install this directory in the skills location used by your client or workspace.
-The common shape is a skill directory with `SKILL.md` at the root and optional
-resource folders such as `scripts/` and `agents/`.
+Install this repository in the skills location used by your client or workspace.
+Keep `common/` beside the skill directories: `denote-scribe` and
+`org-blog-exporter` load shared Git helpers from
+`common/scripts/skill-git.el`.
 
-To install manually, copy or symlink the skill directory into that location. If
-your client supports importing a skill archive, zip the directory and import it:
+To install manually, copy or symlink the skill directories together with
+`common/` into that location. If your client supports importing an archive, zip
+the required sibling directories together:
 
 ```bash
-zip -r denote-scribe.zip denote-scribe
+zip -r publishing-skills.zip common denote-scribe org-blog-exporter
 ```
 
 After enabling or reloading the skill, say `输出denote报告` after a task is

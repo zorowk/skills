@@ -1,4 +1,4 @@
 interface:
   display_name: "Org Blog Exporter"
-  short_description: "Export ~/Dropbox/notes org files to the HTML blog"
-  default_prompt: "Use $org-blog-exporter to export selected Org notes from ~/Dropbox/notes into ~/zorowk.github.io as HTML."
+  short_description: "Export and publish Org notes to the HTML blog"
+  default_prompt: "Use $org-blog-exporter to export public Org notes and publish the generated HTML to zorowk.github.io."

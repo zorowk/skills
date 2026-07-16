@@ -8,6 +8,16 @@
 (require 'seq)
 (require 'subr-x)
 
+(unless (featurep 'skill-git)
+  (let* ((script-directory
+          (file-name-directory (or load-file-name buffer-file-name)))
+         (shared-file
+          (expand-file-name "../../common/scripts/skill-git.el"
+                            script-directory)))
+    (unless (file-readable-p shared-file)
+      (error "Shared Git helper is not readable: %s" shared-file))
+    (load shared-file nil nil t)))
+
 (defgroup denote-scribe nil
   "Create Denote reports from AI conversation summaries."
   :group 'denote)
@@ -81,8 +91,7 @@
 
 (defun denote-scribe--directory (override default)
   "Return OVERRIDE or DEFAULT expanded as a directory name."
-  (file-name-as-directory
-   (expand-file-name (or (denote-scribe--nonempty override) default))))
+  (skill-git-directory (or (denote-scribe--nonempty override) default)))
 
 (defun denote-scribe--org-tree ()
   "Return a parsed Org tree for the current buffer."
@@ -157,7 +166,7 @@
          (target-git-dir
           (denote-scribe--directory git-dir denote-scribe-git-directory))
          (git-root (and magit-available
-                        (ignore-errors (magit-toplevel target-git-dir))))
+                        (ignore-errors (skill-git-root target-git-dir))))
          (errors nil))
     (unless (file-directory-p target-dir)
       (push (format "Notes directory does not exist: %s" target-dir) errors))
@@ -185,14 +194,8 @@
 
 (defun denote-scribe--git-root (&optional git-dir)
   "Return the Magit repository root for GIT-DIR or signal an error."
-  (unless (require 'magit nil t)
-    (error "Magit is not available in this Emacs session"))
-  (let* ((directory
-          (denote-scribe--directory git-dir denote-scribe-git-directory))
-         (root (magit-toplevel directory)))
-    (unless root
-      (error "Not inside a Git repository: %s" directory))
-    (file-name-as-directory (file-truename root))))
+  (skill-git-root
+   (denote-scribe--directory git-dir denote-scribe-git-directory)))
 
 (defun denote-scribe--git-review-marker-commit (root)
   "Return the newest AI-review commit in ROOT."
@@ -235,13 +238,12 @@ Denote commit that has not yet been created."
 
 (defun denote-scribe--git-relative-path (root path)
   "Return validated repository-relative Org PATH below ROOT."
-  (unless (and (stringp path) (file-regular-p path))
-    (error "Commit path is not a regular file: %S" path))
-  (let ((relative (file-relative-name (file-truename path) root)))
-    (unless (string-match-p
-             "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative)
-      (error "Refusing path outside notes/*.org or hywiki/*.org: %s" path))
-    relative))
+  (skill-git-relative-path
+   root path
+   (lambda (relative)
+     (string-match-p
+      "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative))
+   "notes/*.org or hywiki/*.org"))
 
 ;;;###autoload
 (defun denote-scribe-git-commit
@@ -261,31 +263,21 @@ plist containing the new commit hash, subject, and committed relative paths."
   (unless (and (listp paths) paths)
     (error "PATHS must be a non-empty list"))
   (let* ((root (denote-scribe--git-root git-dir))
-         (default-directory root)
-         (relative-paths
-          (delete-dups
-           (mapcar (lambda (path)
-                     (denote-scribe--git-relative-path root path))
-                   paths)))
          (subject
           (format "%s(notes): %s%s"
                   kind
                   (if review-completed
                       (concat denote-scribe-review-commit-marker " ")
                     "")
-                  title)))
-    (unless (zerop (magit-call-git "add" "--" relative-paths))
-      (error "Magit failed to stage the explicit path set"))
-    (when (magit-git-success "diff" "--cached" "--quiet" "--"
-                             relative-paths)
-      (error "No changes to commit in the explicit path set"))
-    (unless (zerop (magit-call-git "commit" "--only" "-m" subject "--"
-                                   relative-paths))
-      (error "Magit failed to create the path-scoped commit"))
-    (list :commit (magit-git-string "rev-parse" "--short" "HEAD")
-          :subject subject
-          :review-completed (and review-completed t)
-          :paths relative-paths)))
+                  title))
+         (result
+          (skill-git-commit-paths
+           root subject paths
+           (lambda (relative)
+             (string-match-p
+              "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative))
+           "notes/*.org or hywiki/*.org")))
+    (append result (list :review-completed (and review-completed t)))))
 
 (defun denote-scribe--date-id (date label)
   "Normalize DATE to YYYYMMDD or signal an error mentioning LABEL."

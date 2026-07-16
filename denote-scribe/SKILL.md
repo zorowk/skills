@@ -9,8 +9,9 @@ Treat Denote as reasoning history and HyWiki as stable knowledge.
 
 ## Setup
 
-Load `scripts/denote-scribe.el`, then call `denote-scribe-preflight`. Preserve
-generated content and report exact errors. Read
+Load `scripts/denote-scribe.el`; it loads the sibling
+`common/scripts/skill-git.el` helper. Then call `denote-scribe-preflight`.
+Preserve generated content and report exact errors. Read
 `references/hywiki-denote-interface.md` only when integration details are needed.
 
 ## Workflow

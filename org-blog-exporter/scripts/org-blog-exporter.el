@@ -7,6 +7,16 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(unless (featurep 'skill-git)
+  (let* ((script-directory
+          (file-name-directory (or load-file-name buffer-file-name)))
+         (shared-file
+          (expand-file-name "../../common/scripts/skill-git.el"
+                            script-directory)))
+    (unless (file-readable-p shared-file)
+      (error "Shared Git helper is not readable: %s" shared-file))
+    (load shared-file nil nil t)))
+
 (defgroup org-blog-exporter nil
   "Export Org notes to a static HTML blog."
   :group 'org)
@@ -16,13 +26,19 @@
   :type 'directory
   :group 'org-blog-exporter)
 
-(defcustom org-blog-exporter-output-directory "~/zorowk.github.io/"
+(defcustom org-blog-exporter-output-directory "~/Documents/zorowk.github.io/"
   "Fallback directory where exported HTML files are written.
 
 When `org-blog-exporter-setupfile' contains a BLOG_EXPORT_DIR,
 BLOG_OUTPUT_DIR, BLOG_DIR, or BLOG_DIRECTORY keyword, that value is used
 instead."
   :type 'directory
+  :group 'org-blog-exporter)
+
+(defcustom org-blog-exporter-repository-url
+  "https://github.com/zorowk/zorowk.github.io.git"
+  "Canonical Git repository used for explicit blog publishing."
+  :type 'string
   :group 'org-blog-exporter)
 
 (defcustom org-blog-exporter-setupfile "~/Dropbox/notes/setupfile.org"
@@ -103,6 +119,8 @@ instead."
           :setupfile-readable (file-readable-p setup)
           :output-directory output
           :output-directory-exists (file-directory-p output)
+          :repository-url org-blog-exporter-repository-url
+          :repository-clone-required (not (file-exists-p output))
           :candidate-count (length candidates)
           :errors (nreverse errors))))
 
@@ -260,6 +278,86 @@ Each result entry is (raw-link absolute-path exists)."
           :exported (nreverse exported)
           :error-count (length errors)
           :errors (nreverse errors))))
+
+(defun org-blog-exporter--prepare-publish-repository (&optional repository-dir)
+  "Prepare REPOSITORY-DIR for a safe publish and return its state plist."
+  (let* ((directory
+          (org-blog-exporter--expand-directory
+           (or repository-dir org-blog-exporter-output-directory)))
+         (repository
+          (skill-git-ensure-repository
+           org-blog-exporter-repository-url directory))
+         (root (plist-get repository :git-root)))
+    (skill-git-assert-clean root)
+    (skill-git-pull-ff-only root)
+    (skill-git-assert-clean root)
+    (let ((ahead (skill-git-upstream-ahead-count root)))
+      (unless (zerop ahead)
+        (error "Refusing to publish %d pre-existing local commit(s)" ahead)))
+    repository))
+
+(defun org-blog-exporter--html-relative-path-p (relative)
+  "Return non-nil when RELATIVE names an HTML file."
+  (string-match-p "\\.html\\'" relative))
+
+(defun org-blog-exporter--finish-publish (repository exported subject)
+  "Commit EXPORTED files in REPOSITORY with SUBJECT, then push."
+  (let* ((root (plist-get repository :git-root))
+         (relative-paths
+          (mapcar (lambda (path)
+                    (skill-git-relative-path
+                     root path #'org-blog-exporter--html-relative-path-p
+                     "exported HTML files"))
+                  exported))
+         (status (skill-git-status root relative-paths)))
+    (if (string-empty-p status)
+        (append repository
+                (list :changed nil :exported exported :commit nil :push nil))
+      (let ((commit
+             (skill-git-commit-paths
+              root subject exported #'org-blog-exporter--html-relative-path-p
+              "exported HTML files")))
+        (skill-git-assert-clean root)
+        (append repository
+                (list :changed t
+                      :exported exported
+                      :commit commit
+                      :push (skill-git-push root)))))))
+
+;;;###autoload
+(defun org-blog-exporter-publish-files
+    (org-files &optional title repository-dir setupfile)
+  "Export ORG-FILES, commit changed HTML, and push the blog repository.
+
+TITLE is used in the commit subject and defaults to `Publish Org HTML'.
+Clone `org-blog-exporter-repository-url' into REPOSITORY-DIR when absent."
+  (unless (and (listp org-files) org-files)
+    (error "ORG-FILES must be a non-empty list"))
+  (let* ((repository
+          (org-blog-exporter--prepare-publish-repository repository-dir))
+         (root (plist-get repository :git-root))
+         (exported (org-blog-exporter-export-files org-files root setupfile))
+         (subject (format "chore(blog): %s" (or title "Publish Org HTML"))))
+    (org-blog-exporter--finish-publish repository exported subject)))
+
+;;;###autoload
+(defun org-blog-exporter-publish-all
+    (&optional title notes-dir repository-dir setupfile)
+  "Export all public notes, commit changed HTML, and push the blog repository.
+
+TITLE is used in the commit subject and defaults to `Publish Org HTML'.
+Clone `org-blog-exporter-repository-url' into REPOSITORY-DIR when absent."
+  (let* ((repository
+          (org-blog-exporter--prepare-publish-repository repository-dir))
+         (root (plist-get repository :git-root))
+         (summary (org-blog-exporter-export-all notes-dir root setupfile)))
+    (unless (zerop (plist-get summary :error-count))
+      (error "Blog export failed: %S" (plist-get summary :errors)))
+    (append
+     summary
+     (org-blog-exporter--finish-publish
+      repository (plist-get summary :exported)
+      (format "chore(blog): %s" (or title "Publish Org HTML"))))))
 
 (provide 'org-blog-exporter)
 
