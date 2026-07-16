@@ -26,7 +26,13 @@ directory before evaluating the load form.
 
 ## Preflight
 
-Call `denote-scribe-preflight` or verify `~/Dropbox/notes`, `emacsclient`, helper loading, and Denote availability. If a prerequisite fails, keep any generated Org body file and report the exact error.
+Load the bundled helper before calling its functions. Resolve the helper path relative to this skill directory:
+
+```elisp
+(load-file "/path/to/denote-scribe/scripts/denote-scribe.el")
+```
+
+Then call `denote-scribe-preflight` or verify `~/Dropbox/notes`, `emacsclient`, helper loading, and Denote availability. If a prerequisite fails, keep any generated Org body file and report the exact error.
 
 ## Workflow
 
@@ -58,6 +64,7 @@ Call `denote-scribe-preflight` or verify `~/Dropbox/notes`, `emacsclient`, helpe
 
 ## Helpers
 
+- Helper file: `scripts/denote-scribe.el` relative to this skill directory.
 - `(denote-scribe-preflight &optional NOTES-DIR)`: check notes directory and Denote availability.
 - `(denote-scribe-create TITLE BODY-FILE &optional KEYWORDS NOTES-DIR SIGNATURE DATE)`: create note; default keywords `("ai" "report")`.
 
