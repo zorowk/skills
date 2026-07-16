@@ -22,7 +22,11 @@ debugging, modifying a script, or resolving undocumented behavior.
    files. Copy assets only when requested.
 4. For export-only work, call `org-blog-exporter-export-file`,
    `org-blog-exporter-export-files`, or `org-blog-exporter-export-all` and report
-   returned paths and errors.
+   returned paths and errors. During export, recognized assessment properties are
+   rendered as a visible `assessment-summary` in the temporary export buffer; the
+   source Org file remains unchanged. Supported properties are `STATUS`,
+   `CREDIBILITY`, `MATURITY`, `HYWIKI_CANDIDATE`, `REVIEW_PERIOD`,
+   `QUESTION_STATUS`, and `REVIEW_DATE`.
 5. For an explicit publish, call `org-blog-exporter-publish-files` or
    `org-blog-exporter-publish-all`. These functions read `BLOG_REPOSITORY_URL`
    and `BLOG_EXPORT_DIR` from `setupfile.org`, clone the repository when absent,

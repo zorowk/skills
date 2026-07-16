@@ -59,6 +59,16 @@ instead."
 (defconst org-blog-exporter--repository-url-keywords
   '("BLOG_REPOSITORY_URL" "BLOG_REPO_URL"))
 
+(defconst org-blog-exporter--assessment-properties
+  '(("STATUS" "Status" "状态")
+    ("CREDIBILITY" "Credibility" "可信度")
+    ("MATURITY" "Maturity" "成熟度")
+    ("HYWIKI_CANDIDATE" "HyWiki candidate" "HyWiki 候选")
+    ("REVIEW_PERIOD" "Review period" "审查周期")
+    ("QUESTION_STATUS" "Question status" "问题状态")
+    ("REVIEW_DATE" "Review date" "复查日期"))
+  "Org properties rendered as assessment summaries during HTML export.")
+
 (defun org-blog-exporter--expand-directory (directory)
   "Return DIRECTORY as an absolute directory name."
   (file-name-as-directory (expand-file-name directory)))
@@ -243,6 +253,61 @@ Each result entry is (raw-link absolute-path exists)."
     (goto-char (point-min))
     (insert "#+SETUPFILE: " (expand-file-name setupfile) "\n")))
 
+(defun org-blog-exporter--chinese-text-p (text)
+  "Return non-nil when TEXT contains a common Chinese character."
+  (and text (string-match-p "[一-龥]" text)))
+
+(defun org-blog-exporter--assessment-items ()
+  "Return configured assessment properties at the current Org heading."
+  (delq nil
+        (mapcar
+         (lambda (spec)
+           (let ((value (org-entry-get nil (car spec) nil)))
+             (when (and value (not (string-empty-p (string-trim value))))
+               (list spec (string-trim value)))))
+         org-blog-exporter--assessment-properties)))
+
+(defun org-blog-exporter--assessment-summary-html (items chinese)
+  "Return an HTML assessment summary for ITEMS.
+
+Use Chinese labels when CHINESE is non-nil."
+  (let ((separator (if chinese "：" ": ")))
+    (format
+     (concat "<p class=\"assessment-summary\"><strong>%s%s</strong> %s</p>")
+     (if chinese "评估" "Assessment") separator
+     (string-join
+      (mapcar
+       (lambda (item)
+         (let* ((spec (car item))
+                (value (cadr item))
+                (label (if chinese (nth 2 spec) (nth 1 spec))))
+           (format
+            "<span class=\"assessment-item\"><strong>%s%s</strong>%s</span>"
+            label separator (org-blog-exporter--html-escape value))))
+       items)
+      " <span aria-hidden=\"true\">·</span> "))))
+
+(defun org-blog-exporter--insert-assessment-summaries ()
+  "Render assessment properties as visible summaries in the export buffer."
+  (let (headings)
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (org-map-entries (lambda () (push (point) headings)) nil nil))
+    (dolist (position (sort headings #'>))
+      (goto-char position)
+      (let ((items (org-blog-exporter--assessment-items)))
+        (when items
+          (let* ((heading (org-get-heading t t t t))
+                 (values (mapconcat #'cadr items " "))
+                 (chinese
+                  (or (org-blog-exporter--chinese-text-p heading)
+                      (org-blog-exporter--chinese-text-p values))))
+            (org-end-of-meta-data t)
+            (insert "#+begin_export html\n"
+                    (org-blog-exporter--assessment-summary-html items chinese)
+                    "\n#+end_export\n\n")))))))
+
 (defun org-blog-exporter-export-file (org-file &optional output-dir setupfile)
   "Export ORG-FILE to HTML and return the exported path."
   (let* ((source (expand-file-name org-file))
@@ -258,6 +323,7 @@ Each result entry is (raw-link absolute-path exists)."
       (insert-file-contents source)
       (setq buffer-file-name source)
       (delay-mode-hooks (org-mode))
+      (org-blog-exporter--insert-assessment-summaries)
       (org-blog-exporter--insert-setupfile-if-missing setup)
       (let ((exported (org-export-to-file 'html target nil nil nil nil nil)))
         (unless (and exported (file-exists-p exported))

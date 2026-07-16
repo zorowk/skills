@@ -23,8 +23,10 @@ Explain how the evidence changes the hypotheses. Compare alternatives, identify
 counter-evidence, and distinguish correlation from causation.
 
 * Conclusion
-- Status: tentative | supported | stable
-- Confidence: low | medium | high
+:PROPERTIES:
+:STATUS: tentative | supported | stable
+:CREDIBILITY: low | medium | high
+:END:
 - Answer:
 - Decision or result:
 
@@ -36,9 +38,11 @@ What is unresolved, and what evidence would resolve it?
 
 * Extract Concepts
 ** ConceptName
-- Maturity: provisional | supported | stable
+:PROPERTIES:
+:MATURITY: provisional | supported | stable
+:HYWIKI_CANDIDATE: yes | no
+:END:
 - Definition:
 - Evidence:
 - Boundary:
 - Reuse:
-- HyWiki candidate: yes | no

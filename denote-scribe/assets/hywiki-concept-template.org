@@ -31,6 +31,8 @@ Use existing HyWikiWords or explicit =[[hy:ConceptName]]= links.
 Unresolved points and evidence that could change the concept.
 
 * Provenance
-- Confidence: low | medium | high
-- Reviewed period:
+:PROPERTIES:
+:CREDIBILITY: low | medium | high
+:REVIEW_PERIOD:
+:END:
 - Denote sources: [[denote:IDENTIFIER][Source title]]

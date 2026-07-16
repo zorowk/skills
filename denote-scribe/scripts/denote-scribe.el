@@ -78,12 +78,22 @@
 (defconst denote-scribe-critical-headings
   '("Goal" "Question" "Context" "Evidence" "Hypotheses" "Investigation"
     "Analysis" "Conclusion" "Reflection" "Open Questions" "Extract Concepts")
-  "Required top-level headings for a critical Denote body, in order.")
+  "Required English headings for a critical Denote body, in order.")
+
+(defconst denote-scribe-critical-headings-zh
+  '("目标" "核心问题" "背景" "证据" "假设" "探究过程" "分析" "结论" "反思"
+    "开放问题" "提取概念")
+  "Required Chinese headings for a critical Denote body, in order.")
 
 (defconst denote-scribe-hywiki-headings
   '("Context" "Definition" "My Understanding" "Why It Matters" "Evidence"
     "Reasoning" "Boundaries" "Related Concepts" "Open Questions" "Provenance")
-  "Required top-level headings for a HyWiki concept body, in order.")
+  "Required English headings for a HyWiki concept body, in order.")
+
+(defconst denote-scribe-hywiki-headings-zh
+  '("背景" "定义" "我的理解" "价值" "证据" "推理" "边界" "相关概念" "开放问题"
+    "溯源")
+  "Required Chinese headings for a HyWiki concept body, in order.")
 
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
@@ -105,11 +115,15 @@
       (when (= (org-element-property :level headline) 1)
         (org-element-property :raw-value headline)))))
 
-(defun denote-scribe--validate-headings (tree expected label)
-  "Require Org TREE to have EXPECTED top-level headings for LABEL."
-  (let ((actual (denote-scribe--top-level-headings tree)))
-    (unless (equal actual expected)
-      (error "%s has invalid top-level headings: %S" label actual))))
+(defun denote-scribe--validate-headings (tree schemas label)
+  "Return the matching heading schema for Org TREE.
+
+SCHEMAS is a list of accepted top-level heading lists for LABEL."
+  (let* ((actual (denote-scribe--top-level-headings tree))
+         (matched (seq-find (lambda (schema) (equal actual schema)) schemas)))
+    (unless matched
+      (error "%s has invalid top-level headings: %S" label actual))
+    matched))
 
 (defun denote-scribe--validate-critical-body (body-file)
   "Validate critical-note structure in readable Org BODY-FILE."
@@ -117,6 +131,13 @@
     (insert-file-contents body-file)
     (delay-mode-hooks (org-mode))
     (let* ((tree (denote-scribe--org-tree))
+           (schema
+            (denote-scribe--validate-headings
+             tree
+             (list denote-scribe-critical-headings
+                   denote-scribe-critical-headings-zh)
+             "Critical body"))
+           (concept-parent (car (last schema)))
            (concept
             (org-element-map
                 tree 'headline
@@ -125,12 +146,10 @@
                   (let ((parent (org-element-lineage headline 'headline)))
                     (and parent
                          (string= (org-element-property :raw-value parent)
-                                  "Extract Concepts")))))
+                                  concept-parent)))))
               nil t)))
-      (denote-scribe--validate-headings
-       tree denote-scribe-critical-headings "Critical body")
       (unless concept
-        (error "Extract Concepts must contain a level-2 concept heading")))))
+        (error "%s must contain a level-2 concept heading" concept-parent)))))
 
 (defun denote-scribe--validate-hywiki-body (body-file)
   "Validate concept-page structure in readable Org BODY-FILE."
@@ -138,7 +157,9 @@
     (insert-file-contents body-file)
     (delay-mode-hooks (org-mode))
     (denote-scribe--validate-headings
-     (denote-scribe--org-tree) denote-scribe-hywiki-headings "HyWiki body")))
+     (denote-scribe--org-tree)
+     (list denote-scribe-hywiki-headings denote-scribe-hywiki-headings-zh)
+     "HyWiki body")))
 
 (defun denote-scribe--fill-org-buffer ()
   "Fill prose paragraphs in the current Org buffer."
