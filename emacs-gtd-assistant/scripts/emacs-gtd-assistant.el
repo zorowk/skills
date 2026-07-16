@@ -5,6 +5,7 @@
 (require 'org)
 (require 'org-id)
 (require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 
 (defgroup emacs-gtd-assistant nil
@@ -21,9 +22,49 @@
   :type 'string
   :group 'emacs-gtd-assistant)
 
+(defcustom emacs-gtd-default-headline "Personal"
+  "Default top-level heading for newly added tasks."
+  :type 'string
+  :group 'emacs-gtd-assistant)
+
 (defun emacs-gtd--file ()
   "Return the absolute GTD file path."
   (expand-file-name emacs-gtd-file emacs-gtd-directory))
+
+(defun emacs-gtd-preflight ()
+  "Return a plist describing the configured GTD file."
+  (let* ((directory (file-name-as-directory
+                     (expand-file-name emacs-gtd-directory)))
+         (file (emacs-gtd--file))
+         (errors nil))
+    (unless (file-directory-p directory)
+      (push (format "GTD directory does not exist: %s" directory) errors))
+    (unless (file-readable-p file)
+      (push (format "GTD file is not readable: %s" file) errors))
+    (unless (file-writable-p file)
+      (push (format "GTD file is not writable: %s" file) errors))
+    (list :directory directory
+          :file file
+          :readable (file-readable-p file)
+          :writable (file-writable-p file)
+          :errors (nreverse errors))))
+
+(defun emacs-gtd--buffer (&optional writable)
+  "Return the GTD file buffer, requiring WRITABLE access when non-nil."
+  (let ((file (emacs-gtd--file)))
+    (unless (file-readable-p file)
+      (error "GTD file is not readable: %s" file))
+    (when (and writable (not (file-writable-p file)))
+      (error "GTD file is not writable: %s" file))
+    (find-file-noselect file)))
+
+(defun emacs-gtd--single-line (value label)
+  "Return non-empty single-line VALUE or signal an error naming LABEL."
+  (unless (and (stringp value)
+               (not (string-empty-p value))
+               (not (string-match-p "[\n\r]" value)))
+    (error "%s must be a non-empty single-line string" label))
+  value)
 
 (defun emacs-gtd--save ()
   "Save current Org buffer."
@@ -59,6 +100,10 @@ When INACTIVE is non-nil, return an inactive timestamp like
          (close (if inactive "]" ">")))
     (concat open (format-time-string "%Y-%m-%d %a %H:%M" time) close)))
 
+(defun emacs-gtd--optional-timestamp (text)
+  "Normalize optional timestamp TEXT for insertion into Org."
+  (and text (emacs-gtd-normalize-timestamp text)))
+
 (defun emacs-gtd--item-at-point (&optional create-id)
   "Return an alist for the Org heading at point.
 
@@ -92,7 +137,8 @@ Create an ID only when CREATE-ID is non-nil."
 
 (defun emacs-gtd--find-id (id)
   "Move point to Org entry with ID in the GTD file."
-  (find-file (emacs-gtd--file))
+  (emacs-gtd--single-line id "ID")
+  (set-buffer (emacs-gtd--buffer t))
   (widen)
    (goto-char (point-min))
    (unless (re-search-forward
@@ -111,7 +157,9 @@ Create an ID only when CREATE-ID is non-nil."
 ;;;###autoload
 (defun emacs-gtd-ensure-id-at-line (line)
   "Ensure the GTD item at LINE has an ID and return the item."
-  (with-current-buffer (find-file-noselect (emacs-gtd--file))
+  (unless (and (integerp line) (> line 0))
+    (error "LINE must be a positive integer"))
+  (with-current-buffer (emacs-gtd--buffer t)
     (widen)
     (goto-char (point-min))
     (forward-line (1- line))
@@ -124,7 +172,7 @@ Create an ID only when CREATE-ID is non-nil."
 ;;;###autoload
 (defun emacs-gtd-list (&optional include-done)
   "Return GTD items.  Omit done/cancelled items unless INCLUDE-DONE is non-nil."
-  (with-current-buffer (find-file-noselect (emacs-gtd--file))
+  (with-current-buffer (emacs-gtd--buffer)
     (org-with-wide-buffer
      (let (items)
        (org-map-entries
@@ -142,6 +190,7 @@ Create an ID only when CREATE-ID is non-nil."
   "Return GTD items whose title matches QUERY.
 
 QUERY is treated as a regular expression.  This function does not create IDs."
+  (emacs-gtd--single-line query "QUERY")
   (cl-remove-if-not
    (lambda (item)
      (let ((title (cdr (assoc 'title item))))
@@ -151,16 +200,35 @@ QUERY is treated as a regular expression.  This function does not create IDs."
 ;;;###autoload
 (defun emacs-gtd-add-task (title &optional plist)
   "Add TITLE as a GTD task according to PLIST and return the created item."
-  (unless (and (stringp title) (not (string-empty-p title)))
-    (error "TITLE must be a non-empty string"))
-  (let* ((headline (or (plist-get plist :headline) "Personal"))
+  (emacs-gtd--single-line title "TITLE")
+  (let* ((headline (emacs-gtd--single-line
+                    (or (plist-get plist :headline)
+                        emacs-gtd-default-headline)
+                    "HEADLINE"))
          (todo (or (plist-get plist :todo) "TODO"))
          (priority (plist-get plist :priority))
-         (scheduled (plist-get plist :scheduled))
-         (deadline (plist-get plist :deadline))
+         (scheduled (emacs-gtd--optional-timestamp
+                     (plist-get plist :scheduled)))
+         (deadline (emacs-gtd--optional-timestamp
+                    (plist-get plist :deadline)))
          (body (plist-get plist :body))
          (tags (plist-get plist :tags)))
-    (with-current-buffer (find-file-noselect (emacs-gtd--file))
+    (emacs-gtd--single-line todo "TODO")
+    (unless (or (null body) (stringp body))
+      (error "BODY must be a string or nil"))
+    (unless (or (null tags)
+                (and (listp tags) (seq-every-p #'stringp tags)))
+      (error "TAGS must be a list of strings or nil"))
+    (with-current-buffer (emacs-gtd--buffer t)
+      (unless (member todo org-todo-keywords-1)
+        (error "Unknown TODO state in the configured Org buffer: %S" todo))
+      (when priority
+        (unless (and (stringp priority)
+                     (= (length priority) 1)
+                     (<= org-priority-highest (aref priority 0)
+                         org-priority-lowest))
+          (error "PRIORITY is outside the configured Org priority range: %S"
+                 priority)))
       (org-with-wide-buffer
        (emacs-gtd--goto-heading headline)
        (org-end-of-subtree t t)
@@ -170,16 +238,16 @@ QUERY is treated as a regular expression.  This function does not create IDs."
          (when priority
            (insert "[#" priority "] "))
          (insert title)
-         (when tags
-           (insert " :" (string-join tags ":") ":"))
          (insert "\n")
          (when scheduled
            (insert "SCHEDULED: " scheduled "\n"))
          (when deadline
            (insert "DEADLINE: " deadline "\n"))
          (when (and body (not (string-empty-p body)))
-         (insert body "\n"))
+           (insert body "\n"))
          (goto-char heading-point)
+         (when tags
+           (org-set-tags tags))
          (let ((item (emacs-gtd--item-at-point t)))
            (emacs-gtd--save)
            item))))))
@@ -213,7 +281,7 @@ QUERY is treated as a regular expression.  This function does not create IDs."
 (defun emacs-gtd-reschedule (id timestamp)
   "Set SCHEDULED TIMESTAMP for GTD item ID and return the updated item."
   (emacs-gtd--find-id id)
-  (org-schedule nil timestamp)
+  (org-schedule nil (emacs-gtd-normalize-timestamp timestamp))
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)
     item))
@@ -222,7 +290,7 @@ QUERY is treated as a regular expression.  This function does not create IDs."
 (defun emacs-gtd-set-deadline (id timestamp)
   "Set DEADLINE TIMESTAMP for GTD item ID and return the updated item."
   (emacs-gtd--find-id id)
-  (org-deadline nil timestamp)
+  (org-deadline nil (emacs-gtd-normalize-timestamp timestamp))
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)
     item))

@@ -5,60 +5,22 @@ description: "Use when an AI assistant needs targeted code context from the user
 
 # Emacs Code Navigator
 
-## Purpose
+Use the running Emacs session for compact context, including unsaved buffers. Load
+`scripts/emacs-code-navigator.el` from this skill directory. If the server is
+unavailable, report the error and fall back to disk-based tools.
+Helper names below use the `emacs-code-navigator-` prefix.
 
-Use the running Emacs session as a compact code-context provider. Prefer it when Emacs project, buffers, imenu, xref, Eglot/Eldoc, Flymake, or unsaved buffer state can narrow what the assistant needs to read.
+## Workflow
 
-Load the helper before calling any navigator function; the functions are not available until the script is loaded into the running Emacs server.
-Use this default source-repository load form:
-
-```elisp
-(let ((skill-root (or (getenv "SKILL_ROOT")
-                      (expand-file-name "~/Documents/Code/skills/emacs-code-navigator"))))
-  (load-file (expand-file-name "scripts/emacs-code-navigator.el" skill-root)))
-```
-
-If the skill is installed somewhere else, set `SKILL_ROOT` to this skill's
-directory before evaluating the load form.
-
-Call through `emacsclient --eval`. If Emacs cannot connect, report the exact error and fall back to shell tools.
-
-## Bare Workflow
-
-1. Map: `project-root`, then `project-files` with a small limit.
-2. Find: `search` for user-mentioned symbols, errors, strings, or keys.
-3. Structure: `imenu` on the most relevant file.
-4. Expand: `context-at-line` on the best hit.
-5. Resolve: `xref-definitions-at-line` / `xref-references-at-line` when needed.
-6. Read: `read-region` only after locating the relevant function/block.
-7. Diagnose: `diagnostics-at-line` or `flymake-diagnostics`; use `project-diagnostics` only when project-wide Emacs/Flymake diagnostics are explicitly useful.
-
-Typical loop: `search -> context-at-line -> xref-definitions-at-line/read-region`.
+1. Locate with `project-files`, `search`, or `imenu`.
+2. Expand the best hit with `context-at-line`.
+3. Resolve relationships with the line-based xref helpers; use `read-region` only
+   after identifying the relevant block.
+4. Request line or file diagnostics when useful. Run `project-diagnostics` only
+   when project-wide diagnostics justify visiting many files.
 
 ## When Not To Use
 
 Do not use for simple non-code reads, exact path inspection, generated files, logs, JSON/YAML config, or cases where shell tools return a smaller answer. Do not run project-wide diagnostics by default on large projects.
 
 Open Emacs buffers may include unsaved edits. Use shell reads when disk state is required.
-
-## Key Helpers
-
-| Need | Call |
-|---|---|
-| Project root/files | `project-root`, `project-files` |
-| Project search | `search` |
-| File symbols | `imenu` |
-| Expand one hit | `context-at-line` |
-| Exact-line xref | `xref-definitions-at-line`, `xref-references-at-line` |
-| Fallback xref | `xref-definitions`, `xref-references` |
-| Narrow read | `read-region` |
-| Diagnostics | `diagnostics-at-line`, `flymake-diagnostics`, `project-diagnostics` |
-
-Line-based xref is preferred. Identifier-only xref uses the first matching identifier in the file.
-
-## Usage Rules
-
-- Keep calls small and targeted.
-- Prefer compact helper output over dumping source files.
-- Use `context-at-line` before expanding to larger regions.
-- Report Emacs errors directly; do not invent context.
