@@ -27,8 +27,12 @@
   :type 'directory
   :group 'denote-scribe)
 
-(defcustom denote-scribe-hywiki-commit-interval 5
-  "Number of commits between HyWiki concept extraction commits."
+(define-obsolete-variable-alias
+  'denote-scribe-hywiki-commit-interval
+  'denote-scribe-review-commit-interval "2026-07-16")
+
+(defcustom denote-scribe-review-commit-interval 5
+  "Number of repository commits between AI reviews."
   :type 'positive-integer
   :group 'denote-scribe)
 
@@ -37,8 +41,12 @@
   :type 'positive-integer
   :group 'denote-scribe)
 
-(defconst denote-scribe-hywiki-commit-marker "🔒"
-  "Literal commit-subject marker for a successful HyWiki extraction.")
+(define-obsolete-variable-alias
+  'denote-scribe-hywiki-commit-marker
+  'denote-scribe-review-commit-marker "2026-07-16")
+
+(defconst denote-scribe-review-commit-marker "🔒"
+  "Literal commit-subject marker for a completed AI review.")
 
 (defvar denote-directory)
 (defvar denote-save-buffers)
@@ -186,23 +194,23 @@
       (error "Not inside a Git repository: %s" directory))
     (file-name-as-directory (file-truename root))))
 
-(defun denote-scribe--git-marker-commit (root)
-  "Return the newest commit in ROOT with the HyWiki marker in its subject."
+(defun denote-scribe--git-review-marker-commit (root)
+  "Return the newest AI-review commit in ROOT."
   (let ((default-directory root))
     (magit-git-string
      "log" "-1" "--perl-regexp"
-     (concat "--grep=^[^\\n]*" denote-scribe-hywiki-commit-marker)
+     (concat "--grep=^[^\\n]*" denote-scribe-review-commit-marker)
      "--format=%H")))
 
-(defun denote-scribe-git-hywiki-state (&optional git-dir)
-  "Return HyWiki commit cadence state for GIT-DIR.
+(defun denote-scribe-git-review-state (&optional git-dir)
+  "Return AI-review commit cadence state for GIT-DIR.
 
 The returned plist contains :marker-commit, :existing-distance,
 :pending-distance, :due, and :bootstrap.  The pending distance includes the
 Denote commit that has not yet been created."
   (let* ((root (denote-scribe--git-root git-dir))
          (default-directory root)
-         (marker (denote-scribe--git-marker-commit root))
+         (marker (denote-scribe--git-review-marker-commit root))
          (existing-distance
           (when marker
             (string-to-number
@@ -211,13 +219,19 @@ Denote commit that has not yet been created."
          (pending-distance (and existing-distance (1+ existing-distance)))
          (bootstrap (null marker))
          (due (or bootstrap
-                  (>= pending-distance denote-scribe-hywiki-commit-interval))))
+                  (>= pending-distance denote-scribe-review-commit-interval))))
     (list :git-root root
           :marker-commit marker
+          :review-marker-commit marker
           :existing-distance existing-distance
           :pending-distance pending-distance
           :due due
+          :review-due due
           :bootstrap bootstrap)))
+
+(define-obsolete-function-alias
+  'denote-scribe-git-hywiki-state
+  #'denote-scribe-git-review-state "2026-07-16")
 
 (defun denote-scribe--git-relative-path (root path)
   "Return validated repository-relative Org PATH below ROOT."
@@ -231,12 +245,13 @@ Denote commit that has not yet been created."
 
 ;;;###autoload
 (defun denote-scribe-git-commit
-    (title paths hywiki-triggered &optional kind git-dir)
+    (title paths review-completed &optional kind git-dir)
   "Commit explicit PATHS with TITLE through noninteractive Magit APIs.
 
-HYWIKI-TRIGGERED non-nil inserts `denote-scribe-hywiki-commit-marker' in the
-subject.  KIND defaults to \"feat\" and may be \"feat\" or \"fix\".  Return
-a plist containing the new commit hash, subject, and committed relative paths."
+REVIEW-COMPLETED non-nil inserts `denote-scribe-review-commit-marker' in the
+subject.  It means an AI review completed, whether or not it promoted a HyWiki
+page.  KIND defaults to \"feat\" and may be \"feat\" or \"fix\".  Return a
+plist containing the new commit hash, subject, and committed relative paths."
   (unless (and (stringp title) (not (string-empty-p title))
                (not (string-match-p "[\n\r]" title)))
     (error "TITLE must be non-empty and contain no newline"))
@@ -255,8 +270,8 @@ a plist containing the new commit hash, subject, and committed relative paths."
          (subject
           (format "%s(notes): %s%s"
                   kind
-                  (if hywiki-triggered
-                      (concat denote-scribe-hywiki-commit-marker " ")
+                  (if review-completed
+                      (concat denote-scribe-review-commit-marker " ")
                     "")
                   title)))
     (unless (zerop (magit-call-git "add" "--" relative-paths))
@@ -269,6 +284,7 @@ a plist containing the new commit hash, subject, and committed relative paths."
       (error "Magit failed to create the path-scoped commit"))
     (list :commit (magit-git-string "rev-parse" "--short" "HEAD")
           :subject subject
+          :review-completed (and review-completed t)
           :paths relative-paths)))
 
 (defun denote-scribe--date-id (date label)

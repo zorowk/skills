@@ -1,4 +1,4 @@
 interface:
   display_name: "Denote Scribe"
-  short_description: "Create and commit critical notes with Magit"
-  default_prompt: "Use $denote-scribe to save this discussion, check the five-commit HyWiki cadence, and commit generated files through Magit."
+  short_description: "Create critical notes and review mature knowledge"
+  default_prompt: "Use $denote-scribe to save this discussion, run the due AI review, promote qualifying HyWiki concepts, and commit generated files through Magit."
