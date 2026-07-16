@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Constitution"
+  short_description: "Lightweight rules for reliable problem solving"
+  default_prompt: "Use $ai-constitution to solve this with proportionate reasoning and verified evidence."
