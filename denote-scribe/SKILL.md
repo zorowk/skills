@@ -7,27 +7,16 @@ description: Save completed AI troubleshooting, coding, or research conversation
 
 Treat Denote as reasoning history and HyWiki as stable knowledge.
 
-## Setup
-
-Load `scripts/denote-scribe.el`; it loads the sibling
-`common/scripts/skill-git.el` helper. Then call `denote-scribe-preflight`.
-Treat bundled scripts as executable implementations: during normal use, load and
-call documented entry points without reading source. Inspect source only when
-debugging, modifying a script, or resolving undocumented behavior.
-Preserve generated content and report exact errors. Read
+Load `scripts/denote-scribe.el` and use its public function docstrings and errors as
+the interface. Inspect source only to debug or modify it. Read
 `references/hywiki-denote-interface.md` only when integration details are needed.
 
 ## Workflow
 
-1. Summarize a completed conversation or useful checkpoint with
-   `assets/critical-note-template.org`, or use
-   `assets/critical-note-template-zh.org` when the conversation is primarily in
-   Chinese. Keep evidence separate from inference; compare alternatives and
-   counter-evidence; state uncertainty honestly.
-   Store compact assessment metadata in Org properties: `STATUS` and
-   `CREDIBILITY` for conclusions, and `MATURITY` and `HYWIKI_CANDIDATE` for
-   extracted concepts. Keep answers, decisions, evidence, boundaries, and reuse
-   value visible in the body.
+1. Select the language-matching critical template with
+   `denote-scribe-template-file`. Summarize a completed conversation or useful
+   checkpoint. Keep evidence separate from inference, compare alternatives and
+   counter-evidence, and state uncertainty.
 2. Choose a concrete title in the conversation language. Preserve useful commands,
    paths, errors, identifiers, measurements, and links.
 3. Call `denote-scribe-create`, then `denote-scribe-git-review-state`.
@@ -40,25 +29,18 @@ Preserve generated content and report exact errors. Read
    deep `supported`/`stable` investigation. Frequency is evidence of maturity, not
    a hard quota. Reject bare terms, transient fixes, generic reference material,
    and unresolved questions.
-6. Merge aliases and write qualifying concepts with
-   `assets/hywiki-concept-template.org`, or use
-   `assets/hywiki-concept-template-zh.org` for a primarily Chinese conversation;
-   prefer English canonical technical names. Preserve existing content and
-   provenance, deduplicate, and skip unchanged pages. A valid review may create no
-   HyWiki page.
-   Store `CREDIBILITY` and `REVIEW_PERIOD` in the Provenance property drawer, but
-   keep Denote source links visible.
+6. Merge aliases and select the language-matching HyWiki template with
+   `denote-scribe-template-file`; prefer English canonical technical names.
+   Preserve content and provenance, deduplicate, and skip unchanged pages. A valid
+   review may create no HyWiki page.
 7. Call `denote-scribe-git-commit` with the new Denote and only HyWiki pages changed
    by this run. Pass a true review flag only after the AI Review completes,
    including a valid no-promotion result. On failure, pass false so the next run
    retries.
 
-Before writing, inspect `~/Dropbox` status. Never include a pre-existing dirty
-path, directory, wildcard, or unrelated staged change. Do not push.
-
 During Review, keep non-actionable open questions in Denote. Suggest GTD only when
 a question has a concrete next action and warrants deliberate investment; do not
 create GTD items without authorization. For an explicit period or full review, use
 `denote-scribe-list-notes`; use `denote-scribe-hywiki-create` for qualifying pages.
-Older unstructured notes remain valid sources, but missing evidence lowers
-confidence.
+Do not push. Older unstructured notes remain valid sources, but missing evidence
+lowers confidence.

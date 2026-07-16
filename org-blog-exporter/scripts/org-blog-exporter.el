@@ -4,8 +4,10 @@
 
 (require 'org)
 (require 'ox-html)
+(require 'ox-publish)
 (require 'cl-lib)
 (require 'subr-x)
+(require 'xml)
 
 (unless (featurep 'skill-git)
   (let* ((script-directory
@@ -46,6 +48,20 @@ instead."
   :type 'file
   :group 'org-blog-exporter)
 
+(defcustom org-blog-exporter-assets-directory-name "image"
+  "Repository directory used for local resources during publishing."
+  :type 'string
+  :group 'org-blog-exporter)
+
+(defcustom org-blog-exporter-asset-extensions
+  '("png" "jpg" "jpeg" "gif" "webp" "svg" "avif" "bmp" "ico"
+    "mp4" "webm" "ogv" "mov" "m4v"
+    "mp3" "ogg" "oga" "wav" "flac" "m4a"
+    "pdf" "zip" "gz" "tar" "csv" "json")
+  "Local resource extensions copied during explicit publishing."
+  :type '(repeat string)
+  :group 'org-blog-exporter)
+
 (defconst org-blog-exporter--excluded-directories
   '(".git" ".stversions" "archive" "archives" "attach" "attachments"
     "assets" "auto" "backup" "backups" "draft" "drafts" "private" "tmp" "trash"))
@@ -78,18 +94,26 @@ instead."
   (org-blog-exporter--expand-directory
    (or notes-dir org-blog-exporter-notes-directory)))
 
+(defun org-blog-exporter--buffer-keyword (keyword)
+  "Return the first value of Org KEYWORD in the current buffer."
+  (let ((name (upcase keyword)))
+    (cdr (assoc name (org-collect-keywords (list name) (list name))))))
+
+(defun org-blog-exporter--file-keyword (file keyword)
+  "Return FILE's first Org KEYWORD value."
+  (let ((source (expand-file-name file)))
+    (with-temp-buffer
+      (insert-file-contents source)
+      (setq buffer-file-name source
+            default-directory (file-name-directory source))
+      (delay-mode-hooks (org-mode))
+      (org-blog-exporter--buffer-keyword keyword))))
+
 (defun org-blog-exporter--setupfile-keyword (keyword &optional setupfile)
   "Return KEYWORD value from SETUPFILE, or nil when absent."
-  (let ((file (org-blog-exporter--setupfile setupfile))
-        (case-fold-search t))
+  (let ((file (org-blog-exporter--setupfile setupfile)))
     (when (file-readable-p file)
-      (with-temp-buffer
-        (insert-file-contents file)
-        (goto-char (point-min))
-        (when (re-search-forward
-               (format "^#\\+%s:[ \t]*\\(.+?\\)[ \t]*$" (regexp-quote keyword))
-               nil t)
-          (string-trim (match-string-no-properties 1)))))))
+      (org-blog-exporter--file-keyword file keyword))))
 
 (defun org-blog-exporter--configured-output-directory (&optional setupfile)
   "Return the blog output directory declared in SETUPFILE, or nil."
@@ -164,8 +188,8 @@ instead."
   "Return non-nil when FILE looks like an editor backup or hidden file."
   (let ((name (file-name-nondirectory file)))
     (or (string-prefix-p "." name)
-        (string-prefix-p "#" name)
-        (string-suffix-p "~" name))))
+        (auto-save-file-name-p name)
+        (backup-file-name-p name))))
 
 (defun org-blog-exporter--filetags (file)
   "Return FILE-level Org tags declared in FILE."
@@ -207,6 +231,7 @@ instead."
   "Return non-nil when TARGET looks like a local file link."
   (and (stringp target)
        (not (string-empty-p target))
+       (not (file-remote-p target))
        (not (string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" target))
        (not (string-prefix-p "#" target))))
 
@@ -234,6 +259,125 @@ Each result entry is (raw-link absolute-path exists)."
                 (push (list raw absolute (file-exists-p absolute)) assets)))))))
     (nreverse assets)))
 
+(defun org-blog-exporter--assets-directory (repository-root)
+  "Return the local-resource directory below REPOSITORY-ROOT."
+  (let ((name org-blog-exporter-assets-directory-name))
+    (unless (and (stringp name)
+                 (string-match-p "\\`[^/\\\\.][^/\\\\]*\\'" name)
+                 (not (member name '("." ".."))))
+      (error "Invalid blog assets directory name: %S" name))
+    (file-name-as-directory (expand-file-name name repository-root))))
+
+(defun org-blog-exporter--supported-asset-p (file)
+  "Return non-nil when FILE has a configured resource extension."
+  (let ((extension (file-name-extension file)))
+    (and extension
+         (member (downcase extension)
+                 (mapcar #'downcase org-blog-exporter-asset-extensions)))))
+
+(defun org-blog-exporter--file-digest (file)
+  "Return a SHA-256 digest for FILE contents."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file)
+    (secure-hash 'sha256 (current-buffer))))
+
+(defun org-blog-exporter--same-file-contents-p (left right)
+  "Return non-nil when LEFT and RIGHT have identical contents."
+  (or (file-equal-p left right)
+      (and (= (file-attribute-size (file-attributes left))
+              (file-attribute-size (file-attributes right)))
+           (string= (org-blog-exporter--file-digest left)
+                    (org-blog-exporter--file-digest right)))))
+
+(defun org-blog-exporter--asset-plan (org-files repository-root)
+  "Validate resources in ORG-FILES and return their publication plan.
+
+Each plan entry is a plist with :source and :target.  Resources are flattened
+into the configured assets directory, so conflicting basenames are rejected."
+  (let ((directory (org-blog-exporter--assets-directory repository-root))
+        (by-target (make-hash-table :test #'equal))
+        plan)
+    (dolist (org-file org-files)
+      (dolist (asset (org-blog-exporter-local-assets org-file))
+        (let ((source (expand-file-name (nth 1 asset))))
+          ;; Org-to-Org links are page navigation, not static resources.
+          (unless (string= (downcase (or (file-name-extension source) "")) "org")
+            (let* ((target (expand-file-name (file-name-nondirectory source)
+                                             directory))
+                   (previous (gethash target by-target)))
+              (unless (file-regular-p source)
+                (error "Local blog resource is missing or not a file: %s" source))
+              (unless (file-readable-p source)
+                (error "Local blog resource is not readable: %s" source))
+              (unless (org-blog-exporter--supported-asset-p source)
+                (error "Unsupported local blog resource type: %s" source))
+              (when (and previous
+                         (not (org-blog-exporter--same-file-contents-p
+                               source previous)))
+                (error "Conflicting blog resources share basename %s: %s and %s"
+                       (file-name-nondirectory source) previous source))
+              (when (and (file-exists-p target)
+                         (not (file-regular-p target)))
+                (error "Blog resource target is not a regular file: %s" target))
+              (when (and (file-regular-p target)
+                         (not (org-blog-exporter--same-file-contents-p
+                               source target)))
+                (error "Refusing to overwrite different blog resource: %s"
+                       target))
+              (unless previous
+                (puthash target source by-target)
+                (push (list :source source :target target) plan)))))))
+    (nreverse plan)))
+
+(defun org-blog-exporter--asset-targets (plan)
+  "Return a source-to-target alist derived from PLAN."
+  (mapcar (lambda (entry)
+            (cons (plist-get entry :source) (plist-get entry :target)))
+          plan))
+
+(defun org-blog-exporter--copy-assets (plan)
+  "Copy resources in PLAN and return all target paths."
+  (let (targets)
+    (dolist (entry plan)
+      (let ((source (plist-get entry :source))
+            (target (plist-get entry :target)))
+        (make-directory (file-name-directory target) t)
+        (unless (and (file-regular-p target)
+                     (org-blog-exporter--same-file-contents-p source target))
+          (org-publish-attachment nil source (file-name-directory target)))
+        (push target targets)))
+    (nreverse targets)))
+
+(defun org-blog-exporter--rewrite-asset-links (source target asset-targets)
+  "Rewrite local links in current buffer using ASSET-TARGETS.
+
+SOURCE is the Org file and TARGET is its HTML output path.  Only this temporary
+export buffer is changed."
+  (let (replacements)
+    (org-element-map (org-element-parse-buffer) 'link
+      (lambda (link)
+        (let ((type (org-element-property :type link))
+              (path (org-element-property :path link))
+              (raw (org-element-property :raw-link link)))
+          (when (and (string= type "file")
+                     (org-blog-exporter--local-link-target-p path))
+            (let* ((absolute (org-blog-exporter--asset-path path source))
+                   (published (cdr (assoc absolute asset-targets))))
+              (when published
+                (push (list (org-element-property :begin link)
+                            (org-element-property :end link)
+                            raw
+                            (concat "file:"
+                                    (file-relative-name
+                                     published (file-name-directory target))))
+                      replacements)))))))
+    (dolist (replacement (sort replacements (lambda (a b) (> (car a) (car b)))))
+      (goto-char (nth 0 replacement))
+      (unless (search-forward (nth 2 replacement) (nth 1 replacement) t)
+        (error "Could not rewrite local resource link: %s" (nth 2 replacement)))
+      (replace-match (nth 3 replacement) t t))))
+
 (defun org-blog-exporter--target-file (org-file &optional output-dir notes-dir setupfile)
   "Return the HTML target path for ORG-FILE."
   (let* ((relative (org-blog-exporter--relative-to-notes org-file notes-dir))
@@ -243,9 +387,7 @@ Each result entry is (raw-link absolute-path exists)."
 
 (defun org-blog-exporter--has-setupfile-p ()
   "Return non-nil when current buffer already has a setupfile directive."
-  (save-excursion
-    (goto-char (point-min))
-    (re-search-forward "^#\\+SETUPFILE:" nil t)))
+  (org-blog-exporter--buffer-keyword "SETUPFILE"))
 
 (defun org-blog-exporter--insert-setupfile-if-missing (setupfile)
   "Insert SETUPFILE directive when current buffer lacks one."
@@ -283,7 +425,7 @@ Use Chinese labels when CHINESE is non-nil."
                 (label (if chinese (nth 2 spec) (nth 1 spec))))
            (format
             "<span class=\"assessment-item\"><strong>%s%s</strong>%s</span>"
-            label separator (org-blog-exporter--html-escape value))))
+            label separator (xml-escape-string value))))
        items)
       " <span aria-hidden=\"true\">·</span> "))))
 
@@ -308,7 +450,8 @@ Use Chinese labels when CHINESE is non-nil."
                     (org-blog-exporter--assessment-summary-html items chinese)
                     "\n#+end_export\n\n")))))))
 
-(defun org-blog-exporter-export-file (org-file &optional output-dir setupfile)
+(defun org-blog-exporter-export-file
+    (org-file &optional output-dir setupfile asset-targets)
   "Export ORG-FILE to HTML and return the exported path."
   (let* ((source (expand-file-name org-file))
          (setup (org-blog-exporter--setupfile setupfile))
@@ -323,6 +466,8 @@ Use Chinese labels when CHINESE is non-nil."
       (insert-file-contents source)
       (setq buffer-file-name source)
       (delay-mode-hooks (org-mode))
+      (when asset-targets
+        (org-blog-exporter--rewrite-asset-links source target asset-targets))
       (org-blog-exporter--insert-assessment-summaries)
       (org-blog-exporter--insert-setupfile-if-missing setup)
       (let ((exported (org-export-to-file 'html target nil nil nil nil nil)))
@@ -330,13 +475,16 @@ Use Chinese labels when CHINESE is non-nil."
           (error "Export did not create HTML for %s" source))
         exported))))
 
-(defun org-blog-exporter-export-files (org-files &optional output-dir setupfile)
+(defun org-blog-exporter-export-files
+    (org-files &optional output-dir setupfile asset-targets)
   "Export ORG-FILES and return exported HTML paths."
   (mapcar (lambda (file)
-            (org-blog-exporter-export-file file output-dir setupfile))
+            (org-blog-exporter-export-file
+             file output-dir setupfile asset-targets))
           org-files))
 
-(defun org-blog-exporter-export-all (&optional notes-dir output-dir setupfile)
+(defun org-blog-exporter-export-all
+    (&optional notes-dir output-dir setupfile asset-targets)
   "Export all candidate Org files under NOTES-DIR and return a plist summary."
   (let* ((root (org-blog-exporter--notes-directory notes-dir))
          (files (org-blog-exporter-list-candidates root))
@@ -344,7 +492,9 @@ Use Chinese labels when CHINESE is non-nil."
          (errors nil))
     (dolist (file files)
       (condition-case err
-          (push (org-blog-exporter-export-file file output-dir setupfile) exported)
+          (push (org-blog-exporter-export-file
+                 file output-dir setupfile asset-targets)
+                exported)
         (error
          (push (list file (error-message-string err)) errors))))
     (list :notes-directory root
@@ -356,27 +506,16 @@ Use Chinese labels when CHINESE is non-nil."
           :error-count (length errors)
           :errors (nreverse errors))))
 
-(defun org-blog-exporter--file-keyword (file keyword)
-  "Return FILE's first Org KEYWORD value, ignoring case."
-  (let ((case-fold-search t))
-    (with-temp-buffer
-      (insert-file-contents file)
-      (goto-char (point-min))
-      (when (re-search-forward
-             (format "^#\\+%s:[ \\t]*\\(.+?\\)[ \\t]*$"
-                     (regexp-quote keyword))
-             nil t)
-        (string-trim (match-string-no-properties 1))))))
-
 (defun org-blog-exporter--post-date (org-file)
   "Return ORG-FILE's publication date as YYYY-MM-DD."
   (let ((declared (org-blog-exporter--file-keyword org-file "DATE"))
         (base (file-name-base org-file)))
     (cond
      ((and declared
-           (string-match
-            "[<[]\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" declared))
-      (match-string 1 declared))
+           (condition-case nil
+               (format-time-string
+                "%Y-%m-%d" (org-time-string-to-time declared))
+             (error nil))))
      ((string-match
        "\\`\\([0-9]\\{4\\}\\)\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)T" base)
       (format "%s-%s-%s"
@@ -387,22 +526,6 @@ Use Chinese labels when CHINESE is non-nil."
       (format-time-string "%Y-%m-%d"
                           (file-attribute-modification-time
                            (file-attributes org-file)))))))
-
-(defun org-blog-exporter--html-unescape (text)
-  "Decode the small HTML entity set used in generated index TEXT."
-  (let ((value text))
-    (dolist (pair '(("&quot;" . "\"") ("&gt;" . ">") ("&lt;" . "<")
-                    ("&amp;" . "&")))
-      (setq value (string-replace (car pair) (cdr pair) value)))
-    value))
-
-(defun org-blog-exporter--html-escape (text)
-  "Escape TEXT for generated HTML content and attributes."
-  (let ((value text))
-    (dolist (pair '(("&" . "&amp;") ("<" . "&lt;") (">" . "&gt;")
-                    ("\"" . "&quot;")))
-      (setq value (string-replace (car pair) (cdr pair) value)))
-    value))
 
 (defun org-blog-exporter--index-entries (index-file)
   "Return existing blog entries parsed from INDEX-FILE."
@@ -417,9 +540,9 @@ Use Chinese labels when CHINESE is non-nil."
                  "<a href=\\\"\\([^\\\"]+\\)\\\">\\([^<]+\\)</a></li>")
                 nil t)
           (push (list :date (match-string-no-properties 1)
-                      :href (org-blog-exporter--html-unescape
+                      :href (xml-substitute-special
                              (match-string-no-properties 2))
-                      :title (org-blog-exporter--html-unescape
+                      :title (xml-substitute-special
                               (match-string-no-properties 3)))
                 entries))))
     (nreverse entries)))
@@ -434,7 +557,7 @@ Use Chinese labels when CHINESE is non-nil."
                                output-dir setupfile))))
     (list :date (org-blog-exporter--post-date org-file)
           :href (concat "./" relative)
-          :title (or (org-blog-exporter--file-keyword org-file "TITLE")
+          :title (or (org-get-title org-file)
                      (file-name-base org-file)))))
 
 (defun org-blog-exporter--merge-index-entries (existing updates)
@@ -483,8 +606,8 @@ Use Chinese labels when CHINESE is non-nil."
           (insert (format
                    "<li><time datetime=\"%s\">%s</time><a href=\"%s\">%s</a></li>\n"
                    date (format-time-string "%d %b, %Y" time)
-                   (org-blog-exporter--html-escape (plist-get entry :href))
-                   (org-blog-exporter--html-escape (plist-get entry :title))))))
+                   (xml-escape-string (plist-get entry :href))
+                   (xml-escape-string (plist-get entry :title))))))
       (insert "</ul>\n</main>\n<footer></footer>\n</body>\n</html>\n"))
     index-file))
 
@@ -506,9 +629,13 @@ Use Chinese labels when CHINESE is non-nil."
         (error "Refusing to publish %d pre-existing local commit(s)" ahead)))
     repository))
 
-(defun org-blog-exporter--html-relative-path-p (relative)
-  "Return non-nil when RELATIVE names an HTML file."
-  (string-match-p "\\.html\\'" relative))
+(defun org-blog-exporter--published-relative-path-p (relative)
+  "Return non-nil when RELATIVE is publishable HTML or a copied resource."
+  (or (string-match-p "\\.html\\'" relative)
+      (string-match-p
+       (format "\\`%s/[^/]+\\'"
+               (regexp-quote org-blog-exporter-assets-directory-name))
+       relative)))
 
 (defun org-blog-exporter--finish-publish (repository exported subject)
   "Commit EXPORTED files in REPOSITORY with SUBJECT, then push."
@@ -516,8 +643,8 @@ Use Chinese labels when CHINESE is non-nil."
          (relative-paths
           (mapcar (lambda (path)
                     (skill-git-relative-path
-                     root path #'org-blog-exporter--html-relative-path-p
-                     "exported HTML files"))
+                     root path #'org-blog-exporter--published-relative-path-p
+                     "published blog files"))
                   exported))
          (status (skill-git-status root relative-paths)))
     (if (string-empty-p status)
@@ -525,8 +652,9 @@ Use Chinese labels when CHINESE is non-nil."
                 (list :changed nil :exported exported :commit nil :push nil))
       (let ((commit
              (skill-git-commit-paths
-              root subject exported #'org-blog-exporter--html-relative-path-p
-              "exported HTML files")))
+              root subject exported
+              #'org-blog-exporter--published-relative-path-p
+              "published blog files")))
         (skill-git-assert-clean root)
         (append repository
                 (list :changed t
@@ -537,47 +665,61 @@ Use Chinese labels when CHINESE is non-nil."
 ;;;###autoload
 (defun org-blog-exporter-publish-files
     (org-files &optional title repository-dir setupfile)
-  "Export ORG-FILES, commit changed HTML, and push the blog repository.
+  "Publish ORG-FILES and their local resources to the blog repository.
 
 TITLE is used in the commit subject and defaults to `Publish Org HTML'.
-Read repository defaults from SETUPFILE and clone when absent."
+Read repository defaults from SETUPFILE and clone when absent.  Validate and
+copy referenced resources, rewrite their exported links, update index.html,
+commit only generated paths, and push."
   (unless (and (listp org-files) org-files)
     (error "ORG-FILES must be a non-empty list"))
   (let* ((repository
           (org-blog-exporter--prepare-publish-repository
            repository-dir setupfile))
          (root (plist-get repository :git-root))
-         (exported (org-blog-exporter-export-files org-files root setupfile))
+         (asset-plan (org-blog-exporter--asset-plan org-files root))
+         (asset-targets (org-blog-exporter--asset-targets asset-plan))
+         (exported (org-blog-exporter-export-files
+                    org-files root setupfile asset-targets))
          (index-file
           (org-blog-exporter-update-index org-files root setupfile))
+         (assets (org-blog-exporter--copy-assets asset-plan))
          (subject (format "chore(blog): %s" (or title "Publish Org HTML"))))
     (append (org-blog-exporter--finish-publish
-             repository (append exported (list index-file)) subject)
-            (list :index index-file))))
+             repository (append exported (list index-file) assets) subject)
+            (list :index index-file :assets assets))))
 
 ;;;###autoload
 (defun org-blog-exporter-publish-all
     (&optional title notes-dir repository-dir setupfile)
-  "Export all public notes, commit changed HTML, and push the blog repository.
+  "Publish all public notes and their local resources to the blog repository.
 
 TITLE is used in the commit subject and defaults to `Publish Org HTML'.
-Read repository defaults from SETUPFILE and clone when absent."
+Read repository defaults from SETUPFILE and clone when absent.  Validate and
+copy referenced resources, rewrite their exported links, update index.html,
+commit only generated paths, and push."
   (let* ((repository
           (org-blog-exporter--prepare-publish-repository
            repository-dir setupfile))
          (root (plist-get repository :git-root))
-         (summary (org-blog-exporter-export-all notes-dir root setupfile)))
+         (files (org-blog-exporter-list-candidates notes-dir))
+         (asset-plan (org-blog-exporter--asset-plan files root))
+         (asset-targets (org-blog-exporter--asset-targets asset-plan))
+         (summary (org-blog-exporter-export-all
+                   notes-dir root setupfile asset-targets)))
     (unless (zerop (plist-get summary :error-count))
       (error "Blog export failed: %S" (plist-get summary :errors)))
     (let ((index-file
            (org-blog-exporter-update-index
-            (plist-get summary :candidates) root setupfile)))
+            (plist-get summary :candidates) root setupfile))
+          (assets (org-blog-exporter--copy-assets asset-plan)))
       (append
        summary
        (org-blog-exporter--finish-publish
-        repository (append (plist-get summary :exported) (list index-file))
+        repository
+        (append (plist-get summary :exported) (list index-file) assets)
         (format "chore(blog): %s" (or title "Publish Org HTML")))
-       (list :index index-file)))))
+       (list :index index-file :assets assets)))))
 
 (provide 'org-blog-exporter)
 

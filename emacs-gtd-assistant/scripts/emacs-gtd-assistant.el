@@ -4,7 +4,6 @@
 
 (require 'org)
 (require 'org-id)
-(require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
 
@@ -24,6 +23,11 @@
 
 (defcustom emacs-gtd-default-headline "Personal"
   "Default top-level heading for newly added tasks."
+  :type 'string
+  :group 'emacs-gtd-assistant)
+
+(defcustom emacs-gtd-work-headline "Deepin"
+  "Top-level heading for tasks added with work context."
   :type 'string
   :group 'emacs-gtd-assistant)
 
@@ -73,14 +77,28 @@
 
 (defun emacs-gtd--goto-heading (headline)
   "Move to top-level HEADLINE, creating it if missing."
-  (goto-char (point-min))
-  (unless (re-search-forward
-           (format "^\\* %s\\s-*$" (regexp-quote headline))
-           nil t)
-    (goto-char (point-max))
-    (unless (bolp) (insert "\n"))
-    (insert "* " headline "\n"))
-  (beginning-of-line))
+  (let ((position
+         (catch 'found
+           (org-map-entries
+            (lambda ()
+              (when (and (= (org-outline-level) 1)
+                         (string= (org-get-heading t t t t) headline))
+                (throw 'found (point))))
+            nil 'file))))
+    (if position
+        (goto-char position)
+      (goto-char (point-max))
+      (unless (bolp) (insert "\n"))
+      (org-insert-heading)
+      (org-edit-headline headline))))
+
+(defun emacs-gtd--headline (plist)
+  "Return the destination headline configured by task PLIST."
+  (or (plist-get plist :headline)
+      (pcase (plist-get plist :context)
+        ('work emacs-gtd-work-headline)
+        ((or 'personal 'nil) emacs-gtd-default-headline)
+        (context (error "Unknown task context: %S" context)))))
 
 (defun emacs-gtd--timestamp-value (name)
   "Return Org timestamp string for special property NAME."
@@ -140,15 +158,11 @@ Create an ID only when CREATE-ID is non-nil."
   (emacs-gtd--single-line id "ID")
   (set-buffer (emacs-gtd--buffer t))
   (widen)
-   (goto-char (point-min))
-   (unless (re-search-forward
-            (format "^[ \t]*:ID:[ \t]+%s[ \t]*$" (regexp-quote id))
-            nil t)
-     (error "No GTD item with ID: %s" id))
-   (org-back-to-heading t)
-   (unless (and (org-at-heading-p)
-                (string= (org-entry-get (point) "ID") id))
-     (error "No GTD item with ID: %s" id)))
+  (let ((position (org-find-property "ID" id)))
+    (unless position
+      (error "No GTD item with ID: %s" id))
+    (goto-char position)
+    (org-back-to-heading t)))
 
 (defun emacs-gtd--ensure-id-at-point ()
   "Ensure current heading has an ID and return it."
@@ -191,7 +205,7 @@ Create an ID only when CREATE-ID is non-nil."
 
 QUERY is treated as a regular expression.  This function does not create IDs."
   (emacs-gtd--single-line query "QUERY")
-  (cl-remove-if-not
+  (seq-filter
    (lambda (item)
      (let ((title (cdr (assoc 'title item))))
        (and title (string-match-p query title))))
@@ -199,11 +213,12 @@ QUERY is treated as a regular expression.  This function does not create IDs."
 
 ;;;###autoload
 (defun emacs-gtd-add-task (title &optional plist)
-  "Add TITLE as a GTD task according to PLIST and return the created item."
+  "Add TITLE as a GTD task according to PLIST and return the created item.
+
+PLIST may select :context `personal' or `work', or override it with :headline."
   (emacs-gtd--single-line title "TITLE")
   (let* ((headline (emacs-gtd--single-line
-                    (or (plist-get plist :headline)
-                        emacs-gtd-default-headline)
+                    (emacs-gtd--headline plist)
                     "HEADLINE"))
          (todo (or (plist-get plist :todo) "TODO"))
          (priority (plist-get plist :priority))
@@ -231,24 +246,26 @@ QUERY is treated as a regular expression.  This function does not create IDs."
                  priority)))
       (org-with-wide-buffer
        (emacs-gtd--goto-heading headline)
-       (org-end-of-subtree t t)
-       (unless (bolp) (insert "\n"))
-       (let ((heading-point (point)))
-         (insert "** " todo " ")
-         (when priority
-           (insert "[#" priority "] "))
-         (insert title)
-         (insert "\n")
+       (org-insert-subheading nil)
+       (org-edit-headline title)
+       (org-todo todo)
+       (when priority
+         (org-priority (aref priority 0)))
+       (when tags
+         (org-set-tags tags))
+       (let ((heading-point (point-marker)))
          (when scheduled
-           (insert "SCHEDULED: " scheduled "\n"))
+           (org-schedule nil scheduled))
          (when deadline
-           (insert "DEADLINE: " deadline "\n"))
+           (org-deadline nil deadline))
          (when (and body (not (string-empty-p body)))
-           (insert body "\n"))
+           (goto-char heading-point)
+           (org-end-of-meta-data t)
+           (insert body)
+           (unless (bolp) (insert "\n")))
          (goto-char heading-point)
-         (when tags
-           (org-set-tags tags))
          (let ((item (emacs-gtd--item-at-point t)))
+           (set-marker heading-point nil)
            (emacs-gtd--save)
            item))))))
 

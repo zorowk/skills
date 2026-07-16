@@ -6,22 +6,19 @@ description: "Use when an AI assistant should manage the user's Emacs Org GTD ta
 # Emacs GTD Assistant
 
 Manage GTD through the running Emacs server. Load
-`scripts/emacs-gtd-assistant.el` from this skill directory and call
-`emacs-gtd-preflight`; report exact failures.
-Treat bundled scripts as executable implementations: during normal use, load and
-call documented entry points without reading source. Inspect source only when
-debugging, modifying a script, or resolving undocumented behavior.
+`scripts/emacs-gtd-assistant.el` from this skill directory. Use its public function
+docstrings and validation errors as the interface; inspect source only to debug or
+modify it.
 
 ## Workflow
 
-- List agenda/tasks: call `emacs-gtd-list`; summarize date, todo state, priority, and title. Hide IDs/lines unless needed.
-- Add a task with `emacs-gtd-add-task`. Use `Personal` for personal tasks and
-  `Deepin` for work unless the user chooses another heading.
-- Modify existing item: list/find candidates first; if ambiguous, ask. If the chosen item has no ID, call `emacs-gtd-ensure-id-at-line`, then mutate by ID.
-- Delete/archive only on explicit user request. Prefer `DONE` when the user says they finished something.
-
-Mutation helpers are `emacs-gtd-set-state`, `emacs-gtd-reschedule`,
-`emacs-gtd-set-deadline`, `emacs-gtd-delete`, and `emacs-gtd-archive`.
+- List agenda/tasks with `emacs-gtd-list`; summarize date, state, priority, and title.
+- Add a task with `emacs-gtd-add-task`, selecting personal or work context unless
+  the user chooses a specific heading.
+- Before modifying, list or find candidates and resolve ambiguity. Ensure the chosen
+  item has an ID, then call the matching mutation function.
+- Delete or archive only with explicit authorization. Prefer `DONE` when the user
+  says an item is finished.
 
 Keep IDs internal unless needed to resolve ambiguity. Do not edit the Org file
-directly or perform destructive actions without clear authorization.
+directly or bypass a program validation error.

@@ -8,18 +8,16 @@ description: "Use when an AI assistant needs targeted code context from the user
 Use the running Emacs session for compact context, including unsaved buffers. Load
 `scripts/emacs-code-navigator.el` from this skill directory. If the server is
 unavailable, report the error and fall back to disk-based tools.
-Treat bundled scripts as executable implementations: during normal use, load and
-call documented entry points without reading source. Inspect source only when
-debugging, modifying a script, or resolving undocumented behavior.
-Helper names below use the `emacs-code-navigator-` prefix.
+Use the public `emacs-code-navigator-` functions and their docstrings as the
+interface; inspect source only to debug or modify it.
 
 ## Workflow
 
-1. Locate with `project-files`, `search`, or `imenu`.
-2. Expand the best hit with `context-at-line`.
-3. Resolve relationships with the line-based xref helpers; use `read-region` only
+1. Locate with the project-files, search, or imenu entry point.
+2. Expand the best hit with the context-at-line entry point.
+3. Resolve relationships with the line-based xref entry points; use read-region only
    after identifying the relevant block.
-4. Request line or file diagnostics when useful. Run `project-diagnostics` only
+4. Request line or file diagnostics when useful. Run project-wide diagnostics only
    when project-wide diagnostics justify visiting many files.
 
 ## When Not To Use

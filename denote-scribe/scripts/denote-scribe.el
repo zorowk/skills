@@ -7,6 +7,8 @@
 
 (require 'seq)
 (require 'subr-x)
+(require 'org)
+(require 'org-element)
 
 (unless (featurep 'skill-git)
   (let* ((script-directory
@@ -21,6 +23,12 @@
 (defgroup denote-scribe nil
   "Create Denote reports from AI conversation summaries."
   :group 'denote)
+
+(defconst denote-scribe--skill-directory
+  (file-name-directory
+   (directory-file-name
+    (file-name-directory (or load-file-name buffer-file-name))))
+  "Absolute Denote Scribe skill directory.")
 
 (defcustom denote-scribe-notes-directory "~/Dropbox/notes/"
   "Directory where `denote-scribe-create' creates Denote notes."
@@ -65,15 +73,7 @@
 (declare-function hywiki-add-page "hywiki" (page-name &optional force-flag))
 (declare-function hywiki-get-existing-page-file "hywiki" (reference))
 (declare-function hywiki-word-is-p "hywiki" (word))
-(declare-function magit-call-git "magit-process" (&rest args))
 (declare-function magit-git-string "magit-git" (&rest args))
-(declare-function magit-git-success "magit-git" (&rest args))
-(declare-function magit-toplevel "magit-git" (&optional directory))
-(declare-function org-element-lineage "org-element" (datum &optional types with-self))
-(declare-function org-element-map "org-element" (data types fun &rest args))
-(declare-function org-element-parse-buffer "org-element" (&rest args))
-(declare-function org-element-property "org-element" (property node &rest args))
-(declare-function org-fill-paragraph "org" (&optional justify region))
 
 (defconst denote-scribe-critical-headings
   '("Goal" "Question" "Context" "Evidence" "Hypotheses" "Investigation"
@@ -95,6 +95,27 @@
     "溯源")
   "Required Chinese headings for a HyWiki concept body, in order.")
 
+;;;###autoload
+(defun denote-scribe-template-file (kind &optional language)
+  "Return the bundled template for KIND and LANGUAGE.
+
+KIND is `critical' or `hywiki'.  LANGUAGE is `en' or `zh' and defaults to
+`en'.  Signal an error if the selected template is unavailable."
+  (let* ((lang (or language 'en))
+         (name
+          (pcase (cons kind lang)
+            (`(critical . en) "critical-note-template.org")
+            (`(critical . zh) "critical-note-template-zh.org")
+            (`(hywiki . en) "hywiki-concept-template.org")
+            (`(hywiki . zh) "hywiki-concept-template-zh.org")
+            (_ (error "Unknown template kind/language: %S/%S" kind lang))))
+         (file (expand-file-name name
+                                 (expand-file-name "assets"
+                                                   denote-scribe--skill-directory))))
+    (unless (file-readable-p file)
+      (error "Denote Scribe template is not readable: %s" file))
+    file))
+
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
   (and (stringp value) (not (string-empty-p value)) value))
@@ -105,7 +126,6 @@
 
 (defun denote-scribe--org-tree ()
   "Return a parsed Org tree for the current buffer."
-  (require 'org-element)
   (org-element-parse-buffer))
 
 (defun denote-scribe--top-level-headings (tree)
@@ -256,15 +276,6 @@ Denote commit that has not yet been created."
 (define-obsolete-function-alias
   'denote-scribe-git-hywiki-state
   #'denote-scribe-git-review-state "2026-07-16")
-
-(defun denote-scribe--git-relative-path (root path)
-  "Return validated repository-relative Org PATH below ROOT."
-  (skill-git-relative-path
-   root path
-   (lambda (relative)
-     (string-match-p
-      "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative))
-   "notes/*.org or hywiki/*.org"))
 
 ;;;###autoload
 (defun denote-scribe-git-commit

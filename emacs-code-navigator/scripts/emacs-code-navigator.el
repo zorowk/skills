@@ -5,7 +5,7 @@
 (require 'project)
 (require 'xref)
 (require 'imenu)
-(require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 (require 'thingatpt)
 (require 'flymake nil t)
@@ -21,21 +21,17 @@
 
 (defun emacs-code-navigator--directory-files (directory)
   "Return regular files under DIRECTORY, skipping noisy generated directories."
-  (let (result)
-    (dolist (entry (directory-files directory t directory-files-no-dot-files-regexp))
-      (cond
-       ((and (file-directory-p entry)
-             (not (file-symlink-p entry))
-             (not (emacs-code-navigator--ignored-directory-p entry)))
-        (setq result
-              (append result (emacs-code-navigator--directory-files entry))))
-       ((file-regular-p entry)
-        (push entry result))))
-    (nreverse result)))
+  (directory-files-recursively
+   directory "." nil
+   (lambda (subdirectory)
+     (not (emacs-code-navigator--ignored-directory-p subdirectory)))))
 
 (defun emacs-code-navigator--project (directory)
   "Return the project for DIRECTORY, or nil."
-  (project-current nil (file-name-as-directory (expand-file-name directory))))
+  (condition-case nil
+      (project-current nil
+                       (file-name-as-directory (expand-file-name directory)))
+    (error nil)))
 
 (defun emacs-code-navigator-project-root (directory)
   "Return the project root for DIRECTORY."
@@ -47,21 +43,32 @@
 (defun emacs-code-navigator-project-files (directory &optional limit)
   "Return project files for DIRECTORY, capped at LIMIT."
   (let* ((project (emacs-code-navigator--project directory))
-         (root (emacs-code-navigator-project-root directory))
+         (project-files
+          (and project
+               (condition-case nil
+                   (project-files project)
+                 (error :unavailable))))
+         (root (if (eq project-files :unavailable)
+                   (file-name-as-directory (expand-file-name directory))
+                 (emacs-code-navigator-project-root directory)))
          (max-count (or limit 500))
-         (files (if project
-                    (project-files project)
-                  (emacs-code-navigator--directory-files root)))
+         (files (if (or (null project) (eq project-files :unavailable))
+                    (emacs-code-navigator--directory-files root)
+                  project-files))
          (relative-files (mapcar (lambda (file) (file-relative-name file root)) files)))
-    (cl-subseq relative-files 0 (min max-count (length relative-files)))))
+    (seq-take relative-files max-count)))
 
 (defun emacs-code-navigator--project-file-list (directory)
   "Return absolute project file names for DIRECTORY."
   (let* ((project (emacs-code-navigator--project directory))
-         (root (emacs-code-navigator-project-root directory)))
-    (if project
-        (project-files project)
-      (emacs-code-navigator--directory-files root))))
+         (project-files
+          (and project
+               (condition-case nil
+                   (project-files project)
+                 (error :unavailable)))))
+    (if (or (null project) (eq project-files :unavailable))
+        (emacs-code-navigator--directory-files directory)
+      project-files)))
 
 (defun emacs-code-navigator-read-region (file start-line &optional end-line)
   "Return FILE lines from START-LINE to END-LINE with line numbers."
@@ -136,12 +143,12 @@
 
 Return at most LIMIT matches as (file line summary).  Emacs chooses the
 actual search backend through `xref-search-program'."
-  (let* ((files (cl-remove-if-not #'file-regular-p
-                                  (emacs-code-navigator--project-file-list directory)))
+  (let* ((files (seq-filter #'file-regular-p
+                            (emacs-code-navigator--project-file-list directory)))
          (matches (xref-matches-in-files regexp files))
          (max-count (or limit 100)))
     (mapcar #'emacs-code-navigator--xref-location-data
-            (cl-subseq matches 0 (min max-count (length matches))))))
+            (seq-take matches max-count))))
 
 (defun emacs-code-navigator--xref-at-identifier (file identifier fn)
   "Visit FILE, search IDENTIFIER, and call xref function FN."
@@ -342,7 +349,7 @@ returned.  The result entries are (beg-line end-line type text)."
   (let ((distance (or radius 0))
         (start (max 1 (- line (or radius 0))))
         (end (+ line (or radius 0))))
-    (cl-remove-if-not
+    (seq-filter
      (lambda (diag)
        (let ((beg (nth 0 diag))
              (diag-end (nth 1 diag)))
@@ -395,7 +402,7 @@ plain strings delivered synchronously through their callbacks."
                (when (stringp doc)
                  (push (string-trim (substring-no-properties doc)) docs))))
             (error nil)))
-        (delete-dups (nreverse (cl-remove-if #'string-empty-p docs)))))))
+        (delete-dups (nreverse (seq-remove #'string-empty-p docs)))))))
 
 (defun emacs-code-navigator-context-at-line (file line &optional diagnostic-radius)
   "Return compact Emacs context for FILE at LINE.
