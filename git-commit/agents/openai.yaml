@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Commit"
+  short_description: "Generate evidence-backed Git commit messages"
+  default_prompt: "Use $git-commit to inspect the current changes and create a concise, detailed commit message that an AI can understand without reading the diff."

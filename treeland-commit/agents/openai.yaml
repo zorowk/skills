@@ -1,4 +1,0 @@
-interface:
-  display_name: "Treeland Commit"
-  short_description: "Generate Treeland commit messages"
-  default_prompt: "Use $treeland-commit to generate a Treeland-format commit message from the current changes."
