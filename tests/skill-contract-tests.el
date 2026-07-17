@@ -46,6 +46,12 @@
                   "../git-commit/scripts/ai-git-commit" (request))
 (declare-function ai-git-commit-format
                   "../git-commit/scripts/ai-git-commit" (spec))
+(declare-function ai-git-commit--wait-for-process
+                  "../git-commit/scripts/ai-git-commit" (process))
+(declare-function ai-git-commit--ensure-magit
+                  "../git-commit/scripts/ai-git-commit" ())
+(declare-function ai-git-commit--head-message
+                  "../git-commit/scripts/ai-git-commit" ())
 
 (defconst skill-contract-tests-root
   (file-name-directory
@@ -118,11 +124,17 @@
         (gtd
          (plist-get
           (plist-get (emacs-gtd-execute '(:operation describe)) :data)
+          :operations))
+        (git-commit
+         (plist-get
+          (plist-get (ai-git-commit-run '(:operation describe)) :data)
           :operations)))
     (dolist (operation '(region imenu workspace-symbol xref locate diagnostics))
       (should (memq operation navigator)))
     (should (memq 'preflight denote))
-    (should (memq 'preflight gtd))))
+    (should (memq 'preflight gtd))
+    (should (memq 'commit git-commit))
+    (should (memq 'amend git-commit))))
 
 (ert-deftest navigator-region-and-imenu-use-the-facade ()
   (let* ((file (expand-file-name "common/scripts/skill-runtime.el"
@@ -254,7 +266,66 @@
 (ert-deftest destructive-facades-require-authorization-before-effects ()
   (should-error (emacs-gtd-execute '(:operation delete :id "sample")))
   (should-error (denote-scribe-run '(:operation commit)))
-  (should-error (org-blog-exporter-run '(:operation publish))))
+  (should-error (org-blog-exporter-run '(:operation publish)))
+  (should-error
+   (ai-git-commit-run
+    (append '(:operation commit) skill-contract-tests-message-spec))))
+
+(ert-deftest git-commit-facade-uses-one-headless-magit-message-argument ()
+  (let (captured)
+    (cl-letf (((symbol-function 'magit-toplevel)
+               (lambda (&optional _) "/tmp/repository/"))
+              ((symbol-function 'ai-git-commit--ensure-magit)
+               (lambda () t))
+              ((symbol-function 'magit-commit-create)
+               (lambda (arguments)
+                 (setq captured arguments)
+                 'fake-process))
+              ((symbol-function 'ai-git-commit--wait-for-process)
+               (lambda (process)
+                 (should (eq process 'fake-process))
+                 0))
+              ((symbol-function 'ai-git-commit--head-message)
+               (lambda () (concat (nth 2 captured) "\n")))
+              ((symbol-function 'magit-rev-parse)
+               (lambda (&rest _) "abc123")))
+      (let* ((request
+              (append '(:operation commit :authorization explicit)
+                      skill-contract-tests-message-spec))
+             (expected (ai-git-commit-format request))
+             (result (ai-git-commit-run request)))
+        (should (equal captured
+                       (list "--cleanup=verbatim" "-m" expected)))
+        (should (equal (plist-get (plist-get result :data) :commit) "abc123"))
+        (should (equal (plist-get result :effects)
+                       '(:committed t :amended nil)))))))
+
+(ert-deftest git-amend-facade-verifies-committed-message ()
+  (cl-letf (((symbol-function 'magit-toplevel)
+             (lambda (&optional _) "/tmp/repository/"))
+            ((symbol-function 'ai-git-commit--ensure-magit)
+             (lambda () t))
+            ((symbol-function 'magit-commit-amend)
+             (lambda (_arguments) 'fake-process))
+            ((symbol-function 'ai-git-commit--wait-for-process)
+             (lambda (_) 0))
+            ((symbol-function 'ai-git-commit--head-message)
+             (lambda () "different message\n"))
+            ((symbol-function 'magit-rev-parse)
+             (lambda (&rest _) "abc123")))
+    (should-error
+     (ai-git-commit-run
+      (append '(:operation amend :authorization explicit)
+              skill-contract-tests-message-spec))
+     :type 'error)))
+
+(ert-deftest git-commit-head-message-keeps-the-complete-body ()
+  (cl-letf (((symbol-function 'magit-rev-insert-format)
+             (lambda (&rest _)
+               (insert "subject\n\nbody\n")
+               0)))
+    (should (equal (ai-git-commit--head-message)
+                   "subject\n\nbody\n"))))
 
 (ert-deftest denote-internal-commit-uses-shared-full-message ()
   (let (captured)

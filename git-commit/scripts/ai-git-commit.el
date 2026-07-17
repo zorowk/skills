@@ -20,11 +20,18 @@
                   (schemas &optional target))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-require-authorization
+                  "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-truncate "../../common/scripts/skill-runtime"
                   (text maximum label))
 
+(declare-function magit-commit-amend "magit-commit" (&optional args))
+(declare-function magit-commit-create "magit-commit" (&optional args))
 (declare-function magit-git-insert "magit-git" (&rest args))
 (declare-function magit-git-success "magit-git" (&rest args))
+(declare-function magit-rev-insert-format "magit-git"
+                  (format &optional rev args))
+(declare-function magit-rev-parse "magit-git" (&rest args))
 (declare-function magit-toplevel "magit-git" (&optional directory))
 
 (defgroup ai-git-commit nil
@@ -57,6 +64,14 @@
                             :boundary)
             :optional (:scope :risk :detail :log :pms :influence)
             :effects nil)
+    (commit :required (:type :summary :context :changes :reason :validation
+                            :boundary :authorization)
+            :optional (:scope :risk :detail :log :pms :influence :directory)
+            :effects (:committed))
+    (amend :required (:type :summary :context :changes :reason :validation
+                           :boundary :authorization)
+           :optional (:scope :risk :detail :log :pms :influence :directory)
+           :effects (:committed :amended))
     (describe :optional (:target) :effects nil))
   "Compact request schemas for `ai-git-commit-run'.")
 
@@ -136,11 +151,73 @@ return separate staged and unstaged diffs."
 (defun ai-git-commit-format (spec)
   "Return a validated adaptive commit message from structured SPEC."
   (let ((skill-git-message-column ai-git-commit-fill-column))
-    (let ((message (skill-git-format-message spec)))
-      (dolist (line (split-string message "\n"))
-        (when (> (string-width line) ai-git-commit-maximum-column)
-          (error "Commit line exceeds %d columns" ai-git-commit-maximum-column)))
-      message)))
+    (ai-git-commit--validate-message (skill-git-format-message spec))))
+
+(defun ai-git-commit--validate-message (message)
+  "Return MESSAGE after validating its maximum line width."
+  (dolist (line (split-string message "\n"))
+    (when (> (string-width line) ai-git-commit-maximum-column)
+      (error "Commit line exceeds %d columns" ai-git-commit-maximum-column)))
+  message)
+
+(defun ai-git-commit--normalize-terminal-newline (message)
+  "Remove only terminal newline characters from MESSAGE."
+  (replace-regexp-in-string "[\r\n]+\\'" "" message))
+
+(defun ai-git-commit--wait-for-process (process)
+  "Wait for Magit PROCESS and return its successful exit status."
+  (unless (processp process)
+    (error "Magit did not return a commit process"))
+  (while (process-live-p process)
+    (accept-process-output process 0.05))
+  (let ((status (process-exit-status process)))
+    (unless (zerop status)
+      (error "Magit commit failed with exit status %d" status))
+    status))
+
+(defun ai-git-commit--ensure-magit ()
+  "Require Magit or signal that the current Emacs cannot commit."
+  (unless (require 'magit nil t)
+    (error "Magit is not available in this Emacs session")))
+
+(defun ai-git-commit--head-message ()
+  "Return the complete message for HEAD through Magit."
+  (with-temp-buffer
+    (unless (zerop (magit-rev-insert-format "%B" "HEAD"))
+      (error "Magit could not read the committed HEAD message"))
+    (buffer-string)))
+
+(defun ai-git-commit--commit (request amend)
+  "Commit formatted REQUEST through Magit; AMEND means replace HEAD."
+  (skill-runtime-require-authorization
+   request (if amend "Amend" "Commit"))
+  (ai-git-commit--ensure-magit)
+  (let ((root (magit-toplevel
+               (or (plist-get request :directory) default-directory))))
+    (unless root
+      (error "Not inside a Git repository: %s"
+             (expand-file-name
+              (or (plist-get request :directory) default-directory))))
+    (let* ((default-directory root)
+           (message (ai-git-commit-format request))
+           ;; A single -m value bypasses the editor.  Verbatim cleanup keeps
+           ;; the formatter output intact and avoids any temporary file.
+           (arguments (list "--cleanup=verbatim" "-m" message))
+           (process (if amend
+                        (magit-commit-amend arguments)
+                      (magit-commit-create arguments))))
+      (ai-git-commit--wait-for-process process)
+      (let* ((expected
+              (ai-git-commit--normalize-terminal-newline message))
+             (actual
+              (ai-git-commit--normalize-terminal-newline
+               (ai-git-commit--head-message))))
+        (ai-git-commit--validate-message actual)
+        (unless (string= actual expected)
+          (error "Committed message differs from formatter output"))
+        (list :commit (magit-rev-parse "HEAD")
+              :message actual
+              :amended (and amend t))))))
 
 ;;;###autoload
 (defun ai-git-commit-run (request)
@@ -161,6 +238,12 @@ return separate staged and unstaged diffs."
          (skill-runtime-result operation data (plist-get data :change-count))))
       ('format
        (skill-runtime-result operation (ai-git-commit-format request) 1))
+      ((or 'commit 'amend)
+       (let* ((amend (eq operation 'amend))
+              (data (ai-git-commit--commit request amend)))
+         (skill-runtime-result
+          operation data 1 'ok nil
+          (list :committed t :amended amend))))
       (_ (error "Unknown Git commit operation %S; expected %S"
                 operation (mapcar #'car ai-git-commit--schemas))))))
 

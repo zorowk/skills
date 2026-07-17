@@ -1,4 +1,4 @@
 interface:
   display_name: "Git Commit"
   short_description: "Generate evidence-backed Git commit messages"
-  default_prompt: "Use $git-commit to inspect current changes and create an adaptive, evidence-backed message that is concise for simple work and complete for risky work."
+  default_prompt: "Use $git-commit to inspect current changes and create an adaptive, evidence-backed message; only when explicitly authorized, commit or amend it through headless Magit."
