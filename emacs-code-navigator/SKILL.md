@@ -1,6 +1,6 @@
 ---
 name: emacs-code-navigator
-description: "Use when an AI assistant needs targeted code context from the user's running Emacs server: project files, imenu symbols, exact-line xref definitions/references, Eldoc/Eglot hints, Flymake diagnostics, or current Emacs buffer state instead of broad file reads."
+description: "Use when an AI assistant should treat the user's running Emacs as a source of capabilities and targeted code context: discover functions, commands, variables, and libraries; read Help documentation; locate definitions; or inspect project files, imenu, xref, Eldoc/Eglot, Flymake, and current buffer state."
 ---
 
 # Emacs Code Navigator
@@ -11,13 +11,23 @@ unavailable, report the error and fall back to disk-based tools.
 Use the public `emacs-code-navigator-` functions and their docstrings as the
 interface; inspect source only to debug or modify it.
 
+When operating from agent-shell with an Emacs server available, treat the
+running Emacs as a capability registry. Before reimplementing an operation in
+the shell or guessing an Emacs API, use `emacs-code-navigator-apropos` to search
+names or documentation, then use `emacs-code-navigator-symbol-info` to inspect
+the exact Help and source definition. Use `emacs-code-navigator-library-info`
+when the relevant unit is a library rather than a symbol.
+
 ## Workflow
 
-1. Locate with the project-files, search, or imenu entry point.
-2. Expand the best hit with the context-at-line entry point.
-3. Resolve relationships with the line-based xref entry points; use read-region only
+1. For Emacs capability discovery, search with apropos, inspect the selected
+   function or variable, and follow its returned source location. Prefer these
+   structured entry points over parsing interactive `*Help*` buffers.
+2. For project code, locate with the project-files, search, or imenu entry point.
+3. Expand the best hit with the context-at-line entry point.
+4. Resolve relationships with the line-based xref entry points; use read-region only
    after identifying the relevant block.
-4. Request line or file diagnostics when useful. Run project-wide diagnostics only
+5. Request line or file diagnostics when useful. Run project-wide diagnostics only
    when project-wide diagnostics justify visiting many files.
 
 ## When Not To Use

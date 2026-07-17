@@ -5,6 +5,9 @@
 (require 'project)
 (require 'xref)
 (require 'imenu)
+(require 'apropos)
+(require 'find-func)
+(require 'help-fns)
 (require 'seq)
 (require 'subr-x)
 (require 'thingatpt)
@@ -13,6 +16,174 @@
 (defconst emacs-code-navigator-ignored-directories
   '(".git" "node_modules" "target" "build" "dist" ".cache" ".venv" "vendor" "__pycache__")
   "Directory names skipped by fallback recursive file discovery.")
+
+(defconst emacs-code-navigator-symbol-kinds
+  '(function command macro variable user-option)
+  "Symbol kinds accepted by Emacs introspection entry points.")
+
+(defun emacs-code-navigator--symbol (value)
+  "Return VALUE as an interned symbol or signal a validation error."
+  (let ((symbol
+         (cond
+          ((symbolp value) value)
+          ((and (stringp value) (not (string-empty-p value)))
+           (intern-soft value))
+          (t nil))))
+    (unless symbol
+      (error "Unknown or invalid Emacs symbol: %S" value))
+    symbol))
+
+(defun emacs-code-navigator--symbol-kind-p (symbol kind)
+  "Return non-nil when SYMBOL has KIND."
+  (pcase kind
+    ('function (fboundp symbol))
+    ('command (commandp symbol))
+    ('macro (and (fboundp symbol) (macrop symbol)))
+    ('variable (boundp symbol))
+    ('user-option (custom-variable-p symbol))
+    (_ (error "Unknown symbol kind: %S" kind))))
+
+(defun emacs-code-navigator--symbol-kinds (symbol)
+  "Return the Emacs capability kinds provided by SYMBOL."
+  (seq-filter
+   (lambda (kind) (emacs-code-navigator--symbol-kind-p symbol kind))
+   emacs-code-navigator-symbol-kinds))
+
+(defun emacs-code-navigator--documentation (symbol kind)
+  "Return plain documentation for SYMBOL of KIND, or nil."
+  (let ((doc
+         (condition-case nil
+             (if (memq kind '(function command macro))
+                 (documentation symbol t)
+               (documentation-property symbol 'variable-documentation t))
+           (error nil))))
+    (and (stringp doc) (substring-no-properties doc))))
+
+(defun emacs-code-navigator--documentation-summary (symbol)
+  "Return the first non-empty documentation line for SYMBOL."
+  (let* ((kind (if (fboundp symbol) 'function 'variable))
+         (doc (emacs-code-navigator--documentation symbol kind)))
+    (when doc
+      (seq-find (lambda (line) (not (string-empty-p line)))
+                (mapcar #'string-trim (split-string doc "\n"))))))
+
+(defun emacs-code-navigator--source-location (symbol kind)
+  "Return the definition location for SYMBOL of KIND as a plist.
+
+KIND may be `function' or `variable'.  This uses the same source lookup
+machinery as `find-function' and `find-variable'."
+  (condition-case error-data
+      (let* ((location
+              (if (eq kind 'variable)
+                  (find-variable-noselect symbol)
+                (find-function-noselect symbol)))
+             (buffer (car location))
+             (position (cdr location)))
+        (with-current-buffer buffer
+          (list :file (buffer-file-name buffer)
+                :buffer (buffer-name buffer)
+                :line (and position (line-number-at-pos position))
+                :library (symbol-file symbol
+                                      (and (eq kind 'variable) 'defvar)))))
+    (error
+     (list :file (symbol-file symbol
+                              (and (eq kind 'variable) 'defvar))
+           :error (error-message-string error-data)))))
+
+(defun emacs-code-navigator-function-info (function)
+  "Return structured Help and source information for FUNCTION.
+
+FUNCTION may be a symbol or symbol-name string.  Documentation comes from
+`documentation', arguments from `help-function-arglist', and source location
+from `find-function-noselect'."
+  (let ((symbol (emacs-code-navigator--symbol function)))
+    (unless (fboundp symbol)
+      (error "Not an available Emacs function: %S" symbol))
+    (list :symbol (symbol-name symbol)
+          :kinds (emacs-code-navigator--symbol-kinds symbol)
+          :arguments (help-function-arglist symbol t)
+          :interactive (and (commandp symbol) t)
+          :autoload (autoloadp (symbol-function symbol))
+          :documentation
+          (emacs-code-navigator--documentation symbol 'function)
+          :source
+          (emacs-code-navigator--source-location symbol 'function))))
+
+(defun emacs-code-navigator-variable-info (variable)
+  "Return structured Help and source information for VARIABLE.
+
+VARIABLE may be a symbol or symbol-name string.  The value is intentionally
+not returned: callers can discover capabilities without exposing buffer-local,
+large, or sensitive runtime state."
+  (let ((symbol (emacs-code-navigator--symbol variable)))
+    (unless (boundp symbol)
+      (error "Not an available Emacs variable: %S" symbol))
+    (list :symbol (symbol-name symbol)
+          :kinds (emacs-code-navigator--symbol-kinds symbol)
+          :buffer-local (local-variable-if-set-p symbol)
+          :documentation
+          (emacs-code-navigator--documentation symbol 'variable)
+          :source
+          (emacs-code-navigator--source-location symbol 'variable))))
+
+(defun emacs-code-navigator-symbol-info (name)
+  "Return every available function and variable facet of Emacs symbol NAME."
+  (let* ((symbol (emacs-code-navigator--symbol name))
+         (function-info
+          (and (fboundp symbol)
+               (emacs-code-navigator-function-info symbol)))
+         (variable-info
+          (and (boundp symbol)
+               (emacs-code-navigator-variable-info symbol))))
+    (unless (or function-info variable-info)
+      (error "Emacs symbol has no function or variable definition: %S" symbol))
+    (list :symbol (symbol-name symbol)
+          :function function-info
+          :variable variable-info)))
+
+(defun emacs-code-navigator-apropos (pattern &optional kind limit documentation)
+  "Discover Emacs capabilities matching PATTERN.
+
+KIND is one of `function', `command', `macro', `variable', or `user-option'
+and defaults to `function'.  LIMIT defaults to 50.  When DOCUMENTATION is
+non-nil, search loaded documentation as well as symbol names.  Return compact
+plists; pass a result to `emacs-code-navigator-symbol-info' for full Help and
+source details."
+  (unless (and (stringp pattern) (not (string-empty-p pattern)))
+    (error "PATTERN must be a non-empty string"))
+  (let* ((target-kind (or kind 'function))
+         (max-count (or limit 50))
+         (_ (unless (memq target-kind emacs-code-navigator-symbol-kinds)
+              (error "Unknown symbol kind: %S" target-kind)))
+         (predicate
+          (lambda (symbol)
+            (emacs-code-navigator--symbol-kind-p symbol target-kind)))
+         (symbols
+          (if documentation
+              (delete-dups
+               (mapcar #'car (apropos-documentation pattern t)))
+            (apropos-internal pattern predicate))))
+    (mapcar
+     (lambda (symbol)
+       (list :symbol (symbol-name symbol)
+             :kinds (emacs-code-navigator--symbol-kinds symbol)
+             :summary (emacs-code-navigator--documentation-summary symbol)
+             :library (or (and (fboundp symbol) (symbol-file symbol))
+                          (and (boundp symbol)
+                               (symbol-file symbol 'defvar)))))
+     (seq-take (seq-filter predicate symbols) max-count))))
+
+(defun emacs-code-navigator-library-info (library)
+  "Return the source path for Emacs Lisp LIBRARY.
+
+LIBRARY is a name such as \"help-fns\", with or without an extension.  This
+uses `find-library-name', the noninteractive engine behind `find-library'."
+  (unless (and (stringp library) (not (string-empty-p library)))
+    (error "LIBRARY must be a non-empty string"))
+  (let ((file (find-library-name library)))
+    (unless file
+      (error "Emacs library is not available: %S" library))
+    (list :library library :file file)))
 
 (defun emacs-code-navigator--ignored-directory-p (directory)
   "Return non-nil when DIRECTORY should be skipped during fallback traversal."
