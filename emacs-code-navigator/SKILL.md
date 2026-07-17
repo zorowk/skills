@@ -17,7 +17,14 @@ a sandbox `Operation not permitted` or socket-access denial as evidence that the
 Emacs server is down. Report it unavailable only when the escalated attempt also
 fails.
 
-Prefer live Emacs state for unsaved buffers and semantic context. Use exact disk
-reads when saved bytes matter, especially for generated files, logs, or
-configuration. Request diagnostics only when they are relevant to the question;
-they are evidence, not a code-search backend.
+Pass `:source live` for unsaved buffers and `:source disk` when saved contents
+matter. Let `auto` retain the live-session default. Read each result's
+`:provenance` before combining it with filesystem or batch evidence, and call
+`file-state` when the live buffer may differ from disk.
+
+Do not run this facade in batch Emacs as a substitute for the user's session.
+When the server is unavailable, use direct filesystem reads for `search`,
+`files`, and saved `region` work. Report live Help, xref, workspace symbols,
+Eldoc/Eglot, and Flymake as unavailable; never silently replace them with batch
+results. Request diagnostics only when relevant because they are evidence, not
+a code-search backend.

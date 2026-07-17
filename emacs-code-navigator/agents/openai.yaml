@@ -1,4 +1,4 @@
 interface:
   display_name: "Emacs Code Navigator"
-  short_description: "Locate symbols and inspect live Emacs code context"
-  default_prompt: "Use $emacs-code-navigator to locate code efficiently through live buffers, bounded text search, xref, and language-server symbols."
+  short_description: "Inspect code with explicit live and disk provenance"
+  default_prompt: "Use $emacs-code-navigator to inspect code from the intended live or disk source and report any buffer divergence."

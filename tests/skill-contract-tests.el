@@ -193,9 +193,10 @@
                         (xref-make
                          "sample-symbol"
                          (xref-make-file-location source 1 0))))))
-            (let ((matches
-                   (emacs-code-navigator-workspace-symbol
-                    source "sample-symbol" 10)))
+            (let* ((noninteractive nil)
+                   (matches
+                    (emacs-code-navigator-workspace-symbol
+                     source "sample-symbol" 10)))
               (should (= (length matches) 1))
               (should (equal (caar matches) source)))))
       (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
@@ -305,7 +306,8 @@
          (plist-get
           (plist-get (ai-git-commit-run '(:operation describe)) :data)
           :operations)))
-    (dolist (operation '(region imenu workspace-symbol xref locate diagnostics))
+    (dolist (operation
+             '(region imenu file-state workspace-symbol xref locate diagnostics))
       (should (memq operation navigator)))
     (should (memq 'preflight denote))
     (should (memq 'preflight gtd))
@@ -323,6 +325,57 @@
            (list :operation 'imenu :file file))))
     (should (string-match-p "skill-runtime.el" (plist-get region :data)))
     (should (listp (plist-get imenu :data)))))
+
+(ert-deftest navigator-source-provenance-distinguishes-live-and-disk ()
+  (let* ((root (make-temp-file "navigator-source-" t))
+         (file (expand-file-name "sample.el" root))
+         live-buffer)
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "disk-value\n"))
+          (setq live-buffer (find-file-noselect file))
+          (with-current-buffer live-buffer
+            (goto-char (point-max))
+            (insert "live-value\n"))
+          (let* ((live
+                  (emacs-code-navigator-query
+                   (list :operation 'region :file file :start-line 1
+                         :end-line 2 :source 'live)))
+                 (disk
+                  (emacs-code-navigator-query
+                   (list :operation 'region :file file :start-line 1
+                         :end-line 2 :source 'disk)))
+                 (state
+                  (plist-get
+                   (emacs-code-navigator-query
+                    (list :operation 'file-state :file file))
+                   :data)))
+            (should (string-match-p "live-value" (plist-get live :data)))
+            (should-not (string-match-p "live-value" (plist-get disk :data)))
+            (should (eq (plist-get (plist-get live :provenance)
+                                   :resolved-source)
+                        'live))
+            (should (eq (plist-get (plist-get disk :provenance)
+                                   :resolved-source)
+                        'disk))
+            (should (eq (plist-get (plist-get disk :provenance) :session)
+                        'batch))
+            (should (eq (plist-get (plist-get disk :provenance) :degraded)
+                        t))
+            (should (eq (plist-get state :buffer-modified) t))
+            (should (eq (plist-get state :diverged) t))))
+      (when (buffer-live-p live-buffer)
+        (with-current-buffer live-buffer
+          (set-buffer-modified-p nil))
+        (kill-buffer live-buffer))
+      (delete-directory root t))))
+
+(ert-deftest navigator-disk-source-rejects-live-semantic-queries ()
+  (should-error
+   (emacs-code-navigator-query
+    '(:operation workspace-symbol :file "/tmp/sample.el"
+      :pattern "sample" :source disk))))
 
 (ert-deftest navigator-search-honors-global-limit-and-glob ()
   (let ((matches

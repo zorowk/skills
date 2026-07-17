@@ -60,30 +60,172 @@
     (files :summary "List bounded project files."
            :required (:directory) :optional (:limit))
     (region :summary "Read an exact region from a live or visited file buffer."
-            :required (:file :start-line) :optional (:end-line))
+            :required (:file :start-line) :optional (:end-line :source))
     (imenu :summary "Return the structural index for a file."
-           :required (:file))
+           :required (:file) :optional (:source))
+    (file-state
+     :summary "Compare a live file buffer with its saved disk contents."
+     :required (:file))
     (workspace-symbol
      :summary "Query the active Eglot/LSP workspace symbol provider."
-     :required (:file :pattern) :optional (:limit))
+     :required (:file :pattern) :optional (:limit :source))
     (xref :summary "Resolve exact definitions or references through xref."
           :required (:file) :required-one-of (:identifier :line)
-          :optional (:kind :identifier :line))
+          :optional (:kind :identifier :line :source))
     (locate
      :summary "Prefer file Imenu, then project symbols, then bounded text search."
      :required (:query) :required-one-of (:file :directory)
-     :optional (:line :kind :limit :glob :regexp))
+     :optional (:line :kind :limit :glob :regexp :source))
     (diagnostics
      :summary "Read Flymake/Eglot diagnostics only when explicitly requested."
      :required-one-of (:file :directory)
-     :optional (:line :radius :limit :file-limit))
+     :optional (:line :radius :limit :file-limit :source))
     (context
      :summary "Return cheap bounded live context; semantic facets are opt-in."
      :required (:file :line)
-     :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius))
+     :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius :source))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `emacs-code-navigator-query'.")
+
+(defvar emacs-code-navigator--requested-source 'auto
+  "Content source selected for the current facade request.")
+
+(defvar emacs-code-navigator--resolved-sources nil
+  "Content sources actually used by the current facade request.")
+
+(defvar emacs-code-navigator--temporary-buffers nil
+  "Ephemeral disk buffers created by the current facade request.")
+
+(defun emacs-code-navigator--source (value)
+  "Return validated source VALUE, defaulting to `auto'."
+  (let ((source (or value 'auto)))
+    (unless (memq source '(auto live disk))
+      (error "SOURCE must be auto, live, or disk: %S" source))
+    source))
+
+(defun emacs-code-navigator--disk-buffer (file)
+  "Return an ephemeral buffer containing FILE's saved contents."
+  (let* ((expanded (expand-file-name file))
+         (existing
+          (seq-find
+           (lambda (buffer)
+             (and (buffer-live-p buffer)
+                  (with-current-buffer buffer
+                    (equal buffer-file-name expanded))))
+           emacs-code-navigator--temporary-buffers)))
+    (or existing
+        (let ((buffer (generate-new-buffer
+                       (format " *navigator-disk:%s*"
+                               (file-name-nondirectory expanded)))))
+          (with-current-buffer buffer
+            (setq buffer-file-name expanded
+                  default-directory (file-name-directory expanded))
+            (insert-file-contents expanded)
+            (normal-mode t)
+            (set-buffer-modified-p nil))
+          (push buffer emacs-code-navigator--temporary-buffers)
+          buffer))))
+
+(defun emacs-code-navigator--file-buffer (file)
+  "Return FILE buffer according to `emacs-code-navigator--requested-source'."
+  (let ((source (if (eq emacs-code-navigator--requested-source 'disk)
+                    'disk
+                  'live)))
+    (push source emacs-code-navigator--resolved-sources)
+    (if (eq source 'disk)
+        (emacs-code-navigator--disk-buffer file)
+      (find-file-noselect file))))
+
+(defun emacs-code-navigator--require-live-semantic (capability)
+  "Require live Emacs state for semantic CAPABILITY."
+  (when (eq emacs-code-navigator--requested-source 'disk)
+    (error "%s requires :source live or auto; disk state has no live semantic provider"
+           capability))
+  (when noninteractive
+    (error "%s requires a running interactive Emacs session" capability)))
+
+(defun emacs-code-navigator--buffer-hash (buffer)
+  "Return a SHA-256 hash for widened BUFFER contents."
+  (with-current-buffer buffer
+    (save-restriction
+      (widen)
+      (secure-hash 'sha256 (current-buffer) (point-min) (point-max)))))
+
+(defun emacs-code-navigator--disk-hash (file)
+  "Return a SHA-256 hash for decoded FILE contents, or nil when absent."
+  (when (file-regular-p file)
+    (with-temp-buffer
+      (insert-file-contents file)
+      (secure-hash 'sha256 (current-buffer) (point-min) (point-max)))))
+
+(defun emacs-code-navigator--live-buffer-for-file (file)
+  "Return a non-ephemeral live buffer visiting FILE, or nil."
+  (let ((expanded (expand-file-name file)))
+    (seq-find
+     (lambda (buffer)
+       (and (buffer-live-p buffer)
+            (not (memq buffer emacs-code-navigator--temporary-buffers))
+            (with-current-buffer buffer
+              (equal buffer-file-name expanded))))
+     (buffer-list))))
+
+(defun emacs-code-navigator-file-state (file)
+  "Return live-buffer and disk comparison metadata for FILE."
+  (let* ((expanded (expand-file-name file))
+         (live-buffer (emacs-code-navigator--live-buffer-for-file expanded))
+         (disk-exists (file-regular-p expanded))
+         (live-hash (and live-buffer
+                         (emacs-code-navigator--buffer-hash live-buffer)))
+         (disk-hash (emacs-code-navigator--disk-hash expanded))
+         (attributes (and disk-exists (file-attributes expanded 'string))))
+    (list :file expanded
+          :live-buffer (and live-buffer (buffer-name live-buffer))
+          :buffer-modified
+          (and live-buffer (buffer-modified-p live-buffer) t)
+          :buffer-tick
+          (and live-buffer (buffer-chars-modified-tick live-buffer))
+          :major-mode
+          (and live-buffer
+               (buffer-local-value 'major-mode live-buffer))
+          :eglot-managed
+          (and live-buffer
+               (with-current-buffer live-buffer
+                 (and (fboundp 'eglot-managed-p) (eglot-managed-p) t)))
+          :disk-exists (and disk-exists t)
+          :disk-mtime
+          (and attributes
+               (format-time-string "%FT%T%z"
+                                   (file-attribute-modification-time attributes)))
+          :live-hash live-hash
+          :disk-hash disk-hash
+          :diverged
+          (and live-hash disk-hash (not (string= live-hash disk-hash)) t))))
+
+(defun emacs-code-navigator--resolved-source (operation)
+  "Return the content source used for OPERATION."
+  (let ((sources (delete-dups emacs-code-navigator--resolved-sources)))
+    (cond
+     ((= (length sources) 1) (car sources))
+     (sources (nreverse sources))
+     ((memq operation '(search files)) 'disk)
+     ((eq operation 'file-state) '(live disk))
+     ((memq operation '(capability symbol library describe)) 'session)
+     (t emacs-code-navigator--requested-source))))
+
+(defun emacs-code-navigator--provenance (request operation)
+  "Return source and environment provenance for REQUEST and OPERATION."
+  (let* ((file (plist-get request :file))
+         (state (and file (emacs-code-navigator-file-state file))))
+    (append
+     (list :session (if noninteractive 'batch 'live)
+           :requested-source emacs-code-navigator--requested-source
+           :resolved-source (emacs-code-navigator--resolved-source operation)
+           :degraded (and noninteractive t))
+     (and state
+          (list :buffer-modified (plist-get state :buffer-modified)
+                :disk-diverged (plist-get state :diverged)
+                :major-mode (plist-get state :major-mode))))))
 
 (defun emacs-code-navigator--symbol (value)
   "Return VALUE as an interned symbol or signal a validation error."
@@ -373,7 +515,7 @@ uses `find-library-name', the noninteractive engine behind `find-library'."
              (not (and (integerp end-line) (>= end-line start-line))))
     (error "END-LINE must be an integer no smaller than START-LINE: %S"
            end-line))
-  (with-current-buffer (find-file-noselect file)
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (save-excursion
       (save-restriction
         (widen)
@@ -418,7 +560,7 @@ uses `find-library-name', the noninteractive engine behind `find-library'."
 
 (defun emacs-code-navigator-imenu (file)
   "Return flattened imenu entries for FILE."
-  (with-current-buffer (find-file-noselect file)
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (imenu--make-index-alist t)
     (emacs-code-navigator--flatten-imenu imenu--index-alist)))
 
@@ -573,7 +715,8 @@ For an Eglot-managed C or C++ buffer this uses LSP `workspace/symbol', which
 clangd answers from its project index.  Return at most LIMIT compact locations."
   (unless (and (stringp pattern) (not (string-empty-p pattern)))
     (error "PATTERN must be a non-empty string"))
-  (with-current-buffer (find-file-noselect file)
+  (emacs-code-navigator--require-live-semantic "Workspace-symbol queries")
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (let ((backend (emacs-code-navigator--semantic-xref-backend)))
       (unless backend
         (error "No xref backend available for %s" file))
@@ -601,7 +744,8 @@ clangd answers from its project index.  Return at most LIMIT compact locations."
 
 (defun emacs-code-navigator--xref-at-identifier (file identifier fn)
   "Visit FILE, search IDENTIFIER, and call xref function FN."
-  (with-current-buffer (find-file-noselect file)
+  (emacs-code-navigator--require-live-semantic "Xref queries")
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (let ((backend (emacs-code-navigator--semantic-xref-backend)))
       (unless backend
         (error "No xref backend available for %s" file))
@@ -668,7 +812,8 @@ point.  Signal an error when no matching symbol can be found."
 
 (defun emacs-code-navigator--xref-at-line (file line identifier fn)
   "Visit FILE, move to LINE/IDENTIFIER, and call xref function FN."
-  (with-current-buffer (find-file-noselect file)
+  (emacs-code-navigator--require-live-semantic "Xref queries")
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (let* ((backend (emacs-code-navigator--semantic-xref-backend))
            (symbol (emacs-code-navigator--goto-symbol-at-line line identifier)))
       (unless backend
@@ -696,7 +841,7 @@ first symbol found at or after indentation on LINE."
   "Return context data for the symbol at LINE in FILE.
 
 The result is (symbol bounds major-mode eglot-managed defun-line)."
-  (with-current-buffer (find-file-noselect file)
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (save-excursion
       (goto-char (point-min))
       (forward-line (1- line))
@@ -741,7 +886,7 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
 
 (defun emacs-code-navigator-defun-at-line (file line)
   "Return the top-level form around LINE in FILE with line numbers."
-  (with-current-buffer (find-file-noselect file)
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (save-excursion
       (goto-char (point-min))
       (forward-line (1- line))
@@ -767,7 +912,8 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
 
 When START-LINE and END-LINE are non-nil, ask Flymake only for diagnostics
 intersecting that buffer range."
-  (with-current-buffer (find-file-noselect file)
+  (emacs-code-navigator--require-live-semantic "Flymake diagnostics")
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (when (fboundp 'flymake-mode)
       (flymake-mode 1))
     (when (fboundp 'flymake-start)
@@ -839,7 +985,8 @@ currently knows after visiting the files."
 
 This calls buffer-local `eldoc-documentation-functions' and collects
 plain strings delivered synchronously through their callbacks."
-  (with-current-buffer (find-file-noselect file)
+  (emacs-code-navigator--require-live-semantic "Eldoc queries")
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
     (save-excursion
       (goto-char (point-min))
       (forward-line (1- line))
@@ -1020,71 +1167,95 @@ data.  In particular, Flymake is never started by the default context query."
 Use :operation `describe' to request operation schemas only when needed."
   (skill-runtime-validate-request emacs-code-navigator--schemas request)
   (let* ((operation (plist-get request :operation))
-         (result
-          (pcase operation
-            ('capability
-             (emacs-code-navigator-discover
-              (plist-get request :pattern)
-              (plist-get request :kind)
-              (plist-get request :limit)
-              (plist-get request :documentation)
-              (not (plist-get request :full))))
-            ('symbol
-             (funcall (if (plist-get request :full)
-                          #'emacs-code-navigator-symbol-info
-                        #'emacs-code-navigator-symbol-summary)
-                      (plist-get request :name)))
-            ('library
-             (emacs-code-navigator-library-info
-              (plist-get request :name)))
-            ('search
-             (emacs-code-navigator-search
-              (plist-get request :directory)
-              (plist-get request :regexp)
-              (plist-get request :limit)
-              (plist-get request :glob)
-              (plist-get request :literal)))
-            ('files
-             (emacs-code-navigator-project-files
-              (plist-get request :directory)
-              (plist-get request :limit)))
-            ('region
-             (emacs-code-navigator-read-region
-              (plist-get request :file)
-              (plist-get request :start-line)
-              (plist-get request :end-line)))
-            ('imenu
-             (emacs-code-navigator-imenu (plist-get request :file)))
-            ('workspace-symbol
-             (emacs-code-navigator-workspace-symbol
-              (plist-get request :file)
-              (plist-get request :pattern)
-              (plist-get request :limit)))
-            ('xref (emacs-code-navigator--xref-request request))
-            ('locate (emacs-code-navigator--locate-request request))
-            ('diagnostics
-             (emacs-code-navigator--diagnostics-request request))
-            ('context
-             (emacs-code-navigator-context-at-line
-              (plist-get request :file)
-              (plist-get request :line)
-              (plist-get request :radius)
-              (plist-get request :defun)
-              (plist-get request :eldoc)
-              (plist-get request :diagnostics)
-              (plist-get request :diagnostic-radius)))
-            ('describe
-             (skill-runtime-describe
-              emacs-code-navigator--schemas (plist-get request :target)))
-            (_ (error "Unknown navigator operation: %S" operation)))))
-    (skill-runtime-result
-     operation result
-     (cond
-      ((and (listp result) (plist-member result :matches))
-       (length (plist-get result :matches)))
-      ((memq operation '(search files imenu workspace-symbol xref diagnostics))
-       (length result))
-      (t 1)))))
+         (emacs-code-navigator--requested-source
+          (emacs-code-navigator--source (plist-get request :source)))
+         (emacs-code-navigator--resolved-sources nil)
+         (emacs-code-navigator--temporary-buffers nil))
+    (unwind-protect
+        (let* ((result
+                (pcase operation
+                  ('capability
+                   (emacs-code-navigator--require-live-semantic
+                    "Emacs capability discovery")
+                   (emacs-code-navigator-discover
+                    (plist-get request :pattern)
+                    (plist-get request :kind)
+                    (plist-get request :limit)
+                    (plist-get request :documentation)
+                    (not (plist-get request :full))))
+                  ('symbol
+                   (emacs-code-navigator--require-live-semantic
+                    "Emacs symbol inspection")
+                   (funcall (if (plist-get request :full)
+                                #'emacs-code-navigator-symbol-info
+                              #'emacs-code-navigator-symbol-summary)
+                            (plist-get request :name)))
+                  ('library
+                   (emacs-code-navigator--require-live-semantic
+                    "Emacs library inspection")
+                   (emacs-code-navigator-library-info
+                    (plist-get request :name)))
+                  ('search
+                   (emacs-code-navigator-search
+                    (plist-get request :directory)
+                    (plist-get request :regexp)
+                    (plist-get request :limit)
+                    (plist-get request :glob)
+                    (plist-get request :literal)))
+                  ('files
+                   (emacs-code-navigator-project-files
+                    (plist-get request :directory)
+                    (plist-get request :limit)))
+                  ('region
+                   (emacs-code-navigator-read-region
+                    (plist-get request :file)
+                    (plist-get request :start-line)
+                    (plist-get request :end-line)))
+                  ('imenu
+                   (emacs-code-navigator-imenu (plist-get request :file)))
+                  ('file-state
+                   (emacs-code-navigator-file-state
+                    (plist-get request :file)))
+                  ('workspace-symbol
+                   (emacs-code-navigator-workspace-symbol
+                    (plist-get request :file)
+                    (plist-get request :pattern)
+                    (plist-get request :limit)))
+                  ('xref (emacs-code-navigator--xref-request request))
+                  ('locate (emacs-code-navigator--locate-request request))
+                  ('diagnostics
+                   (emacs-code-navigator--diagnostics-request request))
+                  ('context
+                   (emacs-code-navigator-context-at-line
+                    (plist-get request :file)
+                    (plist-get request :line)
+                    (plist-get request :radius)
+                    (plist-get request :defun)
+                    (plist-get request :eldoc)
+                    (plist-get request :diagnostics)
+                    (plist-get request :diagnostic-radius)))
+                  ('describe
+                   (skill-runtime-describe
+                    emacs-code-navigator--schemas
+                    (plist-get request :target)))
+                  (_ (error "Unknown navigator operation: %S" operation))))
+               (envelope
+                (skill-runtime-result
+                 operation result
+                 (cond
+                  ((and (listp result) (plist-member result :matches))
+                   (length (plist-get result :matches)))
+                  ((memq operation
+                         '(search files imenu workspace-symbol xref diagnostics))
+                   (length result))
+                  (t 1)))))
+          (append envelope
+                  (list :provenance
+                        (emacs-code-navigator--provenance
+                         request operation))))
+      (dolist (buffer emacs-code-navigator--temporary-buffers)
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))))))
 
 (provide 'emacs-code-navigator)
 
