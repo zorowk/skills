@@ -22,6 +22,13 @@
 (declare-function emacs-code-navigator--compact-facet
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (info))
+(declare-function emacs-code-navigator-search
+                  "../emacs-code-navigator/scripts/emacs-code-navigator"
+                  (directory regexp &optional limit glob literal))
+(declare-function emacs-code-navigator-context-at-line
+                  "../emacs-code-navigator/scripts/emacs-code-navigator"
+                  (file line &optional radius include-defun include-eldoc
+                        include-diagnostics diagnostic-radius))
 (declare-function emacs-gtd-execute
                   "../emacs-gtd-assistant/scripts/emacs-gtd-assistant"
                   (request))
@@ -112,7 +119,7 @@
          (plist-get
           (plist-get (emacs-gtd-execute '(:operation describe)) :data)
           :operations)))
-    (dolist (operation '(region imenu xref diagnostics))
+    (dolist (operation '(region imenu workspace-symbol xref locate diagnostics))
       (should (memq operation navigator)))
     (should (memq 'preflight denote))
     (should (memq 'preflight gtd))))
@@ -128,6 +135,68 @@
            (list :operation 'imenu :file file))))
     (should (string-match-p "skill-runtime.el" (plist-get region :data)))
     (should (listp (plist-get imenu :data)))))
+
+(ert-deftest navigator-search-honors-global-limit-and-glob ()
+  (let ((matches
+         (emacs-code-navigator-search
+          skill-contract-tests-root "emacs-code-navigator" 2 "*.el" t)))
+    (should (= (length matches) 2))
+    (should (seq-every-p
+             (lambda (match) (string-suffix-p ".el" (car match)))
+             matches))))
+
+(ert-deftest navigator-default-context-does-not-trigger-expensive-providers ()
+  (let ((file (expand-file-name "common/scripts/skill-runtime.el"
+                                skill-contract-tests-root)))
+    (cl-letf (((symbol-function 'emacs-code-navigator-defun-at-line)
+               (lambda (&rest _) (ert-fail "defun should be opt-in")))
+              ((symbol-function 'emacs-code-navigator-eldoc-at-line)
+               (lambda (&rest _) (ert-fail "Eldoc should be opt-in")))
+              ((symbol-function 'emacs-code-navigator-diagnostics-at-line)
+               (lambda (&rest _) (ert-fail "Flymake should be opt-in"))))
+      (let ((context (emacs-code-navigator-context-at-line file 3 1)))
+        (should (plist-get context :symbol))
+        (should (stringp (plist-get context :region)))
+        (should-not (plist-member context :defun))
+        (should-not (plist-member context :eldoc))
+        (should-not (plist-member context :diagnostics))))))
+
+(ert-deftest navigator-semantic-backend-activates-deferred-buffer-hooks ()
+  (with-temp-buffer
+    (let (ready)
+      (setq-local post-command-hook (list (lambda () (setq ready t))))
+      (cl-letf (((symbol-function 'eglot-managed-p) (lambda () nil))
+                ((symbol-function 'xref-find-backend)
+                 (lambda () (and ready 'semantic-backend))))
+        (should
+         (eq (emacs-code-navigator--semantic-xref-backend)
+             'semantic-backend))))))
+
+(ert-deftest navigator-locate-prefers-workspace-symbol-and-falls-back-to-text ()
+  (let ((symbol-match '(("symbol.cpp" 4 "Widget")))
+        (text-match '(("usage.cpp" 9 "Widget widget;"))))
+    (cl-letf (((symbol-function 'emacs-code-navigator-workspace-symbol)
+               (lambda (&rest _) symbol-match))
+              ((symbol-function 'emacs-code-navigator-search)
+               (lambda (&rest _) (ert-fail "text fallback should not run"))))
+      (let ((result
+             (plist-get
+              (emacs-code-navigator-query
+               '(:operation locate :query "Widget" :file "/tmp/context.cpp"))
+              :data)))
+        (should (eq (plist-get result :strategy) 'workspace-symbol))
+        (should (equal (plist-get result :matches) symbol-match))))
+    (cl-letf (((symbol-function 'emacs-code-navigator-workspace-symbol)
+               (lambda (&rest _) nil))
+              ((symbol-function 'emacs-code-navigator-search)
+               (lambda (&rest _) text-match)))
+      (let ((result
+             (plist-get
+              (emacs-code-navigator-query
+               '(:operation locate :query "Widget" :file "/tmp/context.cpp"))
+              :data)))
+        (should (eq (plist-get result :strategy) 'text-fallback))
+        (should (equal (plist-get result :matches) text-match))))))
 
 (ert-deftest preflight-operations-return-standard-envelopes ()
   (dolist (result

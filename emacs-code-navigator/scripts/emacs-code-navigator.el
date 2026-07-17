@@ -8,6 +8,7 @@
 (require 'apropos)
 (require 'find-func)
 (require 'help-fns)
+(require 'json)
 (require 'seq)
 (require 'subr-x)
 (require 'thingatpt)
@@ -47,15 +48,19 @@
   '((capability :required (:pattern) :optional (:kind :limit :documentation :full))
     (symbol :required (:name) :optional (:full))
     (library :required (:name))
-    (search :required (:directory :regexp) :optional (:limit))
+    (search :required (:directory :regexp) :optional (:limit :glob :literal))
     (files :required (:directory) :optional (:limit))
     (region :required (:file :start-line) :optional (:end-line))
     (imenu :required (:file))
+    (workspace-symbol :required (:file :pattern) :optional (:limit))
     (xref :required (:file) :required-one-of (:identifier :line)
           :optional (:kind :identifier :line))
+    (locate :required (:query) :required-one-of (:file :directory)
+            :optional (:line :kind :limit :glob :regexp))
     (diagnostics :required-one-of (:file :directory)
                  :optional (:line :radius :limit :file-limit))
-    (context :required (:file :line) :optional (:diagnostic-radius))
+    (context :required (:file :line)
+             :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius))
     (describe :optional (:target)))
   "Compact request schemas for `emacs-code-navigator-query'.")
 
@@ -413,30 +418,177 @@ uses `find-library-name', the noninteractive engine behind `find-library'."
          (summary (substring-no-properties (xref-item-summary xref))))
     (list file line summary)))
 
-(defun emacs-code-navigator-search (directory regexp &optional limit)
-  "Search DIRECTORY project files for REGEXP using `xref-matches-in-files'.
+(defun emacs-code-navigator--semantic-xref-backend ()
+  "Return the current semantic xref backend, activating deferred hooks once.
 
-Return at most LIMIT matches as (file line summary).  Emacs chooses the
-actual search backend through `xref-search-program'."
-  (let* ((files (seq-filter #'file-regular-p
-                            (emacs-code-navigator--project-file-list directory)))
-         (matches (xref-matches-in-files regexp files))
-         (max-count (or limit 100)))
-    (mapcar #'emacs-code-navigator--xref-location-data
-            (seq-take matches max-count))))
+`eglot-ensure' deliberately connects from `post-command-hook'.  Navigator
+queries visit files noninteractively, so no editor command would otherwise run
+that hook.  Run it once before choosing a semantic backend, matching what Emacs
+would do after an interactive file visit."
+  (unless (and (fboundp 'eglot-managed-p) (eglot-managed-p))
+    (when (local-variable-p 'post-command-hook)
+      (run-hooks 'post-command-hook)))
+  (xref-find-backend))
+
+(defun emacs-code-navigator--glob-list (glob)
+  "Normalize GLOB to a list of ripgrep glob strings."
+  (cond
+   ((null glob) nil)
+   ((stringp glob) (list glob))
+   ((and (listp glob) (seq-every-p #'stringp glob)) glob)
+   (t (error "GLOB must be a string or list of strings: %S" glob))))
+
+(defun emacs-code-navigator--ripgrep-event (line root)
+  "Convert one ripgrep JSON LINE under ROOT to compact location data."
+  (condition-case nil
+      (let* ((event (json-parse-string line :object-type 'plist
+                                       :array-type 'list
+                                       :null-object nil
+                                       :false-object nil))
+             (data (and (equal (plist-get event :type) "match")
+                        (plist-get event :data)))
+             (path-data (and data (plist-get data :path)))
+             (lines-data (and data (plist-get data :lines)))
+             (path (and path-data (plist-get path-data :text)))
+             (summary (and lines-data (plist-get lines-data :text)))
+             (line-number (and data (plist-get data :line_number))))
+        (when (and path line-number summary)
+          (list (expand-file-name path root)
+                line-number
+                (string-trim-right
+                 (replace-regexp-in-string "[\n\r]+" " " summary)))))
+    (error nil)))
+
+(defun emacs-code-navigator--ripgrep-search
+    (directory regexp limit glob literal)
+  "Search DIRECTORY with ripgrep, stopping after LIMIT matches.
+
+GLOB is a string or list of ripgrep globs.  When LITERAL is non-nil, treat
+REGEXP as fixed text.  Return `(:available t :matches MATCHES)' even when there
+are no matches.  Return nil when ripgrep is unavailable or DIRECTORY is remote."
+  (let ((program (executable-find "rg"))
+        (root (emacs-code-navigator-project-root directory)))
+    (when (and program (not (file-remote-p root)))
+      (let* ((max-count (or limit 100))
+             (stderr (generate-new-buffer " *navigator-rg-error*"))
+             (pending "")
+             (matches nil)
+             (stopped-early nil)
+             (command
+              (append
+               (list program "--json" "--line-number" "--no-messages"
+                     "--color=never")
+               (and literal (list "--fixed-strings"))
+               (apply #'append
+                      (mapcar (lambda (item) (list "--glob" item))
+                              (emacs-code-navigator--glob-list glob)))
+               (apply #'append
+                      (mapcar
+                       (lambda (name)
+                         (list "--glob" (format "!**/%s/**" name)))
+                       emacs-code-navigator-ignored-directories))
+               (list "--regexp" regexp ".")))
+             process)
+        (unwind-protect
+            (let ((default-directory root))
+              (setq process
+                    (make-process
+                     :name "emacs-code-navigator-ripgrep"
+                     :command command
+                     :connection-type 'pipe
+                     :noquery t
+                     :stderr stderr
+                     :filter
+                     (lambda (proc chunk)
+                       (setq pending (concat pending chunk))
+                       (let ((newline nil))
+                         (while (and (< (length matches) max-count)
+                                     (setq newline (string-search "\n" pending)))
+                           (let* ((line (substring pending 0 newline))
+                                  (match
+                                   (emacs-code-navigator--ripgrep-event line root)))
+                             (setq pending (substring pending (1+ newline)))
+                             (when match (push match matches))))
+                         (when (and (>= (length matches) max-count)
+                                    (process-live-p proc))
+                           (setq stopped-early t)
+                           (delete-process proc))))))
+              (while (process-live-p process)
+                (accept-process-output process 0.05))
+              (unless (or stopped-early
+                          (memq (process-exit-status process) '(0 1)))
+                (error "Ripgrep failed: %s"
+                       (with-current-buffer stderr
+                         (string-trim (buffer-string)))))
+              (list :available t :matches (nreverse matches)))
+          (when (and process (process-live-p process)) (delete-process process))
+          (kill-buffer stderr))))))
+
+(defun emacs-code-navigator-search
+    (directory regexp &optional limit glob literal)
+  "Search DIRECTORY project files for REGEXP, bounded by LIMIT.
+
+Use ripgrep when available so the search process stops as soon as LIMIT
+matches have arrived.  Fall back to `xref-matches-in-files' for remote files
+or systems without ripgrep.  GLOB narrows ripgrep files; LITERAL requests a
+fixed-string search.  Results are (file line summary)."
+  (let* ((max-count (or limit 100))
+         (ripgrep-result
+          (emacs-code-navigator--ripgrep-search
+           directory regexp max-count glob literal)))
+    (if (plist-get ripgrep-result :available)
+        (plist-get ripgrep-result :matches)
+      (let ((files (seq-filter #'file-regular-p
+                               (emacs-code-navigator--project-file-list directory))))
+        (if (null files)
+            nil
+          (mapcar #'emacs-code-navigator--xref-location-data
+                  (seq-take (xref-matches-in-files regexp files) max-count)))))))
+
+(defun emacs-code-navigator-workspace-symbol (file pattern &optional limit)
+  "Find symbols matching PATTERN from FILE's xref workspace backend.
+
+For an Eglot-managed C or C++ buffer this uses LSP `workspace/symbol', which
+clangd answers from its project index.  Return at most LIMIT compact locations."
+  (unless (and (stringp pattern) (not (string-empty-p pattern)))
+    (error "PATTERN must be a non-empty string"))
+  (with-current-buffer (find-file-noselect file)
+    (let ((backend (emacs-code-navigator--semantic-xref-backend)))
+      (unless backend
+        (error "No xref backend available for %s" file))
+      (condition-case error-data
+          (mapcar #'emacs-code-navigator--xref-location-data
+                  (seq-take (xref-backend-apropos backend pattern)
+                            (or limit 50)))
+        (cl-no-applicable-method
+         (error "Xref backend %S has no workspace-symbol support" backend))
+        (error
+         (error "Workspace-symbol query failed through %S: %s"
+                backend (error-message-string error-data)))))))
 
 (defun emacs-code-navigator--xref-at-identifier (file identifier fn)
   "Visit FILE, search IDENTIFIER, and call xref function FN."
   (with-current-buffer (find-file-noselect file)
-    (goto-char (point-min))
-    (unless (search-forward identifier nil t)
-      (error "Identifier not found in file: %s" identifier))
-    (goto-char (match-beginning 0))
-    (let ((backend (xref-find-backend)))
+    (let ((backend (emacs-code-navigator--semantic-xref-backend)))
       (unless backend
         (error "No xref backend available for %s" file))
-      (mapcar #'emacs-code-navigator--xref-location-data
-              (funcall fn backend identifier)))))
+      (goto-char (point-min))
+    (let ((regexp (format "\\_<%s\\_>" (regexp-quote identifier)))
+          found)
+      (while (and (not found) (re-search-forward regexp nil t))
+        (unless (nth 8 (syntax-ppss (match-beginning 0)))
+          (setq found (match-beginning 0))))
+      (unless found
+        (error "Code identifier not found in file: %s" identifier))
+      (goto-char found))
+      (let ((backend-identifier
+             (or (and (fboundp 'xref-backend-identifier-at-point)
+                      (condition-case nil
+                          (xref-backend-identifier-at-point backend)
+                        (error nil)))
+                 identifier)))
+        (mapcar #'emacs-code-navigator--xref-location-data
+                (funcall fn backend backend-identifier))))))
 
 (defun emacs-code-navigator-xref-definitions (file identifier)
   "Return xref definitions for IDENTIFIER from FILE context."
@@ -484,8 +636,8 @@ point.  Signal an error when no matching symbol can be found."
 (defun emacs-code-navigator--xref-at-line (file line identifier fn)
   "Visit FILE, move to LINE/IDENTIFIER, and call xref function FN."
   (with-current-buffer (find-file-noselect file)
-    (let* ((symbol (emacs-code-navigator--goto-symbol-at-line line identifier))
-           (backend (xref-find-backend)))
+    (let* ((backend (emacs-code-navigator--semantic-xref-backend))
+           (symbol (emacs-code-navigator--goto-symbol-at-line line identifier)))
       (unless backend
         (error "No xref backend available for %s" file))
       (mapcar #'emacs-code-navigator--xref-location-data
@@ -673,16 +825,39 @@ plain strings delivered synchronously through their callbacks."
             (error nil)))
         (delete-dups (nreverse (seq-remove #'string-empty-p docs)))))))
 
-(defun emacs-code-navigator-context-at-line (file line &optional diagnostic-radius)
-  "Return compact Emacs context for FILE at LINE.
+(defun emacs-code-navigator-context-at-line
+    (file line &optional radius include-defun include-eldoc
+          include-diagnostics diagnostic-radius)
+  "Return bounded live-buffer context for FILE at LINE.
 
-The result is a plist containing symbol data, surrounding defun, Eldoc strings,
-and Flymake diagnostics near LINE.  DIAGNOSTIC-RADIUS defaults to 0."
-  (list :symbol (emacs-code-navigator-symbol-at-line file line)
-        :defun (emacs-code-navigator-defun-at-line file line)
-        :eldoc (emacs-code-navigator-eldoc-at-line file line)
-        :diagnostics (emacs-code-navigator-diagnostics-at-line
-                      file line diagnostic-radius)))
+RADIUS defaults to 5 source lines on each side.  INCLUDE-DEFUN,
+INCLUDE-ELDOC, and INCLUDE-DIAGNOSTICS opt into progressively more expensive
+data.  In particular, Flymake is never started by the default context query."
+  (let* ((distance (or radius 5))
+         (_ (unless (and (integerp distance) (>= distance 0))
+              (error "RADIUS must be a non-negative integer: %S" radius)))
+         (result
+          (list :symbol (emacs-code-navigator-symbol-at-line file line)
+                :region
+                (emacs-code-navigator-read-region
+                 file (max 1 (- line distance)) (+ line distance)))))
+    (when include-defun
+      (setq result
+            (append result
+                    (list :defun
+                          (emacs-code-navigator-defun-at-line file line)))))
+    (when include-eldoc
+      (setq result
+            (append result
+                    (list :eldoc
+                          (emacs-code-navigator-eldoc-at-line file line)))))
+    (when include-diagnostics
+      (setq result
+            (append result
+                    (list :diagnostics
+                          (emacs-code-navigator-diagnostics-at-line
+                           file line diagnostic-radius)))))
+    result))
 
 (defun emacs-code-navigator--xref-request (request)
   "Return xref data selected by compact REQUEST."
@@ -703,6 +878,69 @@ and Flymake diagnostics near LINE.  DIAGNOSTIC-RADIUS defaults to 0."
                    #'emacs-code-navigator-xref-definitions
                  #'emacs-code-navigator-xref-references)
                file identifier))))
+
+(defun emacs-code-navigator--locate-result (strategy matches)
+  "Return a compact locate result for STRATEGY and MATCHES."
+  (list :strategy strategy :matches matches))
+
+(defun emacs-code-navigator--locate-request (request)
+  "Route a compact locate REQUEST to the cheapest suitable backend."
+  (let* ((query (plist-get request :query))
+         (file (plist-get request :file))
+         (directory (or (plist-get request :directory)
+                        (and file (file-name-directory file))))
+         (line (plist-get request :line))
+         (kind (or (plist-get request :kind) 'auto))
+         (limit (plist-get request :limit))
+         (glob (plist-get request :glob))
+         (regexp (plist-get request :regexp)))
+    (unless (and (stringp query) (not (string-empty-p query)))
+      (error "Locate QUERY must be a non-empty string"))
+    (unless (memq kind '(auto text symbol definitions references))
+      (error "Locate KIND must be auto, text, symbol, definitions, or references: %S"
+             kind))
+    (cond
+     ((eq kind 'text)
+      (emacs-code-navigator--locate-result
+       'text
+       (emacs-code-navigator-search
+        directory query limit glob (not regexp))))
+     ((memq kind '(definitions references))
+      (unless file
+        (error "Locate %S requires :file context" kind))
+      (emacs-code-navigator--locate-result
+       kind
+       (emacs-code-navigator--xref-request
+        (list :file file :line line :identifier query :kind kind))))
+     ((eq kind 'symbol)
+      (unless file
+        (error "Locate symbol requires :file context"))
+      (emacs-code-navigator--locate-result
+       'workspace-symbol
+       (emacs-code-navigator-workspace-symbol file query limit)))
+     (line
+      (unless file
+        (error "Locate with :line requires :file context"))
+      (emacs-code-navigator--locate-result
+       'definitions
+       (emacs-code-navigator--xref-request
+        (list :file file :line line :identifier query :kind 'definitions))))
+     (file
+      (let ((symbols
+             (condition-case nil
+                 (emacs-code-navigator-workspace-symbol file query limit)
+               (error nil))))
+        (if symbols
+            (emacs-code-navigator--locate-result 'workspace-symbol symbols)
+          (emacs-code-navigator--locate-result
+           'text-fallback
+           (emacs-code-navigator-search
+            directory query limit glob (not regexp))))))
+     (t
+      (emacs-code-navigator--locate-result
+       'text
+       (emacs-code-navigator-search
+        directory query limit glob (not regexp)))))))
 
 (defun emacs-code-navigator--diagnostics-request (request)
   "Return file or project diagnostics selected by compact REQUEST."
@@ -750,7 +988,9 @@ Use :operation `describe' to request operation schemas only when needed."
              (emacs-code-navigator-search
               (plist-get request :directory)
               (plist-get request :regexp)
-              (plist-get request :limit)))
+              (plist-get request :limit)
+              (plist-get request :glob)
+              (plist-get request :literal)))
             ('files
              (emacs-code-navigator-project-files
               (plist-get request :directory)
@@ -762,14 +1002,24 @@ Use :operation `describe' to request operation schemas only when needed."
               (plist-get request :end-line)))
             ('imenu
              (emacs-code-navigator-imenu (plist-get request :file)))
+            ('workspace-symbol
+             (emacs-code-navigator-workspace-symbol
+              (plist-get request :file)
+              (plist-get request :pattern)
+              (plist-get request :limit)))
             ('xref (emacs-code-navigator--xref-request request))
+            ('locate (emacs-code-navigator--locate-request request))
             ('diagnostics
              (emacs-code-navigator--diagnostics-request request))
             ('context
              (emacs-code-navigator-context-at-line
               (plist-get request :file)
               (plist-get request :line)
-                      (plist-get request :diagnostic-radius)))
+              (plist-get request :radius)
+              (plist-get request :defun)
+              (plist-get request :eldoc)
+              (plist-get request :diagnostics)
+              (plist-get request :diagnostic-radius)))
             ('describe
              (skill-runtime-describe
               emacs-code-navigator--schemas (plist-get request :target)))
@@ -779,7 +1029,7 @@ Use :operation `describe' to request operation schemas only when needed."
      (cond
       ((and (listp result) (plist-member result :matches))
        (length (plist-get result :matches)))
-      ((memq operation '(search files imenu xref diagnostics))
+      ((memq operation '(search files imenu workspace-symbol xref diagnostics))
        (length result))
       (t 1)))))
 
