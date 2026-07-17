@@ -14,6 +14,8 @@
     (load (expand-file-name "skill-git.el" common) nil nil t)))
 
 (defvar skill-git-message-column)
+(defvar magit-display-buffer-noselect)
+(defvar magit-process-popup-time)
 (declare-function skill-git-format-message "../../common/scripts/skill-git"
                   (spec))
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
@@ -211,22 +213,29 @@ return separate staged and unstaged diffs."
            (message (ai-git-commit-format request))
            ;; A single -m value bypasses the editor.  Verbatim cleanup keeps
            ;; the formatter output intact and avoids any temporary file.
-           (arguments (list "--cleanup=verbatim" "-m" message))
-           (process (if amend
-                        (magit-commit-amend arguments)
-                      (magit-commit-create arguments))))
-      (ai-git-commit--wait-for-process process)
-      (let* ((expected
-              (ai-git-commit--normalize-terminal-newline message))
-             (actual
-              (ai-git-commit--normalize-terminal-newline
-               (ai-git-commit--head-message))))
-        (ai-git-commit--validate-message actual)
-        (unless (string= actual expected)
-          (error "Committed message differs from formatter output"))
-        (list :commit (magit-rev-parse "HEAD")
-              :message actual
-              :amended (and amend t))))))
+           (arguments (list "--cleanup=verbatim" "-m" message)))
+      ;; Keep the complete asynchronous operation headless.  In particular,
+      ;; the process sentinel runs while `accept-process-output' waits below,
+      ;; so these bindings must outlive the initial Magit call.
+      (let ((magit-process-popup-time -1)
+            (magit-display-buffer-noselect t)
+            (inhibit-message t)
+            (message-log-max nil))
+        (let ((process (if amend
+                           (magit-commit-amend arguments)
+                         (magit-commit-create arguments))))
+          (ai-git-commit--wait-for-process process)
+          (let* ((expected
+                  (ai-git-commit--normalize-terminal-newline message))
+                 (actual
+                  (ai-git-commit--normalize-terminal-newline
+                   (ai-git-commit--head-message))))
+            (ai-git-commit--validate-message actual)
+            (unless (string= actual expected)
+              (error "Committed message differs from formatter output"))
+            (list :commit (magit-rev-parse "HEAD")
+                  :message actual
+                  :amended (and amend t))))))))
 
 ;;;###autoload
 (defun ai-git-commit-run (request)
