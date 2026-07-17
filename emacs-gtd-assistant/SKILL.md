@@ -10,13 +10,11 @@ Manage GTD through the running Emacs server. Load
 docstrings and validation errors as the interface; inspect source only to debug or
 modify it.
 
-## Workflow
-
-- List agenda/tasks with `emacs-gtd-list`; summarize date, state, priority, and title.
-- Add a task with `emacs-gtd-add-task`, selecting personal or work context unless
-  the user chooses a specific heading.
-- Before modifying, list or find candidates and resolve ambiguity. Ensure the chosen
-  item has an ID, then call the matching mutation function.
+- List tasks with `emacs-gtd-list`; summarize date, state, priority, and title.
+- Add with `emacs-gtd-add-task`, selecting personal or work context unless the user
+  chooses a specific heading.
+- Before a title-based mutation, call `emacs-gtd-resolve-title`. Proceed only when
+  it returns `:status resolved`; present returned matches when ambiguous.
 - Delete or archive only with explicit authorization. Prefer `DONE` when the user
   says an item is finished.
 

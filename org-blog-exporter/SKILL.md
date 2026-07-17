@@ -9,13 +9,8 @@ Load `scripts/org-blog-exporter.el` and call its public entry points through the
 running Emacs server. Treat the script and function docstrings as the implementation
 and interface; inspect source only to debug or modify it.
 
-## Workflow
-
-1. Decide whether the request is export-only or explicit publishing, and resolve
-   the requested file scope. Inspect ambiguous selections before acting.
-2. For export-only work, call `org-blog-exporter-export-file`,
-   `org-blog-exporter-export-files`, or `org-blog-exporter-export-all`.
-3. Only with explicit publishing authorization, call
-   `org-blog-exporter-publish-files` or `org-blog-exporter-publish-all`.
-4. Report returned paths, publishing results, and errors. Do not bypass a program
-   safety error by manually cloning, committing, or pushing.
+Resolve an ambiguous file selection before acting. For export-only work, call
+`org-blog-exporter-export`; pass nil files for all public notes. Only with explicit
+publishing authorization call `org-blog-exporter-publish`, again using nil for all
+public notes. Report its returned paths, publishing results, and errors. Do not
+bypass a program safety error by manually cloning, committing, or pushing.

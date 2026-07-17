@@ -6,6 +6,7 @@
 (require 'rx)
 
 (declare-function magit-call-git "magit-process" (&rest args))
+(declare-function magit-git-lines "magit-git" (&rest args))
 (declare-function magit-git-string "magit-git" (&rest args))
 (declare-function magit-git-success "magit-git" (&rest args))
 (declare-function magit-toplevel "magit-git" (&optional directory))
@@ -51,7 +52,7 @@
   (let* ((default-directory (skill-git-root root))
          (args (append '("status" "--porcelain=v1" "--untracked-files=all")
                        (and paths (cons "--" paths)))))
-    (or (apply #'magit-git-string args) "")))
+    (string-join (apply #'magit-git-lines args) "\n")))
 
 (defun skill-git-assert-clean (root)
   "Require ROOT to have no tracked, staged, or untracked changes."

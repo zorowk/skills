@@ -23,6 +23,25 @@
   "Export Org notes to a static HTML blog."
   :group 'org)
 
+(declare-function skill-git-assert-clean
+                  "../../common/scripts/skill-git" (root))
+(declare-function skill-git-commit-paths
+                  "../../common/scripts/skill-git"
+                  (root subject paths &optional predicate description))
+(declare-function skill-git-ensure-repository
+                  "../../common/scripts/skill-git" (remote-url directory))
+(declare-function skill-git-pull-ff-only
+                  "../../common/scripts/skill-git" (root))
+(declare-function skill-git-push
+                  "../../common/scripts/skill-git" (root))
+(declare-function skill-git-relative-path
+                  "../../common/scripts/skill-git"
+                  (root path &optional predicate description))
+(declare-function skill-git-status
+                  "../../common/scripts/skill-git" (root &optional paths))
+(declare-function skill-git-upstream-ahead-count
+                  "../../common/scripts/skill-git" (root))
+
 (defcustom org-blog-exporter-notes-directory "~/Dropbox/notes/"
   "Directory containing source Org notes."
   :type 'directory
@@ -226,6 +245,22 @@ instead."
      (lambda (file)
        (org-blog-exporter-exportable-file-p file root))
      (directory-files-recursively root "\\.org\\'"))))
+
+(defun org-blog-exporter--validated-files (org-files &optional notes-dir)
+  "Return absolute exportable ORG-FILES below NOTES-DIR or signal an error."
+  (unless (and (listp org-files) org-files)
+    (error "ORG-FILES must be a non-empty list"))
+  (let ((root (org-blog-exporter--notes-directory notes-dir)))
+    (mapcar
+     (lambda (file)
+       (let ((source (expand-file-name file)))
+         (unless (file-in-directory-p source root)
+           (error "Org file is outside the configured notes directory: %s"
+                  source))
+         (unless (org-blog-exporter-exportable-file-p source root)
+           (error "Org file is not an exportable public note: %s" source))
+         source))
+     org-files)))
 
 (defun org-blog-exporter--local-link-target-p (target)
   "Return non-nil when TARGET looks like a local file link."
@@ -451,11 +486,13 @@ Use Chinese labels when CHINESE is non-nil."
                     "\n#+end_export\n\n")))))))
 
 (defun org-blog-exporter-export-file
-    (org-file &optional output-dir setupfile asset-targets)
+    (org-file &optional output-dir setupfile asset-targets notes-dir)
   "Export ORG-FILE to HTML and return the exported path."
-  (let* ((source (expand-file-name org-file))
+  (let* ((source (car (org-blog-exporter--validated-files
+                       (list org-file) notes-dir)))
          (setup (org-blog-exporter--setupfile setupfile))
-         (target (org-blog-exporter--target-file source output-dir nil setup))
+         (target (org-blog-exporter--target-file
+                  source output-dir notes-dir setup))
          (default-directory (file-name-directory source))
          (org-export-use-babel nil)
          (org-export-allow-bind-keywords t))
@@ -476,11 +513,11 @@ Use Chinese labels when CHINESE is non-nil."
         exported))))
 
 (defun org-blog-exporter-export-files
-    (org-files &optional output-dir setupfile asset-targets)
+    (org-files &optional output-dir setupfile asset-targets notes-dir)
   "Export ORG-FILES and return exported HTML paths."
   (mapcar (lambda (file)
             (org-blog-exporter-export-file
-             file output-dir setupfile asset-targets))
+             file output-dir setupfile asset-targets notes-dir))
           org-files))
 
 (defun org-blog-exporter-export-all
@@ -493,7 +530,7 @@ Use Chinese labels when CHINESE is non-nil."
     (dolist (file files)
       (condition-case err
           (push (org-blog-exporter-export-file
-                 file output-dir setupfile asset-targets)
+                 file output-dir setupfile asset-targets root)
                 exported)
         (error
          (push (list file (error-message-string err)) errors))))
@@ -505,6 +542,31 @@ Use Chinese labels when CHINESE is non-nil."
           :exported (nreverse exported)
           :error-count (length errors)
           :errors (nreverse errors))))
+
+;;;###autoload
+(defun org-blog-exporter-export
+    (&optional org-files output-dir setupfile notes-dir)
+  "Export selected ORG-FILES, or every public note when ORG-FILES is nil.
+
+Return a consistent summary plist containing :scope, :candidates, :exported,
+and error counts.  Selected-file export validates the complete selection before
+starting; all-file export preserves per-file error reporting."
+  (if org-files
+      (let* ((files (org-blog-exporter--validated-files org-files notes-dir))
+             (exported (org-blog-exporter-export-files
+                        files output-dir setupfile nil notes-dir)))
+        (list :scope 'files
+              :notes-directory (org-blog-exporter--notes-directory notes-dir)
+              :output-directory
+              (org-blog-exporter--output-directory output-dir setupfile)
+              :candidate-count (length files)
+              :candidates files
+              :exported-count (length exported)
+              :exported exported
+              :error-count 0
+              :errors nil))
+    (append (list :scope 'all)
+            (org-blog-exporter-export-all notes-dir output-dir setupfile))))
 
 (defun org-blog-exporter--post-date (org-file)
   "Return ORG-FILE's publication date as YYYY-MM-DD."
@@ -547,10 +609,12 @@ Use Chinese labels when CHINESE is non-nil."
                 entries))))
     (nreverse entries)))
 
-(defun org-blog-exporter--post-entry (org-file output-dir setupfile)
+(defun org-blog-exporter--post-entry
+    (org-file output-dir setupfile &optional notes-dir)
   "Return the homepage entry for ORG-FILE."
   (let* ((target
-          (org-blog-exporter--target-file org-file output-dir nil setupfile))
+          (org-blog-exporter--target-file
+           org-file output-dir notes-dir setupfile))
          (relative
           (file-relative-name target
                               (org-blog-exporter--output-directory
@@ -579,7 +643,7 @@ Use Chinese labels when CHINESE is non-nil."
                   (string> left-date right-date))))))))
 
 (defun org-blog-exporter-update-index
-    (org-files &optional output-dir setupfile)
+    (org-files &optional output-dir setupfile notes-dir)
   "Update index.html with ORG-FILES and return its absolute path."
   (let* ((output (org-blog-exporter--output-directory output-dir setupfile))
          (index-file (expand-file-name "index.html" output))
@@ -587,7 +651,8 @@ Use Chinese labels when CHINESE is non-nil."
           (org-blog-exporter--merge-index-entries
            (org-blog-exporter--index-entries index-file)
            (mapcar (lambda (file)
-                     (org-blog-exporter--post-entry file output setupfile))
+                     (org-blog-exporter--post-entry
+                      file output setupfile notes-dir))
                    org-files)))
          (system-time-locale "C"))
     (make-directory output t)
@@ -664,7 +729,7 @@ Use Chinese labels when CHINESE is non-nil."
 
 ;;;###autoload
 (defun org-blog-exporter-publish-files
-    (org-files &optional title repository-dir setupfile)
+    (org-files &optional title repository-dir setupfile notes-dir)
   "Publish ORG-FILES and their local resources to the blog repository.
 
 TITLE is used in the commit subject and defaults to `Publish Org HTML'.
@@ -673,6 +738,7 @@ copy referenced resources, rewrite their exported links, update index.html,
 commit only generated paths, and push."
   (unless (and (listp org-files) org-files)
     (error "ORG-FILES must be a non-empty list"))
+  (setq org-files (org-blog-exporter--validated-files org-files notes-dir))
   (let* ((repository
           (org-blog-exporter--prepare-publish-repository
            repository-dir setupfile))
@@ -680,9 +746,10 @@ commit only generated paths, and push."
          (asset-plan (org-blog-exporter--asset-plan org-files root))
          (asset-targets (org-blog-exporter--asset-targets asset-plan))
          (exported (org-blog-exporter-export-files
-                    org-files root setupfile asset-targets))
+                    org-files root setupfile asset-targets notes-dir))
          (index-file
-          (org-blog-exporter-update-index org-files root setupfile))
+          (org-blog-exporter-update-index
+           org-files root setupfile notes-dir))
          (assets (org-blog-exporter--copy-assets asset-plan))
          (subject (format "chore(blog): %s" (or title "Publish Org HTML"))))
     (append (org-blog-exporter--finish-publish
@@ -711,7 +778,7 @@ commit only generated paths, and push."
       (error "Blog export failed: %S" (plist-get summary :errors)))
     (let ((index-file
            (org-blog-exporter-update-index
-            (plist-get summary :candidates) root setupfile))
+            (plist-get summary :candidates) root setupfile notes-dir))
           (assets (org-blog-exporter--copy-assets asset-plan)))
       (append
        summary
@@ -720,6 +787,22 @@ commit only generated paths, and push."
         (append (plist-get summary :exported) (list index-file) assets)
         (format "chore(blog): %s" (or title "Publish Org HTML")))
        (list :index index-file :assets assets)))))
+
+;;;###autoload
+(defun org-blog-exporter-publish
+    (&optional org-files title notes-dir repository-dir setupfile)
+  "Publish selected ORG-FILES, or every public note when ORG-FILES is nil.
+
+TITLE, NOTES-DIR, REPOSITORY-DIR, and SETUPFILE match the specialized publish
+entry points.  Calling this function performs the full clone/pull, export,
+index, resource, commit, and push workflow; callers must establish explicit
+publishing authorization before invoking it."
+  (if org-files
+      (org-blog-exporter-publish-files
+       (org-blog-exporter--validated-files org-files notes-dir)
+       title repository-dir setupfile notes-dir)
+    (org-blog-exporter-publish-all
+     title notes-dir repository-dir setupfile)))
 
 (provide 'org-blog-exporter)
 

@@ -173,6 +173,31 @@ source details."
                                (symbol-file symbol 'defvar)))))
      (seq-take (seq-filter predicate symbols) max-count))))
 
+(defun emacs-code-navigator-discover
+    (pattern &optional kind limit documentation)
+  "Discover and, when unambiguous, expand an Emacs capability.
+
+PATTERN, KIND, LIMIT, and DOCUMENTATION have the same meaning as in
+`emacs-code-navigator-apropos'.  Return a plist containing compact :matches.
+When PATTERN names an available match exactly, or the search has exactly one
+result, also return that symbol's full Help and source data as :selected.  This
+is the preferred entry point when the caller does not yet know an exact Emacs
+symbol name."
+  (let* ((matches (emacs-code-navigator-apropos
+                   pattern kind limit documentation))
+         (exact (seq-find
+                 (lambda (match)
+                   (string= pattern (plist-get match :symbol)))
+                 matches))
+         (choice (or exact (and (= (length matches) 1) (car matches)))))
+    (list :pattern pattern
+          :kind (or kind 'function)
+          :matches matches
+          :selected
+          (and choice
+               (emacs-code-navigator-symbol-info
+                (plist-get choice :symbol))))))
+
 (defun emacs-code-navigator-library-info (library)
   "Return the source path for Emacs Lisp LIBRARY.
 
@@ -243,6 +268,12 @@ uses `find-library-name', the noninteractive engine behind `find-library'."
 
 (defun emacs-code-navigator-read-region (file start-line &optional end-line)
   "Return FILE lines from START-LINE to END-LINE with line numbers."
+  (unless (and (integerp start-line) (> start-line 0))
+    (error "START-LINE must be a positive integer: %S" start-line))
+  (when (and end-line
+             (not (and (integerp end-line) (>= end-line start-line))))
+    (error "END-LINE must be an integer no smaller than START-LINE: %S"
+           end-line))
   (with-current-buffer (find-file-noselect file)
     (save-excursion
       (save-restriction

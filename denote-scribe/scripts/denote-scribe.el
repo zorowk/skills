@@ -73,7 +73,15 @@
 (declare-function hywiki-add-page "hywiki" (page-name &optional force-flag))
 (declare-function hywiki-get-existing-page-file "hywiki" (reference))
 (declare-function hywiki-word-is-p "hywiki" (word))
+(declare-function magit-git-lines "magit-git" (&rest args))
 (declare-function magit-git-string "magit-git" (&rest args))
+(declare-function skill-git-commit-paths
+                  "../../common/scripts/skill-git"
+                  (root subject paths &optional predicate description))
+(declare-function skill-git-directory
+                  "../../common/scripts/skill-git" (directory))
+(declare-function skill-git-root
+                  "../../common/scripts/skill-git" (directory))
 
 (defconst denote-scribe-critical-headings
   '("Goal" "Question" "Context" "Evidence" "Hypotheses" "Investigation"
@@ -272,6 +280,56 @@ Denote commit that has not yet been created."
           :due due
           :review-due due
           :bootstrap bootstrap)))
+
+(defun denote-scribe--review-files (new-note state &optional notes-dir)
+  "Return the Denote files to review for NEW-NOTE according to STATE."
+  (let* ((root (plist-get state :git-root))
+         (notes-root
+          (file-name-as-directory
+           (file-truename
+            (denote-scribe--directory
+             notes-dir denote-scribe-notes-directory))))
+         (marker (plist-get state :marker-commit))
+         (notes-relative (file-relative-name notes-root root))
+         (_ (when (or (string= notes-relative "../")
+                      (string-prefix-p "../" notes-relative))
+              (error "Notes directory is outside the Git repository: %s"
+                     notes-root)))
+         (files
+          (if (plist-get state :bootstrap)
+              (denote-scribe-list-notes nil nil notes-root)
+            (let ((default-directory root))
+              (mapcar
+               (lambda (relative) (expand-file-name relative root))
+               (magit-git-lines
+                "diff" "--name-only" "--diff-filter=ACMRT"
+                (concat marker "..HEAD") "--"
+                (concat notes-relative "*.org"))))))
+         (candidate-files (delete-dups (append files (list new-note)))))
+    (seq-filter
+     (lambda (file)
+       (and (file-regular-p file)
+            (file-in-directory-p (file-truename file) notes-root)))
+     candidate-files)))
+
+;;;###autoload
+(defun denote-scribe-create-with-review-context
+    (title body-file &optional keywords notes-dir signature date git-dir)
+  "Create a Denote report and return its complete AI-review context.
+
+The creation arguments match `denote-scribe-create'; GIT-DIR selects the
+repository used for review cadence.  Return :file, :review-state, and, only
+when review is due, :review-files.  A bootstrap review includes the full
+Denote corpus; later reviews include notes changed since the last completed
+review plus the newly created report."
+  (let* ((state (denote-scribe-git-review-state git-dir))
+         (file (denote-scribe-create
+                title body-file keywords notes-dir signature date)))
+    (list :file file
+          :review-state state
+          :review-files
+          (and (plist-get state :review-due)
+               (denote-scribe--review-files file state notes-dir)))))
 
 (define-obsolete-function-alias
   'denote-scribe-git-hywiki-state

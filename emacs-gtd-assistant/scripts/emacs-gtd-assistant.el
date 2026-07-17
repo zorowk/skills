@@ -212,6 +212,28 @@ QUERY is treated as a regular expression.  This function does not create IDs."
    (emacs-gtd-list include-done)))
 
 ;;;###autoload
+(defun emacs-gtd-resolve-title (query &optional include-done)
+  "Resolve QUERY to one mutable GTD item and ensure that item has an ID.
+
+QUERY is the regular expression accepted by `emacs-gtd-find-by-title'.  Return
+a plist whose :status is `resolved', `not-found', or `ambiguous'.  A resolved
+result contains one :item with a persistent ID.  Other results contain
+:matches for caller-visible disambiguation and do not modify the GTD file."
+  (let ((matches (emacs-gtd-find-by-title query include-done)))
+    (cond
+     ((null matches)
+      (list :status 'not-found :matches nil))
+     ((cdr matches)
+      (list :status 'ambiguous :matches matches))
+     (t
+      (let ((item (car matches)))
+        (list :status 'resolved
+              :item
+              (or (and (cdr (assq 'id item)) item)
+                  (emacs-gtd-ensure-id-at-line
+                   (cdr (assq 'line item))))))))))
+
+;;;###autoload
 (defun emacs-gtd-add-task (title &optional plist)
   "Add TITLE as a GTD task according to PLIST and return the created item.
 
@@ -273,6 +295,9 @@ PLIST may select :context `personal' or `work', or override it with :headline."
 (defun emacs-gtd-set-state (id state)
   "Set GTD item ID to todo STATE and return the updated item."
   (emacs-gtd--find-id id)
+  (emacs-gtd--single-line state "STATE")
+  (unless (member state org-todo-keywords-1)
+    (error "Unknown TODO state in the configured Org buffer: %S" state))
   (org-todo state)
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)

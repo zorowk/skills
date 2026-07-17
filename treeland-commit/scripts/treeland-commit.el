@@ -4,6 +4,9 @@
 
 (require 'subr-x)
 
+(declare-function magit-git-insert "magit-git" (&rest args))
+(declare-function magit-toplevel "magit-git" (&optional directory))
+
 (defgroup treeland-commit nil
   "Format Treeland commit messages."
   :group 'tools)
@@ -15,6 +18,11 @@
 
 (defcustom treeland-commit-maximum-column 120
   "Maximum permitted line length in a formatted message."
+  :type 'positive-integer
+  :group 'treeland-commit)
+
+(defcustom treeland-commit-context-maximum-characters 30000
+  "Maximum characters retained for each diff in commit context."
   :type 'positive-integer
   :group 'treeland-commit)
 
@@ -56,6 +64,50 @@
   (if value
       (treeland-commit--fill (format "%s: %s" label value))
     (concat label ":")))
+
+(defun treeland-commit--git-output (&rest arguments)
+  "Return complete Git output for ARGUMENTS through Magit."
+  (with-temp-buffer
+    (unless (zerop (apply #'magit-git-insert arguments))
+      (error "Git command failed: git %s" (string-join arguments " ")))
+    (string-trim-right (buffer-string))))
+
+(defun treeland-commit--truncate-context (text)
+  "Return TEXT capped for compact commit-message evidence."
+  (if (<= (length text) treeland-commit-context-maximum-characters)
+      text
+    (concat
+     (substring text 0 treeland-commit-context-maximum-characters)
+     "\n[diff truncated by treeland-commit-context]")))
+
+;;;###autoload
+(defun treeland-commit-context (&optional directory)
+  "Return Git evidence needed to draft a commit message for DIRECTORY.
+
+Use the repository containing DIRECTORY or `default-directory'.  The returned
+plist contains complete porcelain status and diff statistics, plus capped
+unstaged and staged diffs.  Git is invoked through the running Emacs session's
+Magit configuration."
+  (unless (require 'magit nil t)
+    (error "Magit is not available in this Emacs session"))
+  (let* ((root (magit-toplevel (or directory default-directory))))
+    (unless root
+      (error "Not inside a Git repository: %s"
+             (expand-file-name (or directory default-directory))))
+    (let ((default-directory root))
+      (list :git-root root
+            :status (treeland-commit--git-output
+                     "status" "--porcelain=v1" "--untracked-files=all")
+            :unstaged-stat (treeland-commit--git-output "diff" "--stat")
+            :staged-stat (treeland-commit--git-output
+                          "diff" "--cached" "--stat")
+            :unstaged-diff
+            (treeland-commit--truncate-context
+             (treeland-commit--git-output "diff" "--no-ext-diff"))
+            :staged-diff
+            (treeland-commit--truncate-context
+             (treeland-commit--git-output
+              "diff" "--cached" "--no-ext-diff"))))))
 
 ;;;###autoload
 (defun treeland-commit-format
