@@ -11,6 +11,13 @@ Use the running Emacs session for compact context, including unsaved buffers. Lo
 `scripts/emacs-code-navigator.el` from this skill directory. If the server is
 unavailable, report the error and fall back to disk tools.
 
+Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
+first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
+"--eval"]`, so the user can allow or reject server-socket access. Never interpret
+a sandbox `Operation not permitted` or socket-access denial as evidence that the
+Emacs server is down. Report it unavailable only when the escalated attempt also
+fails.
+
 Call `emacs-code-navigator-query` as the primary interface. Start compact; pass
 `:full t` only when bounded Help or context is insufficient. Discover capabilities
 before guessing an API or reimplementing it in the shell.

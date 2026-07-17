@@ -14,6 +14,13 @@ needed and full context only when the bounded diff is insufficient. For an
 authorized write, send the same structured evidence to the `commit` or `amend`
 operation with `:authorization explicit`.
 
+Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
+first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
+"--eval"]`, so the user can allow or reject server-socket access. Never interpret
+a sandbox `Operation not permitted` or socket-access denial as evidence that the
+Emacs server is down. Report it unavailable only when the escalated attempt also
+fails.
+
 Supply the problem context, behavior-level changes, implementation reason, actual
 validation, and unchanged boundary as structured inputs. Phrase them naturally; the
 formatter orders them without section labels. Add `Log`, `PMS`, or `Influence`

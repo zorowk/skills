@@ -11,6 +11,13 @@ Load `scripts/org-blog-exporter.el` and call `org-blog-exporter-run` through the
 running Emacs server. Keep compact results unless complete path lists are necessary.
 Read `:data` and follow `:page :next-offset`; use `describe` only when needed.
 
+Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
+first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
+"--eval"]`, so the user can allow or reject server-socket access. Never interpret
+a sandbox `Operation not permitted` or socket-access denial as evidence that the
+Emacs server is down. Report it unavailable only when the escalated attempt also
+fails.
+
 Resolve ambiguous files before acting. Export needs no external authorization.
 Publish only after an explicit user request and pass `:authorization explicit`;
 nil `:files` means all public notes. Never bypass a program safety error manually.

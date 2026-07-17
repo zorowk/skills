@@ -11,6 +11,13 @@ Manage GTD through the running Emacs server. Load
 `scripts/emacs-gtd-assistant.el`, then call `emacs-gtd-execute`. Start with filtered,
 bounded `list` or `resolve`; use `:id` or a unique `:query` for mutations.
 
+Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
+first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
+"--eval"]`, so the user can allow or reject server-socket access. Never interpret
+a sandbox `Operation not permitted` or socket-access denial as evidence that the
+Emacs server is down. Report it unavailable only when the escalated attempt also
+fails.
+
 Read `:data` and follow `:page :next-offset`. Use `describe` only when a request
 schema is unclear.
 
