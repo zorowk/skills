@@ -14,14 +14,6 @@
     (load (expand-file-name "skill-git.el" common) nil nil t)))
 
 (defvar skill-git-message-column)
-(declare-function skill-git--fill "../../common/scripts/skill-git"
-                  (text &optional prefix))
-(declare-function skill-git--required-text "../../common/scripts/skill-git"
-                  (value label))
-(declare-function skill-git--single-line "../../common/scripts/skill-git"
-                  (value label &optional optional))
-(declare-function skill-git--subject "../../common/scripts/skill-git"
-                  (type scope summary))
 (declare-function skill-git-format-message "../../common/scripts/skill-git"
                   (spec))
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
@@ -39,11 +31,6 @@
   "Collect evidence for Git commit messages."
   :group 'skill-git)
 
-(define-obsolete-variable-alias
-  'treeland-commit-fill-column 'ai-git-commit-fill-column "2026-07-17")
-(define-obsolete-variable-alias
-  'treeland-commit-maximum-column 'ai-git-commit-maximum-column "2026-07-17")
-
 (defcustom ai-git-commit-fill-column 100
   "Column used to fill commit-message prose."
   :type 'positive-integer
@@ -53,13 +40,6 @@
   "Maximum permitted line width in generated commit messages."
   :type 'positive-integer
   :group 'ai-git-commit)
-
-(define-obsolete-variable-alias
-  'treeland-commit-context-maximum-characters
-  'ai-git-commit-context-maximum-characters "2026-07-17")
-(define-obsolete-variable-alias
-  'treeland-commit-compact-maximum-characters
-  'ai-git-commit-compact-maximum-characters "2026-07-17")
 
 (defcustom ai-git-commit-context-maximum-characters 30000
   "Maximum characters retained for each full-mode commit diff."
@@ -184,59 +164,6 @@ return separate staged and unstaged diffs."
       (_ (error "Unknown Git commit operation %S; expected %S"
                 operation (mapcar #'car ai-git-commit--schemas))))))
 
-;; Compatibility for callers using the former Treeland interface.
-(define-obsolete-function-alias
-  'treeland-commit-context #'ai-git-commit-context "2026-07-17")
-
-(defun treeland-commit-format
-    (type module summary body log &optional pms influence)
-  "Format legacy Treeland fields through shared Git validation."
-  (skill-git--single-line log "LOG")
-  (skill-git--single-line pms "PMS" t)
-  (skill-git--single-line influence "INFLUENCE" t)
-  (let* ((skill-git-message-column ai-git-commit-fill-column)
-         (message
-          (format "%s\n\n%s\n\n%s\n%s\n%s"
-                  (skill-git--subject type module summary)
-                  (skill-git--fill
-                   (skill-git--required-text body "BODY"))
-                  (skill-git--fill (format "Log: %s" log))
-                  (if pms (skill-git--fill (format "PMS: %s" pms)) "PMS:")
-                  (if influence
-                      (skill-git--fill (format "Influence: %s" influence))
-                    "Influence:"))))
-    (dolist (line (split-string message "\n"))
-      (when (> (string-width line) ai-git-commit-maximum-column)
-        (error "Legacy commit line exceeds %d columns"
-               ai-git-commit-maximum-column)))
-    message))
-
-(defun treeland-commit-run (request)
-  "Execute legacy Treeland REQUEST through the shared implementation."
-  (pcase (plist-get request :operation)
-    ('context
-     (let ((data
-            (ai-git-commit-context
-             (plist-get request :directory)
-             (not (plist-get request :full)))))
-       (list :status 'ok :operation 'context
-             :count (plist-get data :change-count)
-             :result data)))
-    ('format
-     (list :status 'ok :operation 'format :count 1
-           :result
-           (treeland-commit-format
-            (plist-get request :type)
-            (plist-get request :module)
-            (plist-get request :summary)
-            (plist-get request :body)
-            (plist-get request :log)
-            (plist-get request :pms)
-            (plist-get request :influence))))
-    (_ (error "Unknown legacy Treeland operation: %S"
-              (plist-get request :operation)))))
-
 (provide 'ai-git-commit)
-(provide 'treeland-commit)
 
 ;;; ai-git-commit.el ends here

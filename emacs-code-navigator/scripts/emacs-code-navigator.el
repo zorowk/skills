@@ -49,6 +49,12 @@
     (library :required (:name))
     (search :required (:directory :regexp) :optional (:limit))
     (files :required (:directory) :optional (:limit))
+    (region :required (:file :start-line) :optional (:end-line))
+    (imenu :required (:file))
+    (xref :required (:file) :required-one-of (:identifier :line)
+          :optional (:kind :identifier :line))
+    (diagnostics :required-one-of (:file :directory)
+                 :optional (:line :radius :limit :file-limit))
     (context :required (:file :line) :optional (:diagnostic-radius))
     (describe :optional (:target)))
   "Compact request schemas for `emacs-code-navigator-query'.")
@@ -501,12 +507,6 @@ first symbol found at or after indentation on LINE."
   (emacs-code-navigator--xref-at-line
    file line identifier #'xref-backend-references))
 
-(defun emacs-code-navigator-eglot-managed-p (file)
-  "Return non-nil if FILE is managed by Eglot."
-  (with-current-buffer (find-file-noselect file)
-    (and (fboundp 'eglot-managed-p)
-         (eglot-managed-p))))
-
 (defun emacs-code-navigator-symbol-at-line (file line)
   "Return context data for the symbol at LINE in FILE.
 
@@ -684,6 +684,43 @@ and Flymake diagnostics near LINE.  DIAGNOSTIC-RADIUS defaults to 0."
         :diagnostics (emacs-code-navigator-diagnostics-at-line
                       file line diagnostic-radius)))
 
+(defun emacs-code-navigator--xref-request (request)
+  "Return xref data selected by compact REQUEST."
+  (let ((file (plist-get request :file))
+        (line (plist-get request :line))
+        (identifier (plist-get request :identifier))
+        (kind (or (plist-get request :kind) 'references)))
+    (unless (memq kind '(definitions references))
+      (error "Xref KIND must be definitions or references: %S" kind))
+    (unless (or line identifier)
+      (error "Xref requires :line or :identifier"))
+    (if line
+        (funcall (if (eq kind 'definitions)
+                     #'emacs-code-navigator-xref-definitions-at-line
+                   #'emacs-code-navigator-xref-references-at-line)
+                 file line identifier)
+      (funcall (if (eq kind 'definitions)
+                   #'emacs-code-navigator-xref-definitions
+                 #'emacs-code-navigator-xref-references)
+               file identifier))))
+
+(defun emacs-code-navigator--diagnostics-request (request)
+  "Return file or project diagnostics selected by compact REQUEST."
+  (let ((file (plist-get request :file))
+        (directory (plist-get request :directory))
+        (line (plist-get request :line)))
+    (cond
+     ((and file directory)
+      (error "Diagnostics accepts :file or :directory, not both"))
+     (directory
+      (emacs-code-navigator-project-diagnostics
+       directory (plist-get request :limit) (plist-get request :file-limit)))
+     ((and file line)
+      (emacs-code-navigator-diagnostics-at-line
+       file line (plist-get request :radius)))
+     (file (emacs-code-navigator-flymake-diagnostics file))
+     (t (error "Diagnostics requires :file or :directory")))))
+
 ;;;###autoload
 (defun emacs-code-navigator-query (request)
   "Execute compact code-navigation REQUEST and return a standard plist.
@@ -718,6 +755,16 @@ Use :operation `describe' to request operation schemas only when needed."
              (emacs-code-navigator-project-files
               (plist-get request :directory)
               (plist-get request :limit)))
+            ('region
+             (emacs-code-navigator-read-region
+              (plist-get request :file)
+              (plist-get request :start-line)
+              (plist-get request :end-line)))
+            ('imenu
+             (emacs-code-navigator-imenu (plist-get request :file)))
+            ('xref (emacs-code-navigator--xref-request request))
+            ('diagnostics
+             (emacs-code-navigator--diagnostics-request request))
             ('context
              (emacs-code-navigator-context-at-line
               (plist-get request :file)
@@ -732,7 +779,8 @@ Use :operation `describe' to request operation schemas only when needed."
      (cond
       ((and (listp result) (plist-member result :matches))
        (length (plist-get result :matches)))
-      ((memq operation '(search files)) (length result))
+      ((memq operation '(search files imenu xref diagnostics))
+       (length result))
       (t 1)))))
 
 (provide 'emacs-code-navigator)

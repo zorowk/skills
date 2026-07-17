@@ -52,7 +52,8 @@
   :group 'emacs-gtd-assistant)
 
 (defconst emacs-gtd--schemas
-  '((list :optional (:query :states :tags :include-done :offset :limit))
+  '((preflight)
+    (list :optional (:query :states :tags :include-done :offset :limit))
     (resolve :required (:query) :optional (:include-done))
     (add :required (:title) :optional (:headline :context :scheduled :deadline))
     (set-state :required-one-of (:id :query) :required (:state))
@@ -455,6 +456,11 @@ Use :operation `describe' to request operation schemas only when needed."
     (error "REQUEST must be a plist"))
   (let ((operation (plist-get request :operation)))
     (pcase operation
+      ('preflight
+       (let ((data (emacs-gtd-preflight)))
+         (skill-runtime-result
+          operation data 1
+          (if (plist-get data :errors) 'blocked 'ok))))
       ('list (emacs-gtd--compact-query request))
       ('describe
        (skill-runtime-result

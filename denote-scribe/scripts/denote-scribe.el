@@ -60,10 +60,6 @@
   :type 'directory
   :group 'denote-scribe)
 
-(define-obsolete-variable-alias
-  'denote-scribe-hywiki-commit-interval
-  'denote-scribe-review-commit-interval "2026-07-16")
-
 (defcustom denote-scribe-review-commit-interval 5
   "Number of repository commits between AI reviews."
   :type 'positive-integer
@@ -83,10 +79,6 @@
   "Default notes returned in each compact AI-review summary page."
   :type 'positive-integer
   :group 'denote-scribe)
-
-(define-obsolete-variable-alias
-  'denote-scribe-hywiki-commit-marker
-  'denote-scribe-review-commit-marker "2026-07-16")
 
 (defconst denote-scribe-review-commit-marker "🔒"
   "Literal commit-subject marker for a completed AI review.")
@@ -136,7 +128,8 @@
   "Critical-note headings included in compact AI-review summaries.")
 
 (defconst denote-scribe--schemas
-  '((template :required (:kind :language))
+  '((preflight :optional (:notes-dir :hywiki-dir :git-dir))
+    (template :required (:kind :language))
     (create :required (:title :body-file)
             :optional (:keywords :notes-dir :signature :date :git-dir))
     (review :required (:file :review-state)
@@ -465,10 +458,6 @@ review plus the newly created report."
             (and review-files
                  (denote-scribe-review-summaries review-files))))))
 
-(define-obsolete-function-alias
-  'denote-scribe-git-hywiki-state
-  #'denote-scribe-git-review-state "2026-07-16")
-
 ;;;###autoload
 (defun denote-scribe-git-commit
     (title paths review-completed &optional kind git-dir)
@@ -670,6 +659,15 @@ Use :operation `describe' to request operation schemas only when needed."
     (error "REQUEST must be a plist"))
   (let ((operation (plist-get request :operation)))
     (pcase operation
+      ('preflight
+       (let ((data
+              (denote-scribe-preflight
+               (plist-get request :notes-dir)
+               (plist-get request :hywiki-dir)
+               (plist-get request :git-dir))))
+         (skill-runtime-result
+          operation data 1
+          (if (plist-get data :errors) 'blocked 'ok))))
       ('describe
        (skill-runtime-result
         operation

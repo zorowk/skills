@@ -39,9 +39,6 @@
                   "../git-commit/scripts/ai-git-commit" (request))
 (declare-function ai-git-commit-format
                   "../git-commit/scripts/ai-git-commit" (spec))
-(declare-function treeland-commit-format
-                  "../git-commit/scripts/ai-git-commit"
-                  (type module summary body log &optional pms influence))
 
 (defconst skill-contract-tests-root
   (file-name-directory
@@ -66,9 +63,9 @@
     :context "Skill facades need one predictable result shape for efficient AI calls."
     :changes ("Return data, paging metadata, and effects through shared helpers.")
     :reason "One protocol removes skill-specific parsing and unnecessary retries."
-    :validation "Validated formatter, pagination, schema, and compatibility contracts."
+    :validation "Validated formatter, pagination, schema, and authorization contracts."
     :boundary
-    "Legacy public functions remain callable and external actions still require authorization.")
+    "Domain capabilities remain available and external actions still require authorization.")
   "Reusable structured evidence for formatter tests.")
 
 (ert-deftest skill-runtime-standard-envelope ()
@@ -101,6 +98,58 @@
       (should (plist-member result :data))
       (should (plist-get (plist-get result :data) :operations)))))
 
+(ert-deftest facade-schemas-expose-migrated-core-operations ()
+  (let ((navigator
+         (plist-get
+          (plist-get
+           (emacs-code-navigator-query '(:operation describe)) :data)
+          :operations))
+        (denote
+         (plist-get
+          (plist-get (denote-scribe-run '(:operation describe)) :data)
+          :operations))
+        (gtd
+         (plist-get
+          (plist-get (emacs-gtd-execute '(:operation describe)) :data)
+          :operations)))
+    (dolist (operation '(region imenu xref diagnostics))
+      (should (memq operation navigator)))
+    (should (memq 'preflight denote))
+    (should (memq 'preflight gtd))))
+
+(ert-deftest navigator-region-and-imenu-use-the-facade ()
+  (let* ((file (expand-file-name "common/scripts/skill-runtime.el"
+                                 skill-contract-tests-root))
+         (region
+          (emacs-code-navigator-query
+           (list :operation 'region :file file :start-line 1 :end-line 3)))
+         (imenu
+          (emacs-code-navigator-query
+           (list :operation 'imenu :file file))))
+    (should (string-match-p "skill-runtime.el" (plist-get region :data)))
+    (should (listp (plist-get imenu :data)))))
+
+(ert-deftest preflight-operations-return-standard-envelopes ()
+  (dolist (result
+           (list (denote-scribe-run '(:operation preflight))
+                 (emacs-gtd-execute '(:operation preflight))))
+    (should (memq (plist-get result :status) '(ok blocked)))
+    (should (eq (plist-get result :operation) 'preflight))
+    (should (plist-member result :data))))
+
+(ert-deftest removed-compatibility-symbols-stay-absent ()
+  (dolist (symbol '(treeland-commit-context treeland-commit-format
+                    treeland-commit-run denote-scribe-git-hywiki-state))
+    (should-not (fboundp symbol)))
+  (dolist (symbol '(treeland-commit-fill-column
+                    treeland-commit-maximum-column
+                    treeland-commit-context-maximum-characters
+                    treeland-commit-compact-maximum-characters
+                    denote-scribe-hywiki-commit-interval
+                    denote-scribe-hywiki-commit-marker))
+    (should-not (boundp symbol)))
+  (should-not (featurep 'treeland-commit)))
+
 (ert-deftest navigator-reports-documentation-truncation ()
   (let* ((emacs-code-navigator-documentation-maximum-characters 3)
          (facet (emacs-code-navigator--compact-facet
@@ -112,7 +161,7 @@
 
 (ert-deftest git-message-auto-compacts-low-risk-work ()
   (let ((message (ai-git-commit-format skill-contract-tests-message-spec)))
-    (should-not (string-match-p "Legacy public functions" message))
+    (should-not (string-match-p "Domain capabilities" message))
     (should-not (string-match-p skill-git--body-label-regexp message))
     (should (seq-every-p
              (lambda (line) (<= (string-width line) 100))
@@ -123,7 +172,7 @@
          (ai-git-commit-format
           (plist-put (copy-sequence skill-contract-tests-message-spec)
                      :detail 'full))))
-    (should (string-match-p "Legacy public functions" message))))
+    (should (string-match-p "Domain capabilities" message))))
 
 (ert-deftest git-message-rejects-labels-and-missing-evidence ()
   (should-error
@@ -132,16 +181,6 @@
                :context "Context: redundant label")))
   (should-error
    (ai-git-commit-format '(:type "fix" :summary "reject incomplete input"))))
-
-(ert-deftest treeland-compatibility-preserves-trailer-order ()
-  (let* ((message
-          (treeland-commit-format
-           "fix" "skills" "preserve callers" "Keep the old API available."
-           "Compatibility" "PMS-1" "Legacy only"))
-         (log (string-match "^Log:" message))
-         (pms (string-match "^PMS:" message))
-         (influence (string-match "^Influence:" message)))
-    (should (< log pms influence))))
 
 (ert-deftest destructive-facades-require-authorization-before-effects ()
   (should-error (emacs-gtd-execute '(:operation delete :id "sample")))
