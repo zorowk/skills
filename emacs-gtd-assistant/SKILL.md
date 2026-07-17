@@ -1,6 +1,8 @@
 ---
 name: emacs-gtd-assistant
-description: "Use when an AI assistant should manage the user's Emacs Org GTD tasks through the running Emacs server: list agenda items, add or reschedule tasks, set deadlines, mark tasks done/cancelled, delete/archive chosen tasks, or manage items in `~/Dropbox/brain/gtd.org`."
+description: >-
+  Query or manage Org GTD tasks through the running Emacs: list, add, reschedule, set deadlines or
+  states, delete, or archive items in the configured GTD file.
 ---
 
 # Emacs GTD Assistant
@@ -8,6 +10,9 @@ description: "Use when an AI assistant should manage the user's Emacs Org GTD ta
 Manage GTD through the running Emacs server. Load
 `scripts/emacs-gtd-assistant.el`, then call `emacs-gtd-execute`. Start with filtered,
 bounded `list` or `resolve`; use `:id` or a unique `:query` for mutations.
+
+Read `:data` and follow `:page :next-offset`. Use `describe` only when a request
+schema is unclear.
 
 Present matches when ambiguous. Delete or archive only after explicit user
 authorization and pass `:authorization explicit`. Prefer `DONE` for completed work.

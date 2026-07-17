@@ -7,6 +7,21 @@
 (require 'seq)
 (require 'subr-x)
 
+(unless (featurep 'skill-runtime)
+  (load (expand-file-name "../../common/scripts/skill-runtime.el"
+                          (file-name-directory
+                           (or load-file-name buffer-file-name)))
+        nil nil t))
+
+(declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
+                  (schemas &optional target))
+(declare-function skill-runtime-page "../../common/scripts/skill-runtime"
+                  (items offset limit total))
+(declare-function skill-runtime-require-authorization
+                  "../../common/scripts/skill-runtime" (request action))
+(declare-function skill-runtime-result "../../common/scripts/skill-runtime"
+                  (operation data &optional count status page effects))
+
 (defgroup emacs-gtd-assistant nil
   "Manage Org GTD tasks through Emacs."
   :group 'org)
@@ -35,6 +50,18 @@
   "Default maximum items returned by compact GTD queries."
   :type 'positive-integer
   :group 'emacs-gtd-assistant)
+
+(defconst emacs-gtd--schemas
+  '((list :optional (:query :states :tags :include-done :offset :limit))
+    (resolve :required (:query) :optional (:include-done))
+    (add :required (:title) :optional (:headline :context :scheduled :deadline))
+    (set-state :required-one-of (:id :query) :required (:state))
+    (reschedule :required-one-of (:id :query) :required (:timestamp))
+    (set-deadline :required-one-of (:id :query) :required (:timestamp))
+    (delete :required-one-of (:id :query) :required (:authorization))
+    (archive :required-one-of (:id :query) :required (:authorization))
+    (describe :optional (:target)))
+  "Compact request schemas for `emacs-gtd-execute'.")
 
 (defun emacs-gtd--file ()
   "Return the absolute GTD file path."
@@ -386,15 +413,13 @@ PLIST may select :context `personal' or `work', or override it with :headline."
 (defun emacs-gtd--compact-query (request)
   "Return a bounded standard result for GTD list REQUEST."
   (let* ((items (emacs-gtd--query-items request))
-         (limit (or (plist-get request :limit) emacs-gtd-query-limit)))
-    (unless (and (integerp limit) (> limit 0))
-      (error "LIMIT must be a positive integer: %S" limit))
-    (list :status 'ok
-          :operation 'list
-          :count (length items)
-          :truncated (> (length items) limit)
-          :items (mapcar #'emacs-gtd--compact-item
-                         (seq-take items limit)))))
+         (offset (or (plist-get request :offset) 0))
+         (limit (or (plist-get request :limit) emacs-gtd-query-limit))
+         (compact (mapcar #'emacs-gtd--compact-item items))
+         (page (skill-runtime-page compact offset limit (length compact))))
+    (skill-runtime-result
+     'list (plist-get page :items) (length compact) 'ok
+     (plist-get page :page))))
 
 (defun emacs-gtd--compact-resolution (resolution)
   "Return compact RESOLUTION from `emacs-gtd-resolve-title'."
@@ -425,35 +450,38 @@ PLIST may select :context `personal' or `work', or override it with :headline."
 (defun emacs-gtd-execute (request)
   "Execute compact GTD REQUEST through one public entry point.
 
-Supported :operation values are `list', `resolve', `add', `set-state',
-`reschedule', `set-deadline', `delete', and `archive'.  Mutations accept :id
-or a unique :query.  Delete and archive require :authorization `explicit'."
+Use :operation `describe' to request operation schemas only when needed."
   (unless (listp request)
     (error "REQUEST must be a plist"))
   (let ((operation (plist-get request :operation)))
     (pcase operation
       ('list (emacs-gtd--compact-query request))
+      ('describe
+       (skill-runtime-result
+        operation
+        (skill-runtime-describe
+         emacs-gtd--schemas (plist-get request :target))))
       ('resolve
-       (append
-        (list :operation 'resolve)
-        (emacs-gtd--compact-resolution
-         (emacs-gtd-resolve-title
-          (plist-get request :query)
-          (plist-get request :include-done)))))
+       (let ((data
+              (emacs-gtd--compact-resolution
+               (emacs-gtd-resolve-title
+                (plist-get request :query)
+                (plist-get request :include-done)))))
+         (skill-runtime-result operation data 1)))
       ('add
-       (list :status 'ok :operation 'add :count 1
-             :item
-             (emacs-gtd--compact-item
-              (emacs-gtd-add-task
-               (plist-get request :title)
-               (or (plist-get request :task) request)))))
+       (skill-runtime-result
+        operation
+        (emacs-gtd--compact-item
+         (emacs-gtd-add-task
+          (plist-get request :title)
+          (or (plist-get request :task) request)))
+        1 nil nil (list :mutated t)))
       ((or 'set-state 'reschedule 'set-deadline 'delete 'archive)
-       (when (and (memq operation '(delete archive))
-                  (not (eq (plist-get request :authorization) 'explicit)))
-         (error "%s requires :authorization `explicit'" operation))
+       (when (memq operation '(delete archive))
+         (skill-runtime-require-authorization request operation))
        (let ((id (emacs-gtd--request-id request)))
          (if (not (stringp id))
-             (append (list :operation operation) id)
+             (skill-runtime-result operation id 1 'needs-input)
            (let ((value
                   (pcase operation
                     ('set-state
@@ -464,13 +492,12 @@ or a unique :query.  Delete and archive require :authorization `explicit'."
                      (emacs-gtd-set-deadline id (plist-get request :timestamp)))
                     ('delete (emacs-gtd-delete id))
                     ('archive (emacs-gtd-archive id)))))
-             (list :status 'ok
-                   :operation operation
-                   :count 1
-                   :result (if (stringp value)
-                               value
-                             (emacs-gtd--compact-item value)))))))
-      (_ (error "Unknown GTD operation: %S" operation)))))
+             (skill-runtime-result
+              operation
+              (if (stringp value) value (emacs-gtd--compact-item value))
+              1 nil nil (list :mutated t))))))
+      (_ (error "Unknown GTD operation %S; expected %S"
+                operation (mapcar #'car emacs-gtd--schemas))))))
 
 (provide 'emacs-gtd-assistant)
 

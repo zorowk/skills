@@ -13,6 +13,19 @@
 (require 'thingatpt)
 (require 'flymake nil t)
 
+(unless (featurep 'skill-runtime)
+  (load (expand-file-name "../../common/scripts/skill-runtime.el"
+                          (file-name-directory
+                           (or load-file-name buffer-file-name)))
+        nil nil t))
+
+(declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
+                  (schemas &optional target))
+(declare-function skill-runtime-result "../../common/scripts/skill-runtime"
+                  (operation data &optional count status page effects))
+(declare-function skill-runtime-truncate "../../common/scripts/skill-runtime"
+                  (text maximum label))
+
 (defgroup emacs-code-navigator nil
   "Compact access to live Emacs code context."
   :group 'tools)
@@ -29,6 +42,16 @@
 (defconst emacs-code-navigator-symbol-kinds
   '(function command macro variable user-option)
   "Symbol kinds accepted by Emacs introspection entry points.")
+
+(defconst emacs-code-navigator--schemas
+  '((capability :required (:pattern) :optional (:kind :limit :documentation :full))
+    (symbol :required (:name) :optional (:full))
+    (library :required (:name))
+    (search :required (:directory :regexp) :optional (:limit))
+    (files :required (:directory) :optional (:limit))
+    (context :required (:file :line) :optional (:diagnostic-radius))
+    (describe :optional (:target)))
+  "Compact request schemas for `emacs-code-navigator-query'.")
 
 (defun emacs-code-navigator--symbol (value)
   "Return VALUE as an interned symbol or signal a validation error."
@@ -150,18 +173,17 @@ large, or sensitive runtime state."
           :function function-info
           :variable variable-info)))
 
-(defun emacs-code-navigator--truncate (text maximum label)
-  "Return TEXT capped at MAXIMUM characters with a LABEL marker."
-  (when text
-    (if (<= (length text) maximum)
-        text
-      (concat (substring text 0 maximum)
-              (format "\n[%s truncated]" label)))))
-
 (defun emacs-code-navigator--compact-facet (info)
   "Return compact Help facet INFO."
   (when info
-    (let ((result
+    (let* ((documentation (plist-get info :documentation))
+           (bounded
+            (and documentation
+                 (skill-runtime-truncate
+                  documentation
+                  emacs-code-navigator-documentation-maximum-characters
+                  'documentation)))
+           (result
            (list :symbol (plist-get info :symbol)
                  :kinds (plist-get info :kinds))))
       (dolist (key '(:arguments :interactive :autoload :buffer-local))
@@ -169,12 +191,12 @@ large, or sensitive runtime state."
           (setq result (append result (list key (plist-get info key))))))
       (append
        result
-       (list :documentation
-             (emacs-code-navigator--truncate
-              (plist-get info :documentation)
-              emacs-code-navigator-documentation-maximum-characters
-              "documentation")
-             :source (plist-get info :source))))))
+       (list :documentation (and bounded (plist-get bounded :text))
+             :source (plist-get info :source))
+       (and (plist-get bounded :truncated)
+            (list :documentation-truncated t
+                  :documentation-original-length
+                  (plist-get bounded :original-length)))))))
 
 (defun emacs-code-navigator-symbol-summary (name)
   "Return token-bounded Help and source information for symbol NAME."
@@ -666,10 +688,7 @@ and Flymake diagnostics near LINE.  DIAGNOSTIC-RADIUS defaults to 0."
 (defun emacs-code-navigator-query (request)
   "Execute compact code-navigation REQUEST and return a standard plist.
 
-REQUEST must contain :operation.  Supported operations are `capability',
-`symbol', `library', `search', `files', and `context'.  Operation-specific
-keys match the corresponding public function arguments.  Pass :full non-nil
-only when compact output is insufficient."
+Use :operation `describe' to request operation schemas only when needed."
   (unless (listp request)
     (error "REQUEST must be a plist"))
   (let* ((operation (plist-get request :operation))
@@ -703,17 +722,18 @@ only when compact output is insufficient."
              (emacs-code-navigator-context-at-line
               (plist-get request :file)
               (plist-get request :line)
-              (plist-get request :diagnostic-radius)))
+                      (plist-get request :diagnostic-radius)))
+            ('describe
+             (skill-runtime-describe
+              emacs-code-navigator--schemas (plist-get request :target)))
             (_ (error "Unknown navigator operation: %S" operation)))))
-    (list :status 'ok
-          :operation operation
-          :count
-          (cond
-           ((and (listp result) (plist-member result :matches))
-            (length (plist-get result :matches)))
-           ((memq operation '(search files)) (length result))
-           (t 1))
-          :result result)))
+    (skill-runtime-result
+     operation result
+     (cond
+      ((and (listp result) (plist-member result :matches))
+       (length (plist-get result :matches)))
+      ((memq operation '(search files)) (length result))
+      (t 1)))))
 
 (provide 'emacs-code-navigator)
 

@@ -20,6 +20,24 @@
       (error "Shared Git helper is not readable: %s" shared-file))
     (load shared-file nil nil t)))
 
+(unless (featurep 'skill-runtime)
+  (load (expand-file-name "../../common/scripts/skill-runtime.el"
+                          (file-name-directory
+                           (or load-file-name buffer-file-name)))
+        nil nil t))
+
+(declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
+                  (schemas &optional target))
+(declare-function skill-runtime-page "../../common/scripts/skill-runtime"
+                  (items offset limit total))
+(declare-function skill-runtime-page-metadata
+                  "../../common/scripts/skill-runtime"
+                  (offset limit total returned))
+(declare-function skill-runtime-require-authorization
+                  "../../common/scripts/skill-runtime" (request action))
+(declare-function skill-runtime-result "../../common/scripts/skill-runtime"
+                  (operation data &optional count status page effects))
+
 (defgroup org-blog-exporter nil
   "Export Org notes to a static HTML blog."
   :group 'org)
@@ -28,7 +46,9 @@
                   "../../common/scripts/skill-git" (root))
 (declare-function skill-git-commit-paths
                   "../../common/scripts/skill-git"
-                  (root subject paths &optional predicate description))
+                  (root message paths &optional predicate description))
+(declare-function skill-git-format-message
+                  "../../common/scripts/skill-git" (spec))
 (declare-function skill-git-ensure-repository
                   "../../common/scripts/skill-git" (remote-url directory))
 (declare-function skill-git-pull-ff-only
@@ -99,6 +119,16 @@ instead."
 
 (defconst org-blog-exporter--repository-url-keywords
   '("BLOG_REPOSITORY_URL" "BLOG_REPO_URL"))
+
+(defconst org-blog-exporter--schemas
+  '((preflight :optional (:notes-dir :output-dir :setupfile))
+    (export :optional (:files :notes-dir :output-dir :setupfile
+                              :offset :limit :full))
+    (publish :required (:authorization)
+             :optional (:files :title :notes-dir :repository-dir :setupfile
+                              :offset :limit :full))
+    (describe :optional (:target)))
+  "Compact request schemas for `org-blog-exporter-run'.")
 
 (defconst org-blog-exporter--assessment-properties
   '(("STATUS" "Status" "状态")
@@ -708,8 +738,8 @@ starting; all-file export preserves per-file error reporting."
                (regexp-quote org-blog-exporter-assets-directory-name))
        relative)))
 
-(defun org-blog-exporter--finish-publish (repository exported subject)
-  "Commit EXPORTED files in REPOSITORY with SUBJECT, then push."
+(defun org-blog-exporter--finish-publish (repository exported title)
+  "Commit EXPORTED files in REPOSITORY with structured TITLE evidence, then push."
   (let* ((root (plist-get repository :git-root))
          (relative-paths
           (mapcar (lambda (path)
@@ -721,9 +751,31 @@ starting; all-file export preserves per-file error reporting."
     (if (string-empty-p status)
         (append repository
                 (list :changed nil :exported exported :commit nil :push nil))
-      (let ((commit
+      (let* ((message
+              (skill-git-format-message
+               (list
+                :type "chore" :scope "blog"
+                :summary (or title "publish Org HTML")
+                :risk 'low :detail 'compact
+                :context
+                (concat "An explicitly authorized blog publish generated static output from "
+                        "public Org notes.")
+                :changes
+                (list
+                 (format "Update %d generated HTML, index, or local resource path(s)."
+                         (length exported)))
+                :reason
+                (concat "Keeping generated pages and their referenced resources in one commit "
+                        "preserves a deployable site.")
+                :validation
+                (concat "Completed export checks, restricted paths to publishable output, and "
+                        "verified a clean publish repository.")
+                :boundary
+                (concat "Source Org notes and unrelated repository paths are not committed by "
+                        "this publish step."))))
+             (commit
              (skill-git-commit-paths
-              root subject exported
+              root message exported
               #'org-blog-exporter--published-relative-path-p
               "published blog files")))
         (skill-git-assert-clean root)
@@ -756,10 +808,9 @@ commit only generated paths, and push."
          (index-file
           (org-blog-exporter-update-index
            org-files root setupfile notes-dir))
-         (assets (org-blog-exporter--copy-assets asset-plan))
-         (subject (format "chore(blog): %s" (or title "Publish Org HTML"))))
+         (assets (org-blog-exporter--copy-assets asset-plan)))
     (append (org-blog-exporter--finish-publish
-             repository (append exported (list index-file) assets) subject)
+             repository (append exported (list index-file) assets) title)
             (list :index index-file :assets assets))))
 
 ;;;###autoload
@@ -791,7 +842,7 @@ commit only generated paths, and push."
        (org-blog-exporter--finish-publish
         repository
         (append (plist-get summary :exported) (list index-file) assets)
-        (format "chore(blog): %s" (or title "Publish Org HTML")))
+        title)
        (list :index index-file :assets assets)))))
 
 ;;;###autoload
@@ -810,54 +861,61 @@ publishing authorization before invoking it."
     (org-blog-exporter-publish-all
      title notes-dir repository-dir setupfile)))
 
-(defun org-blog-exporter--compact-result (operation result &optional limit)
+(defun org-blog-exporter--compact-result
+    (operation result &optional offset limit)
   "Return token-bounded standard RESULT for blog OPERATION."
-  (let* ((maximum (or limit org-blog-exporter-result-limit))
+  (let* ((start (or offset 0))
+         (maximum (or limit org-blog-exporter-result-limit))
          (exported (plist-get result :exported))
          (assets (plist-get result :assets))
          (errors (plist-get result :errors))
-         (error-count (or (plist-get result :error-count) 0)))
-    (unless (and (integerp maximum) (> maximum 0))
-      (error "LIMIT must be a positive integer: %S" maximum))
-    (list :status (if (zerop error-count) 'ok 'partial)
-          :operation operation
-          :scope (plist-get result :scope)
-          :candidate-count (plist-get result :candidate-count)
-          :exported-count (or (plist-get result :exported-count)
-                              (length exported))
-          :exported (seq-take exported maximum)
-          :assets-count (length assets)
-          :assets (seq-take assets maximum)
-          :error-count error-count
-          :errors (seq-take errors maximum)
-          :truncated
-          (or (> (length exported) maximum)
-              (> (length assets) maximum)
-              (> (length errors) maximum))
-          :output-directory (plist-get result :output-directory)
-          :changed (plist-get result :changed)
-          :commit (plist-get result :commit)
-          :push (plist-get result :push)
-          :index (plist-get result :index))))
+         (error-count (or (plist-get result :error-count) 0))
+         (total (max (length exported) (length assets) (length errors)))
+         (exported-page (skill-runtime-page exported start maximum
+                                            (length exported)))
+         (assets-page (skill-runtime-page assets start maximum (length assets)))
+         (errors-page (skill-runtime-page errors start maximum (length errors)))
+         (page (skill-runtime-page-metadata
+                start maximum total (min maximum (max 0 (- total start))))))
+    (skill-runtime-result
+     operation
+     (list :scope (plist-get result :scope)
+           :candidate-count (plist-get result :candidate-count)
+           :exported-count (or (plist-get result :exported-count)
+                               (length exported))
+           :exported (plist-get exported-page :items)
+           :assets-count (length assets)
+           :assets (plist-get assets-page :items)
+           :error-count error-count
+           :errors (plist-get errors-page :items)
+           :output-directory (plist-get result :output-directory)
+           :index (plist-get result :index))
+     (or (plist-get result :exported-count) (length exported))
+     (if (zerop error-count) 'ok 'partial)
+     page
+     (and (eq operation 'publish)
+          (list :changed (plist-get result :changed)
+                :commit (plist-get result :commit)
+                :push (plist-get result :push))))))
 
 ;;;###autoload
 (defun org-blog-exporter-run (request)
   "Execute blog REQUEST through one compact public entry point.
 
-Use :operation `export', `publish', or `preflight'.  Export and publish accept
-:files (nil means all), directories, setupfile, and :limit.  Publish requires
-:authorization `explicit'.  Pass :full non-nil only when complete path lists
-are required."
+Use :operation `describe' to request operation schemas only when needed."
   (unless (listp request)
     (error "REQUEST must be a plist"))
   (let* ((operation (plist-get request :operation))
          (result
           (pcase operation
-            ('preflight
+           ('preflight
              (org-blog-exporter-preflight
               (plist-get request :notes-dir)
               (plist-get request :output-dir)
               (plist-get request :setupfile)))
+            ('describe
+             (skill-runtime-describe
+              org-blog-exporter--schemas (plist-get request :target)))
             ('export
              (org-blog-exporter-export
               (plist-get request :files)
@@ -865,8 +923,7 @@ are required."
               (plist-get request :setupfile)
               (plist-get request :notes-dir)))
             ('publish
-             (unless (eq (plist-get request :authorization) 'explicit)
-               (error "Publish requires :authorization `explicit'"))
+             (skill-runtime-require-authorization request "Publish")
              (append
               (list :scope (if (plist-get request :files) 'files 'all))
               (org-blog-exporter-publish
@@ -877,17 +934,26 @@ are required."
                (plist-get request :setupfile))))
             (_ (error "Unknown blog operation: %S" operation)))))
     (cond
+     ((eq operation 'describe)
+      (skill-runtime-result operation result))
      ((plist-get request :full)
-      (list :status (if (zerop (or (plist-get result :error-count) 0))
-                        'ok
-                      'partial)
-            :operation operation :result result))
+     (skill-runtime-result
+       operation result
+       (or (plist-get result :exported-count) 1)
+       (if (zerop (or (plist-get result :error-count) 0)) 'ok 'partial)
+       nil
+       (and (eq operation 'publish)
+            (list :changed (plist-get result :changed)
+                  :commit (plist-get result :commit)
+                  :push (plist-get result :push)))))
      ((eq operation 'preflight)
-      (list :status (if (plist-get result :errors) 'blocked 'ok)
-            :operation operation :result result))
+      (skill-runtime-result
+       operation result 1
+       (if (plist-get result :errors) 'blocked 'ok)))
      (t
       (org-blog-exporter--compact-result
-       operation result (plist-get request :limit))))))
+       operation result (plist-get request :offset)
+       (plist-get request :limit))))))
 
 (provide 'org-blog-exporter)
 

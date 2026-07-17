@@ -1,6 +1,8 @@
 ---
 name: emacs-code-navigator
-description: "Use when an AI assistant should treat the user's running Emacs as a source of capabilities and targeted code context: discover functions, commands, variables, and libraries; read Help documentation; locate definitions; or inspect project files, imenu, xref, Eldoc/Eglot, Flymake, and current buffer state."
+description: >-
+  Query the running Emacs for capabilities, Help, definitions, live buffers, project code, Imenu,
+  xref, Eldoc/Eglot, or Flymake context.
 ---
 
 # Emacs Code Navigator
@@ -12,6 +14,9 @@ unavailable, report the error and fall back to disk tools.
 Call `emacs-code-navigator-query` as the primary interface. Start compact; pass
 `:full t` only when bounded Help or context is insufficient. Discover capabilities
 before guessing an API or reimplementing it in the shell.
+
+Read `:data` from the standard result. Use `describe` only when an operation schema
+is unclear; inspect explicit truncation metadata before requesting full output.
 
 Use exact disk reads for generated files, logs, configuration, or when saved state
 matters. Do not request project-wide diagnostics by default on large projects.

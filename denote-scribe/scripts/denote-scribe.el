@@ -20,6 +20,21 @@
       (error "Shared Git helper is not readable: %s" shared-file))
     (load shared-file nil nil t)))
 
+(unless (featurep 'skill-runtime)
+  (load (expand-file-name "../../common/scripts/skill-runtime.el"
+                          (file-name-directory
+                           (or load-file-name buffer-file-name)))
+        nil nil t))
+
+(declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
+                  (schemas &optional target))
+(declare-function skill-runtime-page "../../common/scripts/skill-runtime"
+                  (items offset limit total))
+(declare-function skill-runtime-require-authorization
+                  "../../common/scripts/skill-runtime" (request action))
+(declare-function skill-runtime-result "../../common/scripts/skill-runtime"
+                  (operation data &optional count status page effects))
+
 (defgroup denote-scribe nil
   "Create Denote reports from AI conversation summaries."
   :group 'denote)
@@ -87,7 +102,9 @@
 (declare-function magit-git-string "magit-git" (&rest args))
 (declare-function skill-git-commit-paths
                   "../../common/scripts/skill-git"
-                  (root subject paths &optional predicate description))
+                  (root message paths &optional predicate description))
+(declare-function skill-git-format-message
+                  "../../common/scripts/skill-git" (spec))
 (declare-function skill-git-directory
                   "../../common/scripts/skill-git" (directory))
 (declare-function skill-git-root
@@ -117,6 +134,21 @@
   '("Question" "Evidence" "Conclusion" "Open Questions" "Extract Concepts"
     "核心问题" "证据" "结论" "开放问题" "提取概念")
   "Critical-note headings included in compact AI-review summaries.")
+
+(defconst denote-scribe--schemas
+  '((template :required (:kind :language))
+    (create :required (:title :body-file)
+            :optional (:keywords :notes-dir :signature :date :git-dir))
+    (review :required (:file :review-state)
+            :optional (:notes-dir :offset :limit :section-maximum))
+    (summarize :required (:file) :optional (:section-maximum))
+    (list :optional (:start :end :notes-dir :keywords :offset :limit))
+    (hywiki :required (:page-name :body-file)
+            :optional (:replace :authorization :hywiki-dir))
+    (commit :required (:title :paths :authorization)
+            :optional (:review-completed :kind :git-dir))
+    (describe :optional (:target)))
+  "Compact request schemas for `denote-scribe-run'.")
 
 ;;;###autoload
 (defun denote-scribe-template-file (kind &optional language)
@@ -387,11 +419,14 @@ when a returned section is truncated or requires deeper evidence checking."
       (error "OFFSET must be a non-negative integer: %S" start))
     (unless (and (integerp page-size) (> page-size 0))
       (error "LIMIT must be a positive integer: %S" page-size))
-    (let ((page (seq-take (nthcdr start files) page-size)))
+    (let* ((page (seq-take (nthcdr start files) page-size))
+           (next (+ start (length page)))
+           (truncated (< next count)))
       (list :count count
             :offset start
             :limit page-size
-            :truncated (< (+ start (length page)) count)
+            :truncated truncated
+            :next-offset (and truncated next)
             :summaries
             (mapcar (lambda (file)
                       (denote-scribe-note-summary file section-maximum))
@@ -452,16 +487,35 @@ plist containing the new commit hash, subject, and committed relative paths."
   (unless (and (listp paths) paths)
     (error "PATHS must be a non-empty list"))
   (let* ((root (denote-scribe--git-root git-dir))
-         (subject
-          (format "%s(notes): %s%s"
-                  kind
-                  (if review-completed
+         (summary
+          (concat (if review-completed
                       (concat denote-scribe-review-commit-marker " ")
                     "")
                   title))
+         (message
+          (skill-git-format-message
+           (list
+            :type kind :scope "notes" :summary summary
+            :risk 'low :detail 'compact
+            :context
+            (concat "This commit records durable reasoning or reviewed knowledge from an "
+                    "authorized Denote Scribe run.")
+            :changes
+            (delq nil
+                  (list
+                   (format "Create or update %d path-scoped Denote or HyWiki Org file(s)."
+                           (length paths))
+                   (and review-completed
+                        "Record that every due AI-review page was evaluated.")))
+            :reason
+            "Keeping generated reasoning and promoted knowledge together preserves traceability."
+            :validation
+            "Validated the explicit files and restricted the commit to notes/*.org or hywiki/*.org."
+            :boundary
+            "No unrelated repository paths are staged and this workflow never pushes.")))
          (result
           (skill-git-commit-paths
-           root subject paths
+           root message paths
            (lambda (relative)
              (string-match-p
               "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative))
@@ -611,19 +665,22 @@ plain HyWikiWord without a section suffix."
 (defun denote-scribe-run (request)
   "Execute Denote Scribe REQUEST through one compact public entry point.
 
-Supported :operation values are `template', `create', `review', `summarize',
-`list', `hywiki', and `commit'.  Commit requires :authorization `explicit'.
-Review results are paged with :offset and :limit."
+Use :operation `describe' to request operation schemas only when needed."
   (unless (listp request)
     (error "REQUEST must be a plist"))
   (let ((operation (plist-get request :operation)))
     (pcase operation
+      ('describe
+       (skill-runtime-result
+        operation
+        (skill-runtime-describe
+         denote-scribe--schemas (plist-get request :target))))
       ('template
-       (list :status 'ok :operation operation :count 1
-             :result
-             (denote-scribe-template-file
-              (plist-get request :kind)
-              (plist-get request :language))))
+       (skill-runtime-result
+        operation
+        (denote-scribe-template-file
+         (plist-get request :kind)
+         (plist-get request :language))))
       ('create
        (let* ((created
                (denote-scribe-create-with-review-context
@@ -634,10 +691,8 @@ Review results are paged with :offset and :limit."
                 (plist-get request :signature)
                 (plist-get request :date)
                 (plist-get request :git-dir))))
-         (list :status 'ok :operation operation :count 1
-               :file (plist-get created :file)
-               :review-state (plist-get created :review-state)
-               :review (plist-get created :review))))
+         (skill-runtime-result operation created 1 nil nil
+                               (list :created t))))
       ('review
        (let ((review
               (denote-scribe-review-context
@@ -647,13 +702,20 @@ Review results are paged with :offset and :limit."
                (plist-get request :offset)
                (plist-get request :limit)
                (plist-get request :section-maximum))))
-         (append (list :status 'ok :operation operation) review)))
+         (skill-runtime-result
+          operation (plist-get review :summaries) (plist-get review :count)
+          'ok
+          (list :offset (plist-get review :offset)
+                :limit (plist-get review :limit)
+                :total (plist-get review :count)
+                :truncated (plist-get review :truncated)
+                :next-offset (plist-get review :next-offset)))))
       ('summarize
-       (list :status 'ok :operation operation :count 1
-             :result
-             (denote-scribe-note-summary
-              (plist-get request :file)
-              (plist-get request :section-maximum))))
+       (skill-runtime-result
+        operation
+        (denote-scribe-note-summary
+         (plist-get request :file)
+         (plist-get request :section-maximum))))
       ('list
        (let* ((files
                (denote-scribe-list-notes
@@ -664,38 +726,34 @@ Review results are paged with :offset and :limit."
               (offset (or (plist-get request :offset) 0))
               (limit (or (plist-get request :limit)
                          denote-scribe-review-summary-limit))
-              (_ (unless (and (integerp offset) (>= offset 0))
-                   (error "OFFSET must be a non-negative integer: %S" offset)))
-              (_ (unless (and (integerp limit) (> limit 0))
-                   (error "LIMIT must be a positive integer: %S" limit)))
-              (page (seq-take (nthcdr offset files) limit)))
-         (list :status 'ok :operation operation :count (length files)
-               :offset offset :limit limit
-               :truncated (< (+ offset (length page)) (length files))
-               :items page)))
+              (page (skill-runtime-page files offset limit (length files))))
+         (skill-runtime-result
+          operation (plist-get page :items) (length files) 'ok
+          (plist-get page :page))))
       ('hywiki
-       (when (and (plist-get request :replace)
-                  (not (eq (plist-get request :authorization) 'explicit)))
-         (error "HyWiki replacement requires :authorization `explicit'"))
-       (list :status 'ok :operation operation :count 1
-             :result
-             (denote-scribe-hywiki-create
-              (plist-get request :page-name)
-              (plist-get request :body-file)
-              (plist-get request :replace)
-              (plist-get request :hywiki-dir))))
+       (when (plist-get request :replace)
+         (skill-runtime-require-authorization request "HyWiki replacement"))
+       (skill-runtime-result
+        operation
+        (denote-scribe-hywiki-create
+         (plist-get request :page-name)
+         (plist-get request :body-file)
+         (plist-get request :replace)
+         (plist-get request :hywiki-dir))
+        1 nil nil (list :mutated t)))
       ('commit
-       (unless (eq (plist-get request :authorization) 'explicit)
-         (error "Commit requires :authorization `explicit'"))
-       (list :status 'ok :operation operation :count 1
-             :result
-             (denote-scribe-git-commit
-              (plist-get request :title)
-              (plist-get request :paths)
-              (plist-get request :review-completed)
-              (plist-get request :kind)
-              (plist-get request :git-dir))))
-      (_ (error "Unknown Denote Scribe operation: %S" operation)))))
+       (skill-runtime-require-authorization request "Commit")
+       (skill-runtime-result
+        operation
+        (denote-scribe-git-commit
+         (plist-get request :title)
+         (plist-get request :paths)
+         (plist-get request :review-completed)
+         (plist-get request :kind)
+         (plist-get request :git-dir))
+        1 nil nil (list :committed t)))
+      (_ (error "Unknown Denote Scribe operation %S; expected %S"
+                operation (mapcar #'car denote-scribe--schemas))))))
 
 (provide 'denote-scribe)
 
