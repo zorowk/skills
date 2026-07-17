@@ -59,20 +59,27 @@
   :group 'ai-git-commit)
 
 (defconst ai-git-commit--schemas
-  '((context :optional (:directory :full) :effects nil)
-    (format :required (:type :summary :context :changes :reason :validation
+  '((context :summary "Collect bounded staged and unstaged evidence; compact by default."
+             :optional (:directory :full) :effects nil)
+    (format :summary "Generate and validate one evidence-backed message."
+            :required (:type :summary :context :changes :reason :validation
                             :boundary)
             :optional (:scope :risk :detail :log :pms :influence)
             :effects nil)
-    (commit :required (:type :summary :context :changes :reason :validation
-                            :boundary :authorization)
-            :optional (:scope :risk :detail :log :pms :influence :directory)
-            :effects (:committed))
-    (amend :required (:type :summary :context :changes :reason :validation
-                           :boundary :authorization)
-           :optional (:scope :risk :detail :log :pms :influence :directory)
-           :effects (:committed :amended))
-    (describe :optional (:target) :effects nil))
+    (commit
+     :summary "Commit through headless Magit, then verify the complete HEAD message."
+     :required (:type :summary :context :changes :reason :validation
+                :boundary :authorization)
+     :optional (:scope :risk :detail :log :pms :influence :directory)
+     :effects (:committed))
+    (amend
+     :summary "Amend through headless Magit, then verify the complete HEAD message."
+     :required (:type :summary :context :changes :reason :validation
+                :boundary :authorization)
+     :optional (:scope :risk :detail :log :pms :influence :directory)
+     :effects (:committed :amended))
+    (describe :summary "Return operation names or one complete schema."
+              :optional (:target) :effects nil))
   "Compact request schemas for `ai-git-commit-run'.")
 
 (defun ai-git-commit--git-output (&rest arguments)

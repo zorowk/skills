@@ -42,6 +42,9 @@
 (declare-function org-blog-exporter--finish-publish
                   "../org-blog-exporter/scripts/org-blog-exporter"
                   (repository exported title))
+(declare-function org-blog-exporter--effects
+                  "../org-blog-exporter/scripts/org-blog-exporter"
+                  (operation result))
 (declare-function ai-git-commit-run
                   "../git-commit/scripts/ai-git-commit" (request))
 (declare-function ai-git-commit-format
@@ -110,6 +113,24 @@
       (should (eq (plist-get result :operation) 'describe))
       (should (plist-member result :data))
       (should (plist-get (plist-get result :data) :operations)))))
+
+(ert-deftest facade-operation-schemas-carry-elisp-owned-guidance ()
+  (dolist (call (list #'emacs-code-navigator-query
+                      #'emacs-gtd-execute
+                      #'denote-scribe-run
+                      #'org-blog-exporter-run
+                      #'ai-git-commit-run))
+    (let ((operations
+           (plist-get
+            (plist-get (funcall call '(:operation describe)) :data)
+            :operations)))
+      (dolist (operation operations)
+        (let* ((result
+                (funcall call
+                         (list :operation 'describe :target operation)))
+               (schema
+                (plist-get (plist-get result :data) :schema)))
+          (should (stringp (plist-get schema :summary))))))))
 
 (ert-deftest facade-schemas-expose-migrated-core-operations ()
   (let ((navigator
@@ -358,6 +379,16 @@
     (should (string-prefix-p "chore(blog): publish page" captured))
     (should (string-match-p "\n\n" captured))
     (should-not (string-match-p skill-git--body-label-regexp captured))))
+
+(ert-deftest blog-effects-report-export-and-publish-mutations ()
+  (should
+   (equal (org-blog-exporter--effects
+           'export '(:exported ("one.html" "two.html")))
+          '(:exported-count 2)))
+  (should
+   (equal (org-blog-exporter--effects
+           'publish '(:exported-count 1 :changed t :commit "abc" :push t))
+          '(:exported-count 1 :changed t :commit "abc" :push t))))
 
 (provide 'skill-contract-tests)
 

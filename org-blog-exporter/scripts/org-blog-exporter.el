@@ -121,13 +121,20 @@ instead."
   '("BLOG_REPOSITORY_URL" "BLOG_REPO_URL"))
 
 (defconst org-blog-exporter--schemas
-  '((preflight :optional (:notes-dir :output-dir :setupfile))
-    (export :optional (:files :notes-dir :output-dir :setupfile
-                              :offset :limit :full))
-    (publish :required (:authorization)
-             :optional (:files :title :notes-dir :repository-dir :setupfile
-                              :offset :limit :full))
-    (describe :optional (:target)))
+  '((preflight :summary "Validate configured notes, output, and setup files."
+               :optional (:notes-dir :output-dir :setupfile))
+    (export :summary "Export selected or public notes; compact paged output is default."
+            :optional (:files :notes-dir :output-dir :setupfile
+                              :offset :limit :full)
+            :effects (:exported-count))
+    (publish
+     :summary "Export, commit, and push selected or all public notes after authorization."
+     :required (:authorization)
+     :optional (:files :title :notes-dir :repository-dir :setupfile
+                       :offset :limit :full)
+     :effects (:exported-count :changed :commit :push))
+    (describe :summary "Return operation names or one complete schema."
+              :optional (:target)))
   "Compact request schemas for `org-blog-exporter-run'.")
 
 (defconst org-blog-exporter--assessment-properties
@@ -893,10 +900,22 @@ publishing authorization before invoking it."
      (or (plist-get result :exported-count) (length exported))
      (if (zerop error-count) 'ok 'partial)
      page
-     (and (eq operation 'publish)
-          (list :changed (plist-get result :changed)
-                :commit (plist-get result :commit)
-                :push (plist-get result :push))))))
+     (org-blog-exporter--effects operation result))))
+
+(defun org-blog-exporter--effects (operation result)
+  "Return machine-readable effects for blog OPERATION and RESULT."
+  (pcase operation
+    ('export
+     (list :exported-count
+           (or (plist-get result :exported-count)
+               (length (plist-get result :exported)))))
+    ('publish
+     (list :exported-count
+           (or (plist-get result :exported-count)
+               (length (plist-get result :exported)))
+           :changed (plist-get result :changed)
+           :commit (plist-get result :commit)
+           :push (plist-get result :push)))))
 
 ;;;###autoload
 (defun org-blog-exporter-run (request)
@@ -942,10 +961,7 @@ Use :operation `describe' to request operation schemas only when needed."
        (or (plist-get result :exported-count) 1)
        (if (zerop (or (plist-get result :error-count) 0)) 'ok 'partial)
        nil
-       (and (eq operation 'publish)
-            (list :changed (plist-get result :changed)
-                  :commit (plist-get result :commit)
-                  :push (plist-get result :push)))))
+       (org-blog-exporter--effects operation result)))
      ((eq operation 'preflight)
       (skill-runtime-result
        operation result 1

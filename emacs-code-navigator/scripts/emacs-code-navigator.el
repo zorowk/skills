@@ -45,23 +45,42 @@
   "Symbol kinds accepted by Emacs introspection entry points.")
 
 (defconst emacs-code-navigator--schemas
-  '((capability :required (:pattern) :optional (:kind :limit :documentation :full))
-    (symbol :required (:name) :optional (:full))
-    (library :required (:name))
-    (search :required (:directory :regexp) :optional (:limit :glob :literal))
-    (files :required (:directory) :optional (:limit))
-    (region :required (:file :start-line) :optional (:end-line))
-    (imenu :required (:file))
-    (workspace-symbol :required (:file :pattern) :optional (:limit))
-    (xref :required (:file) :required-one-of (:identifier :line)
+  '((capability :summary "Discover Emacs APIs with bounded Help by default."
+               :required (:pattern)
+               :optional (:kind :limit :documentation :full))
+    (symbol :summary "Inspect one known Emacs symbol; compact by default."
+            :required (:name) :optional (:full))
+    (library :summary "Locate and describe one Emacs library."
+             :required (:name))
+    (search :summary "Run bounded project text or literal search."
+            :required (:directory :regexp)
+            :optional (:limit :glob :literal))
+    (files :summary "List bounded project files."
+           :required (:directory) :optional (:limit))
+    (region :summary "Read an exact region from a live or visited file buffer."
+            :required (:file :start-line) :optional (:end-line))
+    (imenu :summary "Return the structural index for a file."
+           :required (:file))
+    (workspace-symbol
+     :summary "Query the active Eglot/LSP workspace symbol provider."
+     :required (:file :pattern) :optional (:limit))
+    (xref :summary "Resolve exact definitions or references through xref."
+          :required (:file) :required-one-of (:identifier :line)
           :optional (:kind :identifier :line))
-    (locate :required (:query) :required-one-of (:file :directory)
-            :optional (:line :kind :limit :glob :regexp))
-    (diagnostics :required-one-of (:file :directory)
-                 :optional (:line :radius :limit :file-limit))
-    (context :required (:file :line)
-             :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius))
-    (describe :optional (:target)))
+    (locate
+     :summary "Prefer workspace symbols for managed files, then bounded text search."
+     :required (:query) :required-one-of (:file :directory)
+     :optional (:line :kind :limit :glob :regexp))
+    (diagnostics
+     :summary "Read Flymake/Eglot diagnostics only when explicitly requested."
+     :required-one-of (:file :directory)
+     :optional (:line :radius :limit :file-limit))
+    (context
+     :summary "Return cheap bounded live context; semantic facets are opt-in."
+     :required (:file :line)
+     :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius))
+    (describe :summary "Return operation names or one complete schema."
+              :optional (:target)))
   "Compact request schemas for `emacs-code-navigator-query'.")
 
 (defun emacs-code-navigator--symbol (value)

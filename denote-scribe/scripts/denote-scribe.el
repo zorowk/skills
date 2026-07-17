@@ -128,19 +128,31 @@
   "Critical-note headings included in compact AI-review summaries.")
 
 (defconst denote-scribe--schemas
-  '((preflight :optional (:notes-dir :hywiki-dir :git-dir))
-    (template :required (:kind :language))
-    (create :required (:title :body-file)
-            :optional (:keywords :notes-dir :signature :date :git-dir))
-    (review :required (:file :review-state)
+  '((preflight :summary "Validate Denote, HyWiki, and repository configuration."
+               :optional (:notes-dir :hywiki-dir :git-dir))
+    (template :summary "Return the exact critical-note or HyWiki template."
+              :required (:kind :language))
+    (create :summary "Create one Denote note from a completed body file."
+            :required (:title :body-file)
+            :optional (:keywords :notes-dir :signature :date :git-dir)
+            :effects (:created))
+    (review :summary "Return one bounded review page with continuation metadata."
+            :required (:file :review-state)
             :optional (:notes-dir :offset :limit :section-maximum))
-    (summarize :required (:file) :optional (:section-maximum))
-    (list :optional (:start :end :notes-dir :keywords :offset :limit))
-    (hywiki :required (:page-name :body-file)
-            :optional (:replace :authorization :hywiki-dir))
-    (commit :required (:title :paths :authorization)
-            :optional (:review-completed :kind :git-dir))
-    (describe :optional (:target)))
+    (summarize :summary "Extract bounded critical sections from one note."
+               :required (:file) :optional (:section-maximum))
+    (list :summary "Return a filtered page of Denote notes."
+          :optional (:start :end :notes-dir :keywords :offset :limit))
+    (hywiki :summary "Create a HyWiki page; replacement requires authorization."
+            :required (:page-name :body-file)
+            :optional (:replace :authorization :hywiki-dir)
+            :effects (:mutated))
+    (commit :summary "Commit only supplied run files after explicit authorization."
+            :required (:title :paths :authorization)
+            :optional (:review-completed :kind :git-dir)
+            :effects (:committed))
+    (describe :summary "Return operation names or one complete schema."
+              :optional (:target)))
   "Compact request schemas for `denote-scribe-run'.")
 
 ;;;###autoload

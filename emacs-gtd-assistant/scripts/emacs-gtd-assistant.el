@@ -52,16 +52,32 @@
   :group 'emacs-gtd-assistant)
 
 (defconst emacs-gtd--schemas
-  '((preflight)
-    (list :optional (:query :states :tags :include-done :offset :limit))
-    (resolve :required (:query) :optional (:include-done))
-    (add :required (:title) :optional (:headline :context :scheduled :deadline))
-    (set-state :required-one-of (:id :query) :required (:state))
-    (reschedule :required-one-of (:id :query) :required (:timestamp))
-    (set-deadline :required-one-of (:id :query) :required (:timestamp))
-    (delete :required-one-of (:id :query) :required (:authorization))
-    (archive :required-one-of (:id :query) :required (:authorization))
-    (describe :optional (:target)))
+  '((preflight :summary "Validate the configured GTD file without mutation.")
+    (list :summary "Return a filtered page with explicit continuation metadata."
+          :optional (:query :states :tags :include-done :offset :limit))
+    (resolve :summary "Resolve a title query and expose ambiguity without guessing."
+             :required (:query) :optional (:include-done))
+    (add :summary "Add one task through Org and return its compact identity."
+         :required (:title)
+         :optional (:headline :context :scheduled :deadline)
+         :effects (:mutated))
+    (set-state :summary "Resolve an ID or unique query, then update its state."
+               :required-one-of (:id :query) :required (:state)
+               :effects (:mutated))
+    (reschedule :summary "Resolve an ID or unique query, then update scheduling."
+                :required-one-of (:id :query) :required (:timestamp)
+                :effects (:mutated))
+    (set-deadline :summary "Resolve an ID or unique query, then update its deadline."
+                  :required-one-of (:id :query) :required (:timestamp)
+                  :effects (:mutated))
+    (delete :summary "Delete one resolved task after explicit authorization."
+            :required-one-of (:id :query) :required (:authorization)
+            :effects (:mutated))
+    (archive :summary "Archive one resolved task after explicit authorization."
+             :required-one-of (:id :query) :required (:authorization)
+             :effects (:mutated))
+    (describe :summary "Return operation names or one complete schema."
+              :optional (:target)))
   "Compact request schemas for `emacs-gtd-execute'.")
 
 (defun emacs-gtd--file ()
