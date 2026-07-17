@@ -200,8 +200,8 @@ relative path and must return non-nil.  DESCRIPTION explains that constraint."
     (unless (memq risk '(low medium high))
       (error "RISK must be low, medium, or high: %S" risk))
     (if (eq detail 'auto)
-        (if (or (and (eq risk 'low) (<= (length changes) 2))
-                (and (eq risk 'medium) (= (length changes) 1)))
+        (if (or (and (eq risk 'low) (<= (length changes) 4))
+                (and (eq risk 'medium) (<= (length changes) 3)))
             'compact
           'full)
       detail)))
@@ -223,7 +223,8 @@ relative path and must return non-nil.  DESCRIPTION explains that constraint."
 
 Require :type, :summary, :context, :changes, :reason, :validation, and
 :boundary.  :scope, :risk, :detail, and trailers are optional.  Adaptive
-detail is compact only for low-risk changes containing at most two items."
+detail is compact for routine low- and medium-risk changes, while high-risk
+or broader changes retain their complete evidence and boundary."
   (unless (listp spec)
     (error "SPEC must be a plist"))
   (let* ((changes (skill-git--changes (plist-get spec :changes)))

@@ -10,6 +10,7 @@
 (defvar emacs-code-navigator-documentation-maximum-characters)
 (defvar emacs-gtd-directory)
 (defvar emacs-gtd-file)
+(defvar ai-git-commit-untracked-file-maximum-characters)
 (defvar magit-display-buffer-noselect)
 (defvar magit-process-popup-time)
 (defvar org-blog-exporter-setupfile)
@@ -62,6 +63,10 @@
 (declare-function ai-git-commit--ensure-magit
                   "../git-commit/scripts/ai-git-commit" ())
 (declare-function ai-git-commit--head-message
+                  "../git-commit/scripts/ai-git-commit" ())
+(declare-function ai-git-commit--normalize-paths
+                  "../git-commit/scripts/ai-git-commit" (root paths))
+(declare-function ai-git-commit--untracked-diff
                   "../git-commit/scripts/ai-git-commit" ())
 
 (defconst skill-contract-tests-root
@@ -426,6 +431,41 @@
                      :detail 'full))))
     (should (string-match-p "Domain capabilities" message))))
 
+(ert-deftest git-message-auto-compacts-routine-medium-risk-work ()
+  (let* ((spec (copy-sequence skill-contract-tests-message-spec))
+         (spec (plist-put spec :risk 'medium))
+         (spec (plist-put spec :changes
+                          '("Add bounded untracked-file evidence."
+                            "Stage an explicit path set."
+                            "Document the compact workflow.")))
+         (message (ai-git-commit-format spec)))
+    (should-not (string-match-p "Domain capabilities" message))))
+
+(ert-deftest git-context-collects-bounded-untracked-diffs ()
+  (let ((ai-git-commit-untracked-file-maximum-characters 24))
+    (cl-letf (((symbol-function 'magit-git-lines)
+               (lambda (&rest _) '("new.el")))
+              ((symbol-function 'magit-git-insert)
+               (lambda (&rest _)
+                 (insert "diff --git a/new.el b/new.el\n+some long new content\n")
+                 1)))
+      (let ((result (ai-git-commit--untracked-diff)))
+        (should (equal (plist-get result :files) '("new.el")))
+        (should (string-prefix-p "diff --git" (plist-get result :text)))
+        (should (eq (plist-get result :truncated) t))))))
+
+(ert-deftest git-path-validation-allows-tracked-deletions-and-rejects-escape ()
+  (let ((root (make-temp-file "git-commit-paths-" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'magit-git-lines)
+                   (lambda (&rest _) '("gone.el"))))
+          (should (equal (ai-git-commit--normalize-paths
+                          root '("gone.el" "gone.el"))
+                         '("gone.el")))
+          (should-error
+           (ai-git-commit--normalize-paths root '("../outside.el"))))
+      (delete-directory root t))))
+
 (ert-deftest git-message-rejects-labels-and-missing-evidence ()
   (should-error
    (ai-git-commit-format
@@ -478,6 +518,40 @@
         (should (equal (plist-get (plist-get result :data) :commit) "abc123"))
         (should (equal (plist-get result :effects)
                        '(:committed t :amended nil)))))))
+
+(ert-deftest git-commit-facade-stages-and-commits-only-explicit-paths ()
+  (let (commit-arguments stage-arguments)
+    (cl-letf (((symbol-function 'magit-toplevel)
+               (lambda (&optional _) "/tmp/repository/"))
+              ((symbol-function 'ai-git-commit--ensure-magit)
+               (lambda () t))
+              ((symbol-function 'ai-git-commit--normalize-paths)
+               (lambda (_root _paths) '("new.el" "gone.el")))
+              ((symbol-function 'magit-call-git)
+               (lambda (&rest arguments)
+                 (setq stage-arguments arguments)
+                 0))
+              ((symbol-function 'magit-commit-create)
+               (lambda (arguments)
+                 (setq commit-arguments arguments)
+                 'fake-process))
+              ((symbol-function 'ai-git-commit--wait-for-process)
+               (lambda (_) 0))
+              ((symbol-function 'ai-git-commit--head-message)
+               (lambda () (concat (nth 2 commit-arguments) "\n")))
+              ((symbol-function 'magit-rev-parse)
+               (lambda (&rest _) "abc123")))
+      (let* ((request
+              (append '(:operation commit :authorization explicit
+                        :paths ("new.el" "gone.el"))
+                      skill-contract-tests-message-spec))
+             (result (ai-git-commit-run request)))
+        (should (equal stage-arguments
+                       '("add" "--" "new.el" "gone.el")))
+        (should (equal (last commit-arguments 4)
+                       '("--only" "--" "new.el" "gone.el")))
+        (should (equal (plist-get (plist-get result :data) :paths)
+                       '("new.el" "gone.el")))))))
 
 (ert-deftest git-amend-facade-verifies-committed-message ()
   (cl-letf (((symbol-function 'magit-toplevel)

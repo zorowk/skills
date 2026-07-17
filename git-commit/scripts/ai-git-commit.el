@@ -31,7 +31,9 @@
 
 (declare-function magit-commit-amend "magit-commit" (&optional args))
 (declare-function magit-commit-create "magit-commit" (&optional args))
+(declare-function magit-call-git "magit-process" (&rest args))
 (declare-function magit-git-insert "magit-git" (&rest args))
+(declare-function magit-git-lines "magit-git" (&rest args))
 (declare-function magit-git-success "magit-git" (&rest args))
 (declare-function magit-rev-insert-format "magit-git"
                   (format &optional rev args))
@@ -62,6 +64,11 @@
   :type 'positive-integer
   :group 'ai-git-commit)
 
+(defcustom ai-git-commit-untracked-file-maximum-characters 12000
+  "Maximum characters retained from each untracked file diff."
+  :type 'positive-integer
+  :group 'ai-git-commit)
+
 (defconst ai-git-commit--schemas
   '((context :summary "Collect bounded staged and unstaged evidence; compact by default."
              :optional (:directory :full) :effects nil)
@@ -74,13 +81,13 @@
      :summary "Commit through headless Magit, then verify the complete HEAD message."
      :required (:type :summary :context :changes :reason :validation
                 :boundary :authorization)
-     :optional (:scope :risk :detail :log :pms :influence :directory)
+     :optional (:scope :risk :detail :log :pms :influence :directory :paths)
      :effects (:committed))
     (amend
      :summary "Amend through headless Magit, then verify the complete HEAD message."
      :required (:type :summary :context :changes :reason :validation
                 :boundary :authorization)
-     :optional (:scope :risk :detail :log :pms :influence :directory)
+     :optional (:scope :risk :detail :log :pms :influence :directory :paths)
      :effects (:committed :amended))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target) :effects nil))
@@ -96,6 +103,41 @@
 (defun ai-git-commit--bounded-diff (text maximum label)
   "Return TEXT plus explicit truncation metadata for MAXIMUM and LABEL."
   (skill-runtime-truncate text maximum label))
+
+(defun ai-git-commit--join-diffs (&rest diffs)
+  "Join non-empty DIFFS with one newline."
+  (string-join (seq-remove #'string-empty-p diffs) "\n"))
+
+(defun ai-git-commit--git-output-allow-status (statuses &rest arguments)
+  "Return Git output for ARGUMENTS when its status is in STATUSES."
+  (with-temp-buffer
+    (let ((status (apply #'magit-git-insert arguments)))
+      (unless (memq status statuses)
+        (error "Git command failed with status %d: git %s"
+               status (string-join arguments " ")))
+      (string-trim-right (buffer-string)))))
+
+(defun ai-git-commit--untracked-diff ()
+  "Return bounded diff evidence for every untracked file."
+  (let ((paths (magit-git-lines "ls-files" "--others" "--exclude-standard"))
+        sections
+        truncated)
+    (dolist (path paths)
+      (let* ((raw (ai-git-commit--git-output-allow-status
+                   '(0 1) "diff" "--no-index" "--no-ext-diff" "--"
+                   "/dev/null" path))
+             (bounded
+              (ai-git-commit--bounded-diff
+               (if (string-empty-p raw)
+                   (format "Untracked empty file: %s" path)
+                 raw)
+               ai-git-commit-untracked-file-maximum-characters
+               'untracked-file-diff)))
+        (push (plist-get bounded :text) sections)
+        (setq truncated (or truncated (plist-get bounded :truncated)))))
+    (list :text (string-join (nreverse sections) "\n")
+          :files paths
+          :truncated (and truncated t))))
 
 ;;;###autoload
 (defun ai-git-commit-context (&optional directory compact)
@@ -113,7 +155,10 @@ return separate staged and unstaged diffs."
            (status (ai-git-commit--git-output
                     "status" "--porcelain=v1" "--untracked-files=all"))
            (unstaged-stat (ai-git-commit--git-output "diff" "--stat"))
-           (staged-stat (ai-git-commit--git-output "diff" "--cached" "--stat")))
+           (staged-stat (ai-git-commit--git-output "diff" "--cached" "--stat"))
+           (untracked (ai-git-commit--untracked-diff))
+           (untracked-text (plist-get untracked :text))
+           (untracked-files (plist-get untracked :files)))
       (if compact
           (let* ((has-head (magit-git-success "rev-parse" "--verify" "HEAD"))
                  (combined
@@ -127,6 +172,7 @@ return separate staged and unstaged diffs."
                         "diff" "--cached" "--no-ext-diff")
                        (ai-git-commit--git-output "diff" "--no-ext-diff")))
                      "\n")))
+                 (combined (ai-git-commit--join-diffs combined untracked-text))
                  (bounded
                   (ai-git-commit--bounded-diff
                    combined ai-git-commit-compact-maximum-characters 'diff)))
@@ -135,13 +181,17 @@ return separate staged and unstaged diffs."
                   :change-count (length (split-string status "\n" t))
                   :unstaged-stat unstaged-stat
                   :staged-stat staged-stat
+                  :untracked-files untracked-files
+                  :untracked-truncated (plist-get untracked :truncated)
                   :diff-base (if has-head "HEAD" "index/worktree")
                   :diff (plist-get bounded :text)
                   :truncated (plist-get bounded :truncated)
                   :original-length (plist-get bounded :original-length)))
         (let* ((unstaged
                 (ai-git-commit--bounded-diff
-                 (ai-git-commit--git-output "diff" "--no-ext-diff")
+                 (ai-git-commit--join-diffs
+                  (ai-git-commit--git-output "diff" "--no-ext-diff")
+                  untracked-text)
                  ai-git-commit-context-maximum-characters 'unstaged-diff))
                (staged
                 (ai-git-commit--bounded-diff
@@ -153,6 +203,8 @@ return separate staged and unstaged diffs."
                 :change-count (length (split-string status "\n" t))
                 :unstaged-stat unstaged-stat
                 :staged-stat staged-stat
+                :untracked-files untracked-files
+                :untracked-truncated (plist-get untracked :truncated)
                 :unstaged-diff (plist-get unstaged :text)
                 :unstaged-truncated (plist-get unstaged :truncated)
                 :staged-diff (plist-get staged :text)
@@ -198,6 +250,34 @@ return separate staged and unstaged diffs."
       (error "Magit could not read the committed HEAD message"))
     (buffer-string)))
 
+(defun ai-git-commit--normalize-paths (root paths)
+  "Return validated repository-relative PATHS below ROOT.
+
+Permit regular files, symlinks, and tracked paths deleted from the worktree."
+  (unless (and (listp paths) paths (seq-every-p #'stringp paths))
+    (error "PATHS must be a non-empty list of strings"))
+  (let ((root (file-name-as-directory (expand-file-name root)))
+        normalized)
+    (dolist (path paths)
+      (let* ((absolute (expand-file-name path root))
+             (relative (file-relative-name absolute root)))
+        (when (or (string= relative "..") (string-prefix-p "../" relative))
+          (error "Refusing path outside repository: %s" path))
+        (when (file-directory-p absolute)
+          (error "Commit path must name a file, not a directory: %s" path))
+        (unless (or (file-regular-p absolute)
+                    (file-symlink-p absolute)
+                    (magit-git-lines "ls-files" "--" relative))
+          (error "Commit path is neither present nor tracked: %s" path))
+        (push relative normalized)))
+    (delete-dups (nreverse normalized))))
+
+(defun ai-git-commit--stage-paths (paths)
+  "Stage explicit repository-relative PATHS through Magit."
+  (unless (zerop (apply #'magit-call-git
+                        (append '("add" "--") paths)))
+    (error "Magit failed to stage the explicit path set")))
+
 (defun ai-git-commit--commit (request amend)
   "Commit formatted REQUEST through Magit; AMEND means replace HEAD."
   (skill-runtime-require-authorization
@@ -210,10 +290,16 @@ return separate staged and unstaged diffs."
              (expand-file-name
               (or (plist-get request :directory) default-directory))))
     (let* ((default-directory root)
+           (paths (and (plist-get request :paths)
+                       (ai-git-commit--normalize-paths
+                        root (plist-get request :paths))))
            (message (ai-git-commit-format request))
            ;; A single -m value bypasses the editor.  Verbatim cleanup keeps
            ;; the formatter output intact and avoids any temporary file.
-           (arguments (list "--cleanup=verbatim" "-m" message)))
+           (arguments (append (list "--cleanup=verbatim" "-m" message)
+                              (and paths (append '("--only" "--") paths)))))
+      (when paths
+        (ai-git-commit--stage-paths paths))
       ;; Keep the complete asynchronous operation headless.  In particular,
       ;; the process sentinel runs while `accept-process-output' waits below,
       ;; so these bindings must outlive the initial Magit call.
@@ -235,6 +321,7 @@ return separate staged and unstaged diffs."
               (error "Committed message differs from formatter output"))
             (list :commit (magit-rev-parse "HEAD")
                   :message actual
+                  :paths paths
                   :amended (and amend t))))))))
 
 ;;;###autoload
