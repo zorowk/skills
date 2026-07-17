@@ -5,12 +5,9 @@ description: Export, preview, rebuild, or explicitly publish Org notes from `~/D
 
 # Org Blog Exporter
 
-Load `scripts/org-blog-exporter.el` and call its public entry points through the
-running Emacs server. Treat the script and function docstrings as the implementation
-and interface; inspect source only to debug or modify it.
+Load `scripts/org-blog-exporter.el` and call `org-blog-exporter-run` through the
+running Emacs server. Keep compact results unless complete path lists are necessary.
 
-Resolve an ambiguous file selection before acting. For export-only work, call
-`org-blog-exporter-export`; pass nil files for all public notes. Only with explicit
-publishing authorization call `org-blog-exporter-publish`, again using nil for all
-public notes. Report its returned paths, publishing results, and errors. Do not
-bypass a program safety error by manually cloning, committing, or pushing.
+Resolve ambiguous files before acting. Export needs no external authorization.
+Publish only after an explicit user request and pass `:authorization explicit`;
+nil `:files` means all public notes. Never bypass a program safety error manually.

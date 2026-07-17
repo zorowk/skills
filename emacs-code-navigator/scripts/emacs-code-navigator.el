@@ -13,6 +13,15 @@
 (require 'thingatpt)
 (require 'flymake nil t)
 
+(defgroup emacs-code-navigator nil
+  "Compact access to live Emacs code context."
+  :group 'tools)
+
+(defcustom emacs-code-navigator-documentation-maximum-characters 1200
+  "Maximum documentation characters returned by compact symbol queries."
+  :type 'positive-integer
+  :group 'emacs-code-navigator)
+
 (defconst emacs-code-navigator-ignored-directories
   '(".git" "node_modules" "target" "build" "dist" ".cache" ".venv" "vendor" "__pycache__")
   "Directory names skipped by fallback recursive file discovery.")
@@ -141,6 +150,41 @@ large, or sensitive runtime state."
           :function function-info
           :variable variable-info)))
 
+(defun emacs-code-navigator--truncate (text maximum label)
+  "Return TEXT capped at MAXIMUM characters with a LABEL marker."
+  (when text
+    (if (<= (length text) maximum)
+        text
+      (concat (substring text 0 maximum)
+              (format "\n[%s truncated]" label)))))
+
+(defun emacs-code-navigator--compact-facet (info)
+  "Return compact Help facet INFO."
+  (when info
+    (let ((result
+           (list :symbol (plist-get info :symbol)
+                 :kinds (plist-get info :kinds))))
+      (dolist (key '(:arguments :interactive :autoload :buffer-local))
+        (when (plist-member info key)
+          (setq result (append result (list key (plist-get info key))))))
+      (append
+       result
+       (list :documentation
+             (emacs-code-navigator--truncate
+              (plist-get info :documentation)
+              emacs-code-navigator-documentation-maximum-characters
+              "documentation")
+             :source (plist-get info :source))))))
+
+(defun emacs-code-navigator-symbol-summary (name)
+  "Return token-bounded Help and source information for symbol NAME."
+  (let ((info (emacs-code-navigator-symbol-info name)))
+    (list :symbol (plist-get info :symbol)
+          :function
+          (emacs-code-navigator--compact-facet (plist-get info :function))
+          :variable
+          (emacs-code-navigator--compact-facet (plist-get info :variable)))))
+
 (defun emacs-code-navigator-apropos (pattern &optional kind limit documentation)
   "Discover Emacs capabilities matching PATTERN.
 
@@ -174,15 +218,14 @@ source details."
      (seq-take (seq-filter predicate symbols) max-count))))
 
 (defun emacs-code-navigator-discover
-    (pattern &optional kind limit documentation)
+    (pattern &optional kind limit documentation compact)
   "Discover and, when unambiguous, expand an Emacs capability.
 
 PATTERN, KIND, LIMIT, and DOCUMENTATION have the same meaning as in
 `emacs-code-navigator-apropos'.  Return a plist containing compact :matches.
 When PATTERN names an available match exactly, or the search has exactly one
-result, also return that symbol's full Help and source data as :selected.  This
-is the preferred entry point when the caller does not yet know an exact Emacs
-symbol name."
+result, also return complete Help and source data as :selected.  When COMPACT
+is non-nil, return token-bounded Help instead."
   (let* ((matches (emacs-code-navigator-apropos
                    pattern kind limit documentation))
          (exact (seq-find
@@ -195,8 +238,10 @@ symbol name."
           :matches matches
           :selected
           (and choice
-               (emacs-code-navigator-symbol-info
-                (plist-get choice :symbol))))))
+               (funcall (if compact
+                            #'emacs-code-navigator-symbol-summary
+                          #'emacs-code-navigator-symbol-info)
+                        (plist-get choice :symbol))))))
 
 (defun emacs-code-navigator-library-info (library)
   "Return the source path for Emacs Lisp LIBRARY.
@@ -616,6 +661,59 @@ and Flymake diagnostics near LINE.  DIAGNOSTIC-RADIUS defaults to 0."
         :eldoc (emacs-code-navigator-eldoc-at-line file line)
         :diagnostics (emacs-code-navigator-diagnostics-at-line
                       file line diagnostic-radius)))
+
+;;;###autoload
+(defun emacs-code-navigator-query (request)
+  "Execute compact code-navigation REQUEST and return a standard plist.
+
+REQUEST must contain :operation.  Supported operations are `capability',
+`symbol', `library', `search', `files', and `context'.  Operation-specific
+keys match the corresponding public function arguments.  Pass :full non-nil
+only when compact output is insufficient."
+  (unless (listp request)
+    (error "REQUEST must be a plist"))
+  (let* ((operation (plist-get request :operation))
+         (result
+          (pcase operation
+            ('capability
+             (emacs-code-navigator-discover
+              (plist-get request :pattern)
+              (plist-get request :kind)
+              (plist-get request :limit)
+              (plist-get request :documentation)
+              (not (plist-get request :full))))
+            ('symbol
+             (funcall (if (plist-get request :full)
+                          #'emacs-code-navigator-symbol-info
+                        #'emacs-code-navigator-symbol-summary)
+                      (plist-get request :name)))
+            ('library
+             (emacs-code-navigator-library-info
+              (plist-get request :name)))
+            ('search
+             (emacs-code-navigator-search
+              (plist-get request :directory)
+              (plist-get request :regexp)
+              (plist-get request :limit)))
+            ('files
+             (emacs-code-navigator-project-files
+              (plist-get request :directory)
+              (plist-get request :limit)))
+            ('context
+             (emacs-code-navigator-context-at-line
+              (plist-get request :file)
+              (plist-get request :line)
+              (plist-get request :diagnostic-radius)))
+            (_ (error "Unknown navigator operation: %S" operation)))))
+    (list :status 'ok
+          :operation operation
+          :count
+          (cond
+           ((and (listp result) (plist-member result :matches))
+            (length (plist-get result :matches)))
+           ((memq operation '(search files)) (length result))
+           (t 1))
+          :result result)))
 
 (provide 'emacs-code-navigator)
 

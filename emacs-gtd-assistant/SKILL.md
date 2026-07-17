@@ -6,17 +6,9 @@ description: "Use when an AI assistant should manage the user's Emacs Org GTD ta
 # Emacs GTD Assistant
 
 Manage GTD through the running Emacs server. Load
-`scripts/emacs-gtd-assistant.el` from this skill directory. Use its public function
-docstrings and validation errors as the interface; inspect source only to debug or
-modify it.
+`scripts/emacs-gtd-assistant.el`, then call `emacs-gtd-execute`. Start with filtered,
+bounded `list` or `resolve`; use `:id` or a unique `:query` for mutations.
 
-- List tasks with `emacs-gtd-list`; summarize date, state, priority, and title.
-- Add with `emacs-gtd-add-task`, selecting personal or work context unless the user
-  chooses a specific heading.
-- Before a title-based mutation, call `emacs-gtd-resolve-title`. Proceed only when
-  it returns `:status resolved`; present returned matches when ambiguous.
-- Delete or archive only with explicit authorization. Prefer `DONE` when the user
-  says an item is finished.
-
-Keep IDs internal unless needed to resolve ambiguity. Do not edit the Org file
-directly or bypass a program validation error.
+Present matches when ambiguous. Delete or archive only after explicit user
+authorization and pass `:authorization explicit`. Prefer `DONE` for completed work.
+Keep IDs internal and do not edit the Org file directly.

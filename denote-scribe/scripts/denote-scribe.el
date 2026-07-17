@@ -59,6 +59,16 @@
   :type 'positive-integer
   :group 'denote-scribe)
 
+(defcustom denote-scribe-summary-section-maximum-characters 500
+  "Maximum characters returned for each section in compact note summaries."
+  :type 'positive-integer
+  :group 'denote-scribe)
+
+(defcustom denote-scribe-review-summary-limit 8
+  "Default notes returned in each compact AI-review summary page."
+  :type 'positive-integer
+  :group 'denote-scribe)
+
 (define-obsolete-variable-alias
   'denote-scribe-hywiki-commit-marker
   'denote-scribe-review-commit-marker "2026-07-16")
@@ -102,6 +112,11 @@
   '("背景" "定义" "我的理解" "价值" "证据" "推理" "边界" "相关概念" "开放问题"
     "溯源")
   "Required Chinese headings for a HyWiki concept body, in order.")
+
+(defconst denote-scribe-review-summary-headings
+  '("Question" "Evidence" "Conclusion" "Open Questions" "Extract Concepts"
+    "核心问题" "证据" "结论" "开放问题" "提取概念")
+  "Critical-note headings included in compact AI-review summaries.")
 
 ;;;###autoload
 (defun denote-scribe-template-file (kind &optional language)
@@ -312,6 +327,86 @@ Denote commit that has not yet been created."
             (file-in-directory-p (file-truename file) notes-root)))
      candidate-files)))
 
+(defun denote-scribe--truncate-summary (text maximum)
+  "Return trimmed TEXT capped at MAXIMUM characters."
+  (let ((clean (string-trim
+                (substring-no-properties (or text "")))))
+    (if (<= (length clean) maximum)
+        (list :text clean :truncated nil)
+      (list :text (concat (substring clean 0 maximum)
+                          "\n[section truncated]")
+            :truncated t))))
+
+(defun denote-scribe-note-summary (file &optional section-maximum)
+  "Return compact critical-review sections from Org FILE.
+
+SECTION-MAXIMUM defaults to
+`denote-scribe-summary-section-maximum-characters'.  Read the full file only
+when a returned section is truncated or requires deeper evidence checking."
+  (unless (and (stringp file) (file-readable-p file))
+    (error "Review note is not readable: %S" file))
+  (let ((maximum (or section-maximum
+                     denote-scribe-summary-section-maximum-characters)))
+    (unless (and (integerp maximum) (> maximum 0))
+      (error "SECTION-MAXIMUM must be a positive integer: %S" maximum))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (delay-mode-hooks (org-mode))
+      (let* ((tree (org-element-parse-buffer))
+             (sections
+              (org-element-map
+                  tree 'headline
+                (lambda (headline)
+                  (let ((heading (org-element-property :raw-value headline)))
+                    (when (and (= (org-element-property :level headline) 1)
+                               (member heading
+                                       denote-scribe-review-summary-headings))
+                      (let ((summary
+                             (denote-scribe--truncate-summary
+                              (org-element-interpret-data
+                               (org-element-contents headline))
+                              maximum)))
+                        (list :heading heading
+                              :text (plist-get summary :text)
+                              :truncated
+                              (plist-get summary :truncated)))))))))
+        (list :file (expand-file-name file)
+              :title (or (org-get-title (current-buffer))
+                         (file-name-base file))
+              :sections sections)))))
+
+(defun denote-scribe-review-summaries
+    (files &optional offset limit section-maximum)
+  "Return one bounded page of compact summaries for review FILES."
+  (unless (listp files)
+    (error "FILES must be a list"))
+  (let* ((start (or offset 0))
+         (page-size (or limit denote-scribe-review-summary-limit))
+         (count (length files)))
+    (unless (and (integerp start) (>= start 0))
+      (error "OFFSET must be a non-negative integer: %S" start))
+    (unless (and (integerp page-size) (> page-size 0))
+      (error "LIMIT must be a positive integer: %S" page-size))
+    (let ((page (seq-take (nthcdr start files) page-size)))
+      (list :count count
+            :offset start
+            :limit page-size
+            :truncated (< (+ start (length page)) count)
+            :summaries
+            (mapcar (lambda (file)
+                      (denote-scribe-note-summary file section-maximum))
+                    page)))))
+
+(defun denote-scribe-review-context
+    (new-note state &optional notes-dir offset limit section-maximum)
+  "Return a paged compact AI-review context for NEW-NOTE and cadence STATE."
+  (if (not (plist-get state :review-due))
+      (list :count 0 :offset 0 :limit (or limit 0)
+            :truncated nil :summaries nil)
+    (denote-scribe-review-summaries
+     (denote-scribe--review-files new-note state notes-dir)
+     offset limit section-maximum)))
+
 ;;;###autoload
 (defun denote-scribe-create-with-review-context
     (title body-file &optional keywords notes-dir signature date git-dir)
@@ -325,11 +420,15 @@ review plus the newly created report."
   (let* ((state (denote-scribe-git-review-state git-dir))
          (file (denote-scribe-create
                 title body-file keywords notes-dir signature date)))
-    (list :file file
-          :review-state state
-          :review-files
-          (and (plist-get state :review-due)
-               (denote-scribe--review-files file state notes-dir)))))
+    (let ((review-files
+           (and (plist-get state :review-due)
+                (denote-scribe--review-files file state notes-dir))))
+      (list :file file
+            :review-state state
+            :review-files review-files
+            :review
+            (and review-files
+                 (denote-scribe-review-summaries review-files))))))
 
 (define-obsolete-function-alias
   'denote-scribe-git-hywiki-state
@@ -507,6 +606,96 @@ plain HyWikiWord without a section suffix."
       (list :page-name page-name
             :file page-file
             :status (if existing-nonempty 'replaced 'created)))))
+
+;;;###autoload
+(defun denote-scribe-run (request)
+  "Execute Denote Scribe REQUEST through one compact public entry point.
+
+Supported :operation values are `template', `create', `review', `summarize',
+`list', `hywiki', and `commit'.  Commit requires :authorization `explicit'.
+Review results are paged with :offset and :limit."
+  (unless (listp request)
+    (error "REQUEST must be a plist"))
+  (let ((operation (plist-get request :operation)))
+    (pcase operation
+      ('template
+       (list :status 'ok :operation operation :count 1
+             :result
+             (denote-scribe-template-file
+              (plist-get request :kind)
+              (plist-get request :language))))
+      ('create
+       (let* ((created
+               (denote-scribe-create-with-review-context
+                (plist-get request :title)
+                (plist-get request :body-file)
+                (plist-get request :keywords)
+                (plist-get request :notes-dir)
+                (plist-get request :signature)
+                (plist-get request :date)
+                (plist-get request :git-dir))))
+         (list :status 'ok :operation operation :count 1
+               :file (plist-get created :file)
+               :review-state (plist-get created :review-state)
+               :review (plist-get created :review))))
+      ('review
+       (let ((review
+              (denote-scribe-review-context
+               (plist-get request :file)
+               (plist-get request :review-state)
+               (plist-get request :notes-dir)
+               (plist-get request :offset)
+               (plist-get request :limit)
+               (plist-get request :section-maximum))))
+         (append (list :status 'ok :operation operation) review)))
+      ('summarize
+       (list :status 'ok :operation operation :count 1
+             :result
+             (denote-scribe-note-summary
+              (plist-get request :file)
+              (plist-get request :section-maximum))))
+      ('list
+       (let* ((files
+               (denote-scribe-list-notes
+                (plist-get request :start)
+                (plist-get request :end)
+                (plist-get request :notes-dir)
+                (plist-get request :keywords)))
+              (offset (or (plist-get request :offset) 0))
+              (limit (or (plist-get request :limit)
+                         denote-scribe-review-summary-limit))
+              (_ (unless (and (integerp offset) (>= offset 0))
+                   (error "OFFSET must be a non-negative integer: %S" offset)))
+              (_ (unless (and (integerp limit) (> limit 0))
+                   (error "LIMIT must be a positive integer: %S" limit)))
+              (page (seq-take (nthcdr offset files) limit)))
+         (list :status 'ok :operation operation :count (length files)
+               :offset offset :limit limit
+               :truncated (< (+ offset (length page)) (length files))
+               :items page)))
+      ('hywiki
+       (when (and (plist-get request :replace)
+                  (not (eq (plist-get request :authorization) 'explicit)))
+         (error "HyWiki replacement requires :authorization `explicit'"))
+       (list :status 'ok :operation operation :count 1
+             :result
+             (denote-scribe-hywiki-create
+              (plist-get request :page-name)
+              (plist-get request :body-file)
+              (plist-get request :replace)
+              (plist-get request :hywiki-dir))))
+      ('commit
+       (unless (eq (plist-get request :authorization) 'explicit)
+         (error "Commit requires :authorization `explicit'"))
+       (list :status 'ok :operation operation :count 1
+             :result
+             (denote-scribe-git-commit
+              (plist-get request :title)
+              (plist-get request :paths)
+              (plist-get request :review-completed)
+              (plist-get request :kind)
+              (plist-get request :git-dir))))
+      (_ (error "Unknown Denote Scribe operation: %S" operation)))))
 
 (provide 'denote-scribe)
 

@@ -6,6 +6,7 @@
 (require 'ox-html)
 (require 'ox-publish)
 (require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 (require 'xml)
 
@@ -79,6 +80,11 @@ instead."
     "pdf" "zip" "gz" "tar" "csv" "json")
   "Local resource extensions copied during explicit publishing."
   :type '(repeat string)
+  :group 'org-blog-exporter)
+
+(defcustom org-blog-exporter-result-limit 20
+  "Default maximum paths returned by compact export and publish results."
+  :type 'positive-integer
   :group 'org-blog-exporter)
 
 (defconst org-blog-exporter--excluded-directories
@@ -803,6 +809,85 @@ publishing authorization before invoking it."
        title repository-dir setupfile notes-dir)
     (org-blog-exporter-publish-all
      title notes-dir repository-dir setupfile)))
+
+(defun org-blog-exporter--compact-result (operation result &optional limit)
+  "Return token-bounded standard RESULT for blog OPERATION."
+  (let* ((maximum (or limit org-blog-exporter-result-limit))
+         (exported (plist-get result :exported))
+         (assets (plist-get result :assets))
+         (errors (plist-get result :errors))
+         (error-count (or (plist-get result :error-count) 0)))
+    (unless (and (integerp maximum) (> maximum 0))
+      (error "LIMIT must be a positive integer: %S" maximum))
+    (list :status (if (zerop error-count) 'ok 'partial)
+          :operation operation
+          :scope (plist-get result :scope)
+          :candidate-count (plist-get result :candidate-count)
+          :exported-count (or (plist-get result :exported-count)
+                              (length exported))
+          :exported (seq-take exported maximum)
+          :assets-count (length assets)
+          :assets (seq-take assets maximum)
+          :error-count error-count
+          :errors (seq-take errors maximum)
+          :truncated
+          (or (> (length exported) maximum)
+              (> (length assets) maximum)
+              (> (length errors) maximum))
+          :output-directory (plist-get result :output-directory)
+          :changed (plist-get result :changed)
+          :commit (plist-get result :commit)
+          :push (plist-get result :push)
+          :index (plist-get result :index))))
+
+;;;###autoload
+(defun org-blog-exporter-run (request)
+  "Execute blog REQUEST through one compact public entry point.
+
+Use :operation `export', `publish', or `preflight'.  Export and publish accept
+:files (nil means all), directories, setupfile, and :limit.  Publish requires
+:authorization `explicit'.  Pass :full non-nil only when complete path lists
+are required."
+  (unless (listp request)
+    (error "REQUEST must be a plist"))
+  (let* ((operation (plist-get request :operation))
+         (result
+          (pcase operation
+            ('preflight
+             (org-blog-exporter-preflight
+              (plist-get request :notes-dir)
+              (plist-get request :output-dir)
+              (plist-get request :setupfile)))
+            ('export
+             (org-blog-exporter-export
+              (plist-get request :files)
+              (plist-get request :output-dir)
+              (plist-get request :setupfile)
+              (plist-get request :notes-dir)))
+            ('publish
+             (unless (eq (plist-get request :authorization) 'explicit)
+               (error "Publish requires :authorization `explicit'"))
+             (append
+              (list :scope (if (plist-get request :files) 'files 'all))
+              (org-blog-exporter-publish
+               (plist-get request :files)
+               (plist-get request :title)
+               (plist-get request :notes-dir)
+               (plist-get request :repository-dir)
+               (plist-get request :setupfile))))
+            (_ (error "Unknown blog operation: %S" operation)))))
+    (cond
+     ((plist-get request :full)
+      (list :status (if (zerop (or (plist-get result :error-count) 0))
+                        'ok
+                      'partial)
+            :operation operation :result result))
+     ((eq operation 'preflight)
+      (list :status (if (plist-get result :errors) 'blocked 'ok)
+            :operation operation :result result))
+     (t
+      (org-blog-exporter--compact-result
+       operation result (plist-get request :limit))))))
 
 (provide 'org-blog-exporter)
 

@@ -31,6 +31,11 @@
   :type 'string
   :group 'emacs-gtd-assistant)
 
+(defcustom emacs-gtd-query-limit 30
+  "Default maximum items returned by compact GTD queries."
+  :type 'positive-integer
+  :group 'emacs-gtd-assistant)
+
 (defun emacs-gtd--file ()
   "Return the absolute GTD file path."
   (expand-file-name emacs-gtd-file emacs-gtd-directory))
@@ -152,6 +157,18 @@ Create an ID only when CREATE-ID is non-nil."
   (or (org-get-todo-state)
       (org-entry-get (point) "SCHEDULED")
       (org-entry-get (point) "DEADLINE")))
+
+(defun emacs-gtd--compact-item (item)
+  "Return the user-relevant subset of GTD ITEM as a plist."
+  (let (result)
+    (dolist (mapping '((id . :id) (todo . :todo) (priority . :priority)
+                       (title . :title) (scheduled . :scheduled)
+                       (deadline . :deadline) (tags . :tags)
+                       (outline . :outline)))
+      (let ((value (cdr (assq (car mapping) item))))
+        (when value
+          (setq result (append result (list (cdr mapping) value))))))
+    result))
 
 (defun emacs-gtd--find-id (id)
   "Move point to Org entry with ID in the GTD file."
@@ -336,6 +353,124 @@ PLIST may select :context `personal' or `work', or override it with :headline."
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)
     item))
+
+(defun emacs-gtd--query-items (request)
+  "Return full GTD items matching compact query REQUEST."
+  (let ((query (plist-get request :query))
+        (states (plist-get request :states))
+        (tags (plist-get request :tags)))
+    (when query (emacs-gtd--single-line query "QUERY"))
+    (when (and states
+               (not (and (listp states) (seq-every-p #'stringp states))))
+      (error "STATES must be a list of strings or nil"))
+    (when (and tags
+               (not (and (listp tags) (seq-every-p #'stringp tags))))
+      (error "TAGS must be a list of strings or nil"))
+    (seq-filter
+     (lambda (item)
+       (and
+        (or (null query)
+            (string-match-p query (or (cdr (assq 'title item)) "")))
+        (or (null states)
+            (member (cdr (assq 'todo item)) states))
+        (or (null tags)
+            (seq-every-p
+             (lambda (tag) (member tag (cdr (assq 'tags item))))
+             tags))))
+     (emacs-gtd-list
+      (or (plist-get request :include-done)
+          (seq-some (lambda (state)
+                      (member state '("DONE" "CANCELLED")))
+                    states))))))
+
+(defun emacs-gtd--compact-query (request)
+  "Return a bounded standard result for GTD list REQUEST."
+  (let* ((items (emacs-gtd--query-items request))
+         (limit (or (plist-get request :limit) emacs-gtd-query-limit)))
+    (unless (and (integerp limit) (> limit 0))
+      (error "LIMIT must be a positive integer: %S" limit))
+    (list :status 'ok
+          :operation 'list
+          :count (length items)
+          :truncated (> (length items) limit)
+          :items (mapcar #'emacs-gtd--compact-item
+                         (seq-take items limit)))))
+
+(defun emacs-gtd--compact-resolution (resolution)
+  "Return compact RESOLUTION from `emacs-gtd-resolve-title'."
+  (pcase (plist-get resolution :status)
+    ('resolved
+     (list :status 'resolved
+           :item (emacs-gtd--compact-item
+                  (plist-get resolution :item))))
+    (status
+     (list :status status
+           :matches
+           (mapcar #'emacs-gtd--compact-item
+                   (plist-get resolution :matches))))))
+
+(defun emacs-gtd--request-id (request)
+  "Return REQUEST ID string or a compact unresolved result plist."
+  (or (plist-get request :id)
+      (let* ((query (or (plist-get request :query)
+                        (error "Mutation requires :id or :query")))
+             (resolution
+              (emacs-gtd-resolve-title
+               query (plist-get request :include-done))))
+        (if (eq (plist-get resolution :status) 'resolved)
+            (cdr (assq 'id (plist-get resolution :item)))
+          (emacs-gtd--compact-resolution resolution)))))
+
+;;;###autoload
+(defun emacs-gtd-execute (request)
+  "Execute compact GTD REQUEST through one public entry point.
+
+Supported :operation values are `list', `resolve', `add', `set-state',
+`reschedule', `set-deadline', `delete', and `archive'.  Mutations accept :id
+or a unique :query.  Delete and archive require :authorization `explicit'."
+  (unless (listp request)
+    (error "REQUEST must be a plist"))
+  (let ((operation (plist-get request :operation)))
+    (pcase operation
+      ('list (emacs-gtd--compact-query request))
+      ('resolve
+       (append
+        (list :operation 'resolve)
+        (emacs-gtd--compact-resolution
+         (emacs-gtd-resolve-title
+          (plist-get request :query)
+          (plist-get request :include-done)))))
+      ('add
+       (list :status 'ok :operation 'add :count 1
+             :item
+             (emacs-gtd--compact-item
+              (emacs-gtd-add-task
+               (plist-get request :title)
+               (or (plist-get request :task) request)))))
+      ((or 'set-state 'reschedule 'set-deadline 'delete 'archive)
+       (when (and (memq operation '(delete archive))
+                  (not (eq (plist-get request :authorization) 'explicit)))
+         (error "%s requires :authorization `explicit'" operation))
+       (let ((id (emacs-gtd--request-id request)))
+         (if (not (stringp id))
+             (append (list :operation operation) id)
+           (let ((value
+                  (pcase operation
+                    ('set-state
+                     (emacs-gtd-set-state id (plist-get request :state)))
+                    ('reschedule
+                     (emacs-gtd-reschedule id (plist-get request :timestamp)))
+                    ('set-deadline
+                     (emacs-gtd-set-deadline id (plist-get request :timestamp)))
+                    ('delete (emacs-gtd-delete id))
+                    ('archive (emacs-gtd-archive id)))))
+             (list :status 'ok
+                   :operation operation
+                   :count 1
+                   :result (if (stringp value)
+                               value
+                             (emacs-gtd--compact-item value)))))))
+      (_ (error "Unknown GTD operation: %S" operation)))))
 
 (provide 'emacs-gtd-assistant)
 

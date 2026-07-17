@@ -5,6 +5,7 @@
 (require 'subr-x)
 
 (declare-function magit-git-insert "magit-git" (&rest args))
+(declare-function magit-git-success "magit-git" (&rest args))
 (declare-function magit-toplevel "magit-git" (&optional directory))
 
 (defgroup treeland-commit nil
@@ -22,7 +23,12 @@
   :group 'treeland-commit)
 
 (defcustom treeland-commit-context-maximum-characters 30000
-  "Maximum characters retained for each diff in commit context."
+  "Maximum characters retained for each full-mode commit diff."
+  :type 'positive-integer
+  :group 'treeland-commit)
+
+(defcustom treeland-commit-compact-maximum-characters 12000
+  "Maximum characters retained for compact combined commit diff context."
   :type 'positive-integer
   :group 'treeland-commit)
 
@@ -72,42 +78,73 @@
       (error "Git command failed: git %s" (string-join arguments " ")))
     (string-trim-right (buffer-string))))
 
-(defun treeland-commit--truncate-context (text)
-  "Return TEXT capped for compact commit-message evidence."
-  (if (<= (length text) treeland-commit-context-maximum-characters)
-      text
-    (concat
-     (substring text 0 treeland-commit-context-maximum-characters)
-     "\n[diff truncated by treeland-commit-context]")))
+(defun treeland-commit--truncate-context (text &optional maximum)
+  "Return TEXT capped at MAXIMUM for commit-message evidence."
+  (let ((limit (or maximum treeland-commit-context-maximum-characters)))
+    (if (<= (length text) limit)
+        text
+      (concat
+       (substring text 0 limit)
+       "\n[diff truncated by treeland-commit-context]"))))
 
 ;;;###autoload
-(defun treeland-commit-context (&optional directory)
+(defun treeland-commit-context (&optional directory compact)
   "Return Git evidence needed to draft a commit message for DIRECTORY.
 
-Use the repository containing DIRECTORY or `default-directory'.  The returned
-plist contains complete porcelain status and diff statistics, plus capped
-unstaged and staged diffs.  Git is invoked through the running Emacs session's
-Magit configuration."
+Use the repository containing DIRECTORY or `default-directory'.  Preserve the
+original separate unstaged and staged diffs by default.  When COMPACT is
+non-nil, return status, statistics, change count, and one bounded diff against
+HEAD.  Git uses the running Emacs session's Magit settings."
   (unless (require 'magit nil t)
     (error "Magit is not available in this Emacs session"))
   (let* ((root (magit-toplevel (or directory default-directory))))
     (unless root
       (error "Not inside a Git repository: %s"
              (expand-file-name (or directory default-directory))))
-    (let ((default-directory root))
-      (list :git-root root
-            :status (treeland-commit--git-output
-                     "status" "--porcelain=v1" "--untracked-files=all")
-            :unstaged-stat (treeland-commit--git-output "diff" "--stat")
-            :staged-stat (treeland-commit--git-output
-                          "diff" "--cached" "--stat")
-            :unstaged-diff
-            (treeland-commit--truncate-context
-             (treeland-commit--git-output "diff" "--no-ext-diff"))
-            :staged-diff
-            (treeland-commit--truncate-context
-             (treeland-commit--git-output
-              "diff" "--cached" "--no-ext-diff"))))))
+    (let* ((default-directory root)
+           (status (treeland-commit--git-output
+                    "status" "--porcelain=v1" "--untracked-files=all"))
+           (unstaged-stat (treeland-commit--git-output "diff" "--stat"))
+           (staged-stat (treeland-commit--git-output
+                         "diff" "--cached" "--stat")))
+      (if compact
+          (let* ((has-head
+                  (magit-git-success "rev-parse" "--verify" "HEAD"))
+                 (combined
+                  (if has-head
+                      (treeland-commit--git-output
+                       "diff" "HEAD" "--no-ext-diff")
+                    (string-join
+                     (delq nil
+                           (mapcar
+                            (lambda (text)
+                              (and (not (string-empty-p text)) text))
+                            (list
+                             (treeland-commit--git-output
+                              "diff" "--cached" "--no-ext-diff")
+                             (treeland-commit--git-output
+                              "diff" "--no-ext-diff"))))
+                     "\n"))))
+            (list :git-root root
+                  :status status
+                  :change-count (length (split-string status "\n" t))
+                  :unstaged-stat unstaged-stat
+                  :staged-stat staged-stat
+                  :diff-base (if has-head "HEAD" "index/worktree")
+                  :diff
+                  (treeland-commit--truncate-context
+                   combined treeland-commit-compact-maximum-characters)))
+        (list :git-root root
+              :status status
+              :unstaged-stat unstaged-stat
+              :staged-stat staged-stat
+              :unstaged-diff
+              (treeland-commit--truncate-context
+               (treeland-commit--git-output "diff" "--no-ext-diff"))
+              :staged-diff
+              (treeland-commit--truncate-context
+               (treeland-commit--git-output
+                "diff" "--cached" "--no-ext-diff")))))))
 
 ;;;###autoload
 (defun treeland-commit-format
@@ -133,6 +170,39 @@ LOG is a concise summary.  PMS and INFLUENCE may be nil when unknown."
            (treeland-commit--field "Log" log)
            (treeland-commit--field "PMS" pms)
            (treeland-commit--field "Influence" influence))))
+
+;;;###autoload
+(defun treeland-commit-run (request)
+  "Execute Treeland REQUEST through one compact public entry point.
+
+Use :operation `context' with optional :directory and :full keys, or
+:operation `format' with :type, :module, :summary, :body, :log, :pms, and
+:influence."
+  (unless (listp request)
+    (error "REQUEST must be a plist"))
+  (let* ((operation (plist-get request :operation))
+         (result
+          (pcase operation
+            ('context
+             (treeland-commit-context
+              (plist-get request :directory)
+              (not (plist-get request :full))))
+            ('format
+             (treeland-commit-format
+              (plist-get request :type)
+              (plist-get request :module)
+              (plist-get request :summary)
+              (plist-get request :body)
+              (plist-get request :log)
+              (plist-get request :pms)
+              (plist-get request :influence)))
+            (_ (error "Unknown Treeland operation: %S" operation)))))
+    (list :status 'ok
+          :operation operation
+          :count (if (eq operation 'context)
+                     (plist-get result :change-count)
+                   1)
+          :result result)))
 
 (provide 'treeland-commit)
 
