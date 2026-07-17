@@ -3,6 +3,7 @@
 ;;; Code:
 
 (require 'seq)
+(require 'subr-x)
 
 (defun skill-runtime-result (operation data &optional count status page effects)
   "Return a compact standard envelope for OPERATION and DATA.
@@ -64,6 +65,43 @@ STATUS defaults to `ok'.  Include PAGE and EFFECTS only when non-nil."
     (error "%s requires :authorization `explicit'" action))
   t)
 
+(defun skill-runtime-validate-request (schemas request)
+  "Validate REQUEST against operation SCHEMAS and return REQUEST.
+
+Require a known :operation, every field named by :required, and at least one
+non-nil field named by :required-one-of.  Optional and operation-specific value
+validation remains the facade's responsibility."
+  (unless (and (listp request)
+               (condition-case nil
+                   (zerop (% (length request) 2))
+                 (error nil)))
+    (error "REQUEST must be a well-formed plist"))
+  (let* ((operation (plist-get request :operation))
+         (schema (alist-get operation schemas)))
+    (unless schema
+      (error "Unknown operation %S; expected %S"
+             operation (mapcar #'car schemas)))
+    (dolist (field (plist-get schema :required))
+      (unless (and (plist-member request field) (plist-get request field))
+        (error "%S requires non-nil %S" operation field)))
+    (when-let* ((fields (plist-get schema :required-one-of)))
+      (unless (seq-some (lambda (field)
+                          (and (plist-member request field)
+                               (plist-get request field)))
+                        fields)
+        (error "%S requires one of %S" operation fields)))
+    request))
+
+(defun skill-runtime--catalog-entry (entry)
+  "Return compact discovery metadata for schema ENTRY."
+  (let* ((operation (car entry))
+         (schema (cdr entry))
+         (result (list :operation operation
+                       :summary (plist-get schema :summary))))
+    (when-let* ((effects (plist-get schema :effects)))
+      (setq result (append result (list :effects effects))))
+    result))
+
 (defun skill-runtime-describe (schemas &optional target)
   "Describe operation SCHEMAS, optionally restricted to TARGET.
 
@@ -73,7 +111,8 @@ SCHEMAS is an alist whose entries are (OPERATION . PLIST)."
         (unless schema
           (error "Unknown operation for describe: %S" target))
         (list :operation target :schema schema))
-    (list :operations (mapcar #'car schemas))))
+    (list :operations (mapcar #'car schemas)
+          :catalog (mapcar #'skill-runtime--catalog-entry schemas))))
 
 (provide 'skill-runtime)
 

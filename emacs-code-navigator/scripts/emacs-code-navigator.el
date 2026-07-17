@@ -26,6 +26,8 @@
                   (operation data &optional count status page effects))
 (declare-function skill-runtime-truncate "../../common/scripts/skill-runtime"
                   (text maximum label))
+(declare-function skill-runtime-validate-request
+                  "../../common/scripts/skill-runtime" (schemas request))
 
 (defgroup emacs-code-navigator nil
   "Compact access to live Emacs code context."
@@ -68,7 +70,7 @@
           :required (:file) :required-one-of (:identifier :line)
           :optional (:kind :identifier :line))
     (locate
-     :summary "Prefer workspace symbols for managed files, then bounded text search."
+     :summary "Prefer file Imenu, then project symbols, then bounded text search."
      :required (:query) :required-one-of (:file :directory)
      :optional (:line :kind :limit :glob :regexp))
     (diagnostics
@@ -576,9 +578,21 @@ clangd answers from its project index.  Return at most LIMIT compact locations."
       (unless backend
         (error "No xref backend available for %s" file))
       (condition-case error-data
-          (mapcar #'emacs-code-navigator--xref-location-data
-                  (seq-take (xref-backend-apropos backend pattern)
-                            (or limit 50)))
+          (let* ((root
+                  (emacs-code-navigator-project-root
+                   (file-name-directory (expand-file-name file))))
+                 (locations
+                  (mapcar #'emacs-code-navigator--xref-location-data
+                          (xref-backend-apropos backend pattern))))
+            (seq-take
+             (seq-filter
+              (lambda (location)
+                (let ((candidate (car location)))
+                  (and (stringp candidate)
+                       (file-in-directory-p
+                        (expand-file-name candidate root) root))))
+              locations)
+             (or limit 50)))
         (cl-no-applicable-method
          (error "Xref backend %S has no workspace-symbol support" backend))
         (error
@@ -902,6 +916,19 @@ data.  In particular, Flymake is never started by the default context query."
   "Return a compact locate result for STRATEGY and MATCHES."
   (list :strategy strategy :matches matches))
 
+(defun emacs-code-navigator--file-symbols (file query &optional limit)
+  "Return QUERY matches from FILE's Imenu, capped at LIMIT."
+  (let ((case-fold-search t)
+        (regexp (regexp-quote query))
+        (expanded (expand-file-name file)))
+    (seq-take
+     (mapcar (lambda (entry)
+               (list expanded (cadr entry) (car entry)))
+             (seq-filter
+              (lambda (entry) (string-match-p regexp (car entry)))
+              (emacs-code-navigator-imenu expanded)))
+     (or limit 50))))
+
 (defun emacs-code-navigator--locate-request (request)
   "Route a compact locate REQUEST to the cheapest suitable backend."
   (let* ((query (plist-get request :query))
@@ -945,16 +972,24 @@ data.  In particular, Flymake is never started by the default context query."
        (emacs-code-navigator--xref-request
         (list :file file :line line :identifier query :kind 'definitions))))
      (file
-      (let ((symbols
+      (let* ((local-symbols
+              (condition-case nil
+                  (emacs-code-navigator--file-symbols file query limit)
+                (error nil)))
+             (symbols
              (condition-case nil
                  (emacs-code-navigator-workspace-symbol file query limit)
                (error nil))))
-        (if symbols
-            (emacs-code-navigator--locate-result 'workspace-symbol symbols)
+        (cond
+         (local-symbols
+          (emacs-code-navigator--locate-result 'imenu local-symbols))
+         (symbols
+          (emacs-code-navigator--locate-result 'workspace-symbol symbols))
+         (t
           (emacs-code-navigator--locate-result
            'text-fallback
            (emacs-code-navigator-search
-            directory query limit glob (not regexp))))))
+            directory query limit glob (not regexp)))))))
      (t
       (emacs-code-navigator--locate-result
        'text
@@ -983,8 +1018,7 @@ data.  In particular, Flymake is never started by the default context query."
   "Execute compact code-navigation REQUEST and return a standard plist.
 
 Use :operation `describe' to request operation schemas only when needed."
-  (unless (listp request)
-    (error "REQUEST must be a plist"))
+  (skill-runtime-validate-request emacs-code-navigator--schemas request)
   (let* ((operation (plist-get request :operation))
          (result
           (pcase operation

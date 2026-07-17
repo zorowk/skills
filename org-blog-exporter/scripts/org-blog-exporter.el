@@ -37,6 +37,8 @@
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-validate-request
+                  "../../common/scripts/skill-runtime" (schemas request))
 
 (defgroup org-blog-exporter nil
   "Export Org notes to a static HTML blog."
@@ -922,8 +924,7 @@ publishing authorization before invoking it."
   "Execute blog REQUEST through one compact public entry point.
 
 Use :operation `describe' to request operation schemas only when needed."
-  (unless (listp request)
-    (error "REQUEST must be a plist"))
+  (skill-runtime-validate-request org-blog-exporter--schemas request)
   (let* ((operation (plist-get request :operation))
          (result
           (pcase operation

@@ -21,6 +21,8 @@
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-validate-request
+                  "../../common/scripts/skill-runtime" (schemas request))
 
 (defgroup emacs-gtd-assistant nil
   "Manage Org GTD tasks through Emacs."
@@ -468,8 +470,7 @@ PLIST may select :context `personal' or `work', or override it with :headline."
   "Execute compact GTD REQUEST through one public entry point.
 
 Use :operation `describe' to request operation schemas only when needed."
-  (unless (listp request)
-    (error "REQUEST must be a plist"))
+  (skill-runtime-validate-request emacs-gtd--schemas request)
   (let ((operation (plist-get request :operation)))
     (pcase operation
       ('preflight

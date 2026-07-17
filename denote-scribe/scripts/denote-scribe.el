@@ -34,6 +34,8 @@
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-validate-request
+                  "../../common/scripts/skill-runtime" (schemas request))
 
 (defgroup denote-scribe nil
   "Create Denote reports from AI conversation summaries."
@@ -667,8 +669,7 @@ plain HyWikiWord without a section suffix."
   "Execute Denote Scribe REQUEST through one compact public entry point.
 
 Use :operation `describe' to request operation schemas only when needed."
-  (unless (listp request)
-    (error "REQUEST must be a plist"))
+  (skill-runtime-validate-request denote-scribe--schemas request)
   (let ((operation (plist-get request :operation)))
     (pcase operation
       ('preflight

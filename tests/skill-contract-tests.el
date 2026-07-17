@@ -8,6 +8,10 @@
 (require 'subr-x)
 
 (defvar emacs-code-navigator-documentation-maximum-characters)
+(defvar emacs-gtd-directory)
+(defvar emacs-gtd-file)
+(defvar org-blog-exporter-setupfile)
+(defvar org-id-locations-file)
 (defvar skill-git--body-label-regexp)
 
 (declare-function skill-runtime-result "../common/scripts/skill-runtime"
@@ -16,6 +20,8 @@
                   (items offset limit total))
 (declare-function skill-runtime-truncate "../common/scripts/skill-runtime"
                   (text maximum label))
+(declare-function skill-runtime-validate-request "../common/scripts/skill-runtime"
+                  (schemas request))
 (declare-function emacs-code-navigator-query
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (request))
@@ -102,6 +108,25 @@
     (should (eq (plist-get bounded :truncated) t))
     (should (= (plist-get bounded :original-length) 6))))
 
+(ert-deftest skill-runtime-validates-required-request-fields ()
+  (let ((schemas
+         '((sample :summary "Validate a sample request."
+                   :required (:name)
+                   :required-one-of (:file :directory)))))
+    (should
+     (equal
+      (skill-runtime-validate-request
+       schemas '(:operation sample :name "item" :file "/tmp/item"))
+      '(:operation sample :name "item" :file "/tmp/item")))
+    (should-error
+     (skill-runtime-validate-request
+      schemas '(:operation sample :file "/tmp/item")))
+    (should-error
+     (skill-runtime-validate-request
+      schemas '(:operation sample :name "item")))
+    (should-error
+     (skill-runtime-validate-request schemas '(:operation unknown)))))
+
 (ert-deftest skill-facades-describe-with-standard-envelope ()
   (dolist (call (list #'emacs-code-navigator-query
                       #'emacs-gtd-execute
@@ -120,10 +145,16 @@
                       #'denote-scribe-run
                       #'org-blog-exporter-run
                       #'ai-git-commit-run))
-    (let ((operations
-           (plist-get
-            (plist-get (funcall call '(:operation describe)) :data)
-            :operations)))
+    (let* ((description
+            (plist-get (funcall call '(:operation describe)) :data))
+           (operations (plist-get description :operations))
+           (catalog (plist-get description :catalog)))
+      (should (equal operations (mapcar (lambda (item)
+                                          (plist-get item :operation))
+                                        catalog)))
+      (should (seq-every-p
+               (lambda (item) (stringp (plist-get item :summary)))
+               catalog))
       (dolist (operation operations)
         (let* ((result
                 (funcall call
@@ -131,6 +162,123 @@
                (schema
                 (plist-get (plist-get result :data) :schema)))
           (should (stringp (plist-get schema :summary))))))))
+
+(ert-deftest navigator-workspace-symbol-stays-in-requested-project ()
+  (let* ((root (make-temp-file "navigator-project-" t))
+         (other-root (make-temp-file "navigator-installed-" t))
+         (source (expand-file-name "sample.el" root))
+         (other (expand-file-name "sample.el" other-root)))
+    (unwind-protect
+        (progn
+          (with-temp-file source (insert "(defun sample-symbol () t)\n"))
+          (with-temp-file other (insert "(defun sample-symbol () nil)\n"))
+          (cl-letf (((symbol-function
+                      'emacs-code-navigator--semantic-xref-backend)
+                     (lambda () 'test-backend))
+                    ((symbol-function 'emacs-code-navigator-project-root)
+                     (lambda (_directory) root))
+                    ((symbol-function 'xref-backend-apropos)
+                     (lambda (_backend _pattern)
+                       (list
+                        (xref-make
+                         "sample-symbol"
+                         (xref-make-file-location other 1 0))
+                        (xref-make
+                         "sample-symbol"
+                         (xref-make-file-location source 1 0))))))
+            (let ((matches
+                   (emacs-code-navigator-workspace-symbol
+                    source "sample-symbol" 10)))
+              (should (= (length matches) 1))
+              (should (equal (caar matches) source)))))
+      (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
+      (delete-directory root t)
+      (delete-directory other-root t))))
+
+(ert-deftest navigator-locate-prefers-the-requested-file-imenu ()
+  (let* ((root (make-temp-file "navigator-imenu-" t))
+         (source (expand-file-name "sample.el" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file source
+            (insert "(defun requested-symbol () t)\n"))
+          (cl-letf (((symbol-function
+                      'emacs-code-navigator-workspace-symbol)
+                     (lambda (&rest _)
+                       '(("/tmp/installed/sample.el" 1 "requested-symbol")))))
+            (let* ((result
+                    (emacs-code-navigator-query
+                     (list :operation 'locate :query "requested-symbol"
+                           :file source :limit 3)))
+                   (data (plist-get result :data)))
+              (should (eq (plist-get data :strategy) 'imenu))
+              (should (equal (caar (plist-get data :matches)) source)))))
+      (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest gtd-facade-mutates-only-the-configured-file ()
+  (let* ((root (make-temp-file "gtd-facade-" t))
+         (file (expand-file-name "gtd.org" root))
+         (emacs-gtd-directory root)
+         (emacs-gtd-file "gtd.org")
+         (org-id-locations-file (expand-file-name "org-id-locations" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "* Personal\n"))
+          (with-temp-file org-id-locations-file (insert "()\n"))
+          (let* ((inhibit-message t)
+                 (message-log-max nil)
+                 (added
+                  (emacs-gtd-execute
+                   '(:operation add :title "Temporary task"
+                     :headline "Personal")))
+                 (id (plist-get (plist-get added :data) :id))
+                 (listed
+                  (emacs-gtd-execute
+                   '(:operation list :query "Temporary task" :limit 5))))
+            (should (stringp id))
+            (should (= (plist-get listed :count) 1))
+            (should
+             (eq (plist-get
+                  (emacs-gtd-execute
+                   (list :operation 'delete :id id
+                         :authorization 'explicit))
+                  :status)
+                 'ok))
+            (should (= (plist-get
+                        (emacs-gtd-execute
+                         '(:operation list :query "Temporary task" :limit 5))
+                        :count)
+                       0))))
+      (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest blog-facade-exports-into-an-isolated-directory ()
+  (let* ((root (make-temp-file "blog-facade-" t))
+         (notes (expand-file-name "notes" root))
+         (output (expand-file-name "output" root))
+         (source (expand-file-name "sample.org" notes))
+         (setupfile (expand-file-name "setupfile.org" notes))
+         (org-blog-exporter-setupfile setupfile))
+    (unwind-protect
+        (progn
+          (make-directory notes)
+          (make-directory output)
+          (with-temp-file setupfile (insert "#+options: toc:nil\n"))
+          (with-temp-file source
+            (insert "#+title: Temporary article\n\n* Body\nTemporary text.\n"))
+          (let ((result
+                 (org-blog-exporter-run
+                  (list :operation 'export :files (list source)
+                        :notes-dir notes :output-dir output
+                        :setupfile setupfile :full t))))
+            (should (eq (plist-get result :status) 'ok))
+            (should (equal (plist-get result :effects)
+                           '(:exported-count 1)))
+            (should (file-exists-p
+                     (car (plist-get (plist-get result :data) :exported))))))
+      (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
+      (delete-directory root t))))
 
 (ert-deftest facade-schemas-expose-migrated-core-operations ()
   (let ((navigator

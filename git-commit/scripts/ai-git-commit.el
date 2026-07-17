@@ -24,6 +24,8 @@
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-truncate "../../common/scripts/skill-runtime"
                   (text maximum label))
+(declare-function skill-runtime-validate-request
+                  "../../common/scripts/skill-runtime" (schemas request))
 
 (declare-function magit-commit-amend "magit-commit" (&optional args))
 (declare-function magit-commit-create "magit-commit" (&optional args))
@@ -229,8 +231,7 @@ return separate staged and unstaged diffs."
 ;;;###autoload
 (defun ai-git-commit-run (request)
   "Execute compact Git commit REQUEST and return a standard envelope."
-  (unless (listp request)
-    (error "REQUEST must be a plist"))
+  (skill-runtime-validate-request ai-git-commit--schemas request)
   (let ((operation (plist-get request :operation)))
     (pcase operation
       ('describe
