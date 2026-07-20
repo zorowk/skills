@@ -64,6 +64,7 @@
     (add :summary "Add one task through Org and return its compact identity."
          :required (:title)
          :optional (:headline :context :scheduled :deadline)
+         :choices ((:context personal work))
          :effects (:mutated))
     (set-state :summary "Resolve an ID or unique query, then update its state."
                :required-one-of (:id :query) :required (:state)
@@ -76,9 +77,11 @@
                   :effects (:mutated))
     (delete :summary "Delete one resolved task after explicit authorization."
             :required-one-of (:id :query) :required (:authorization)
+            :choices ((:authorization explicit))
             :effects (:mutated))
     (archive :summary "Archive one resolved task after explicit authorization."
              :required-one-of (:id :query) :required (:authorization)
+             :choices ((:authorization explicit))
              :effects (:mutated))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))

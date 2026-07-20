@@ -135,7 +135,8 @@
   '((preflight :summary "Validate Denote, HyWiki, and repository configuration."
                :optional (:notes-dir :hywiki-dir :git-dir))
     (template :summary "Return the exact critical-note or HyWiki template."
-              :required (:kind :language))
+              :required (:kind :language)
+              :choices ((:kind critical hywiki) (:language en zh)))
     (create :summary "Create one Denote note from a completed body file."
             :required (:title :body-file)
             :optional (:keywords :notes-dir :signature :date :git-dir)
@@ -150,10 +151,14 @@
     (hywiki :summary "Create a HyWiki page; replacement requires authorization."
             :required (:page-name :body-file)
             :optional (:replace :authorization :hywiki-dir)
+            :choices ((:authorization explicit))
             :effects (:mutated))
     (commit :summary "Commit only supplied run files after explicit authorization."
             :required (:title :paths :authorization)
             :optional (:review-completed :kind :git-dir)
+            :types ((:title non-empty-string)
+                    (:paths non-empty-string-list))
+            :choices ((:authorization explicit) (:kind feat fix))
             :effects (:committed))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))

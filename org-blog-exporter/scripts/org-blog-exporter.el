@@ -136,6 +136,7 @@ instead."
      :required (:authorization)
      :optional (:files :title :notes-dir :repository-dir :setupfile
                        :offset :limit :full)
+     :choices ((:authorization explicit))
      :effects (:exported-count :changed :commit :push))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))

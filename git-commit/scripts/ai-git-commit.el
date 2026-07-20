@@ -78,23 +78,46 @@
 
 (defconst ai-git-commit--schemas
   '((context :summary "Collect bounded staged and unstaged evidence; compact by default."
-             :optional (:directory :full :paths) :effects nil)
+             :optional (:directory :full :paths)
+             :types ((:directory non-empty-string)
+                     (:paths non-empty-string-list))
+             :effects nil)
     (format :summary "Generate and validate one evidence-backed message."
             :required (:type :summary :context :changes :reason :validation
                             :boundary)
             :optional (:scope :risk :detail :log :pms :influence)
+            :types ((:type non-empty-string) (:summary non-empty-string)
+                    (:context non-empty-string)
+                    (:changes non-empty-string-list)
+                    (:reason non-empty-string) (:validation non-empty-string)
+                    (:boundary non-empty-string) (:scope non-empty-string))
+            :choices ((:risk low medium high) (:detail auto compact full))
             :effects nil)
     (commit
      :summary "Commit through headless Magit, then verify the complete HEAD message."
      :required (:type :summary :context :changes :reason :validation
                 :boundary :authorization)
      :optional (:scope :risk :detail :log :pms :influence :directory :paths)
+     :types ((:type non-empty-string) (:summary non-empty-string)
+             (:context non-empty-string) (:changes non-empty-string-list)
+             (:reason non-empty-string) (:validation non-empty-string)
+             (:boundary non-empty-string) (:scope non-empty-string)
+             (:directory non-empty-string) (:paths non-empty-string-list))
+     :choices ((:risk low medium high) (:detail auto compact full)
+               (:authorization explicit))
      :effects (:committed))
     (amend
      :summary "Amend through headless Magit, then verify the complete HEAD message."
      :required (:type :summary :context :changes :reason :validation
                 :boundary :authorization)
      :optional (:scope :risk :detail :log :pms :influence :directory :paths)
+     :types ((:type non-empty-string) (:summary non-empty-string)
+             (:context non-empty-string) (:changes non-empty-string-list)
+             (:reason non-empty-string) (:validation non-empty-string)
+             (:boundary non-empty-string) (:scope non-empty-string)
+             (:directory non-empty-string) (:paths non-empty-string-list))
+     :choices ((:risk low medium high) (:detail auto compact full)
+               (:authorization explicit))
      :effects (:committed :amended))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target) :effects nil))

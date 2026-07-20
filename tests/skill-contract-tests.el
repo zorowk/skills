@@ -172,6 +172,56 @@
     (should-error
      (skill-runtime-validate-request schemas '(:operation unknown)))))
 
+(ert-deftest skill-runtime-validates-declared-types-and-choices ()
+  (let ((schemas
+         '((sample :summary "Validate compact constraints."
+                   :required (:name :items)
+                   :optional (:mode)
+                   :types ((:name non-empty-string)
+                           (:items non-empty-string-list))
+                   :choices ((:mode compact full))))))
+    (should
+     (equal
+      (skill-runtime-validate-request
+       schemas '(:operation sample :name "item" :items ("one")
+                           :mode compact))
+      '(:operation sample :name "item" :items ("one") :mode compact)))
+    (should-error
+     (skill-runtime-validate-request
+      schemas '(:operation sample :name symbol :items ("one"))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas '(:operation sample :name "item" :items (""))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas '(:operation sample :name "item" :items ("one")
+                          :mode verbose)))))
+
+(ert-deftest facade-schemas-expose-high-value-value-constraints ()
+  (let* ((navigator
+          (plist-get
+           (plist-get
+            (emacs-code-navigator-query
+             '(:operation describe :target locate))
+            :data)
+           :schema))
+         (commit
+          (plist-get
+           (plist-get
+            (ai-git-commit-run '(:operation describe :target commit))
+            :data)
+           :schema))
+         (template
+          (plist-get
+           (plist-get
+            (denote-scribe-run '(:operation describe :target template))
+            :data)
+           :schema)))
+    (should (assq :kind (plist-get navigator :choices)))
+    (should (assq :risk (plist-get commit :choices)))
+    (should (assq :validation (plist-get commit :types)))
+    (should (assq :language (plist-get template :choices)))))
+
 (ert-deftest skill-facades-describe-with-standard-envelope ()
   (dolist (call (list #'emacs-code-navigator-query
                       #'emacs-gtd-execute

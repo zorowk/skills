@@ -111,12 +111,43 @@ STATUS defaults to `ok'.  Include PAGE and EFFECTS only when non-nil."
     (error "%s requires :authorization `explicit'" action))
   t)
 
+(defun skill-runtime--validate-field-types (operation schema request)
+  "Validate present REQUEST fields declared by SCHEMA for OPERATION."
+  (dolist (spec (plist-get schema :types))
+    (let ((field (car spec))
+          (type (cadr spec)))
+      (when (and (plist-member request field) (plist-get request field))
+        (unless
+            (pcase type
+              ('non-empty-string
+               (and (stringp (plist-get request field))
+                    (not (string-empty-p (plist-get request field)))))
+              ('non-empty-string-list
+               (and (listp (plist-get request field))
+                    (plist-get request field)
+                    (seq-every-p
+                     (lambda (value)
+                       (and (stringp value) (not (string-empty-p value))))
+                     (plist-get request field))))
+              (_ (error "Unknown schema field type: %S" type)))
+          (error "%S %S must be %S" operation field type))))))
+
+(defun skill-runtime--validate-field-choices (operation schema request)
+  "Validate present REQUEST fields with enumerated SCHEMA choices."
+  (dolist (spec (plist-get schema :choices))
+    (let ((field (car spec))
+          (choices (cdr spec)))
+      (when (and (plist-member request field) (plist-get request field)
+                 (not (memq (plist-get request field) choices)))
+        (error "%S %S must be one of %S: %S"
+               operation field choices (plist-get request field))))))
+
 (defun skill-runtime-validate-request (schemas request)
   "Validate REQUEST against operation SCHEMAS and return REQUEST.
 
 Require a known :operation, every field named by :required, and at least one
-non-nil field named by :required-one-of.  Optional and operation-specific value
-validation remains the facade's responsibility."
+non-nil field named by :required-one-of.  Validate declared :types and :choices;
+other operation-specific validation remains the facade's responsibility."
   (unless (and (listp request)
                (condition-case nil
                    (zerop (% (length request) 2))
@@ -136,6 +167,8 @@ validation remains the facade's responsibility."
                                (plist-get request field)))
                         fields)
         (error "%S requires one of %S" operation fields)))
+    (skill-runtime--validate-field-types operation schema request)
+    (skill-runtime--validate-field-choices operation schema request)
     request))
 
 (defun skill-runtime--catalog-entry (entry)

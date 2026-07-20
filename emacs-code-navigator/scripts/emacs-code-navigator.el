@@ -55,8 +55,9 @@
 
 (defconst emacs-code-navigator--schemas
   '((capability :summary "Discover Emacs APIs with bounded Help by default."
-               :required (:pattern)
-               :optional (:kind :limit :documentation :full))
+                :required (:pattern)
+                :optional (:kind :limit :documentation :full)
+                :choices ((:kind function command macro variable user-option)))
     (symbol :summary "Inspect one known Emacs symbol; compact by default."
             :required (:name) :optional (:full))
     (symbols :summary "Inspect several known Emacs symbols in one compact response."
@@ -69,30 +70,38 @@
     (files :summary "List bounded project files."
            :required (:directory) :optional (:limit))
     (region :summary "Read an exact region from a live or visited file buffer."
-            :required (:file :start-line) :optional (:end-line :source))
+            :required (:file :start-line) :optional (:end-line :source)
+            :choices ((:source auto live disk)))
     (imenu :summary "Return the structural index for a file."
-           :required (:file) :optional (:source))
+           :required (:file) :optional (:source)
+           :choices ((:source auto live disk)))
     (file-state
      :summary "Compare a live file buffer with its saved disk contents."
      :required (:file))
     (workspace-symbol
      :summary "Query the active Eglot/LSP workspace symbol provider."
-     :required (:file :pattern) :optional (:limit :source))
+     :required (:file :pattern) :optional (:limit :source)
+     :choices ((:source auto live disk)))
     (xref :summary "Resolve exact definitions or references through xref."
           :required (:file) :required-one-of (:identifier :line)
-          :optional (:kind :identifier :line :source))
+          :optional (:kind :identifier :line :source)
+          :choices ((:kind definitions references) (:source auto live disk)))
     (locate
      :summary "Prefer file Imenu, then project symbols, then bounded text search."
      :required (:query) :required-one-of (:file :directory)
-     :optional (:line :kind :limit :glob :regexp :source))
+     :optional (:line :kind :limit :glob :regexp :source)
+     :choices ((:kind auto text symbol definitions references)
+               (:source auto live disk)))
     (diagnostics
      :summary "Read Flymake/Eglot diagnostics only when explicitly requested."
      :required-one-of (:file :directory)
-     :optional (:line :radius :limit :file-limit :source))
+     :optional (:line :radius :limit :file-limit :source)
+     :choices ((:source auto live disk)))
     (context
      :summary "Return cheap bounded live context; semantic facets are opt-in."
      :required (:file :line)
-     :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius :source))
+     :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius :source)
+     :choices ((:source auto live disk)))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `emacs-code-navigator-query'.")
