@@ -7,8 +7,9 @@ description: >-
 
 # Git Commit
 
-Load `scripts/ai-git-commit.el` and call `ai-git-commit-run`. Collect `context`
-before deriving the structured evidence used by `format`, `commit`, or `amend`.
+Resolve `scripts/ai-git-commit.el` from this skill directory, not the working
+directory; load it and call `ai-git-commit-run`. Collect `context` before deriving
+the structured evidence used by `format`, `commit`, or `amend`.
 Context includes bounded diffs for untracked files, with truncation metadata;
 do not infer their contents from `git status` alone.
 When the intended file set is known, pass the same exact `:paths` to `context`.

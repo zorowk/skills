@@ -7,8 +7,9 @@ description: >-
 
 # Org Blog Exporter
 
-Load `scripts/org-blog-exporter.el` and call `org-blog-exporter-run` through the
-running Emacs server.
+Resolve `scripts/org-blog-exporter.el` from this skill directory, not the working
+directory; load it and call `org-blog-exporter-run` through the running Emacs
+server.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",

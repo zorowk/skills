@@ -7,8 +7,9 @@ description: >-
 
 # Emacs GTD Assistant
 
-Load `scripts/emacs-gtd-assistant.el` and call `emacs-gtd-execute` through the
-running Emacs server.
+Resolve `scripts/emacs-gtd-assistant.el` from this skill directory, not the working
+directory; load it and call `emacs-gtd-execute` through the running Emacs
+server.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",

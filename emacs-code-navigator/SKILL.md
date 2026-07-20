@@ -7,8 +7,9 @@ description: >-
 
 # Emacs Code Navigator
 
-Load `scripts/emacs-code-navigator.el` and call
-`emacs-code-navigator-query` through the running Emacs session.
+Resolve `scripts/emacs-code-navigator.el` from this skill directory, not the working
+directory; load it and call `emacs-code-navigator-query` through the
+running Emacs session.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",

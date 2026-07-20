@@ -9,7 +9,8 @@ description: >-
 
 Treat Denote as reasoning history and HyWiki as stable knowledge.
 
-Load `scripts/denote-scribe.el` and call `denote-scribe-run`. Read
+Resolve bundled paths from this skill directory, not the working directory. Load
+`scripts/denote-scribe.el` and call `denote-scribe-run`. Read
 `references/hywiki-denote-interface.md` only when integration details are needed.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
