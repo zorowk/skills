@@ -22,6 +22,8 @@
 
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))
+(declare-function skill-runtime-measure "../../common/scripts/skill-runtime"
+                  (request function))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
 (declare-function skill-runtime-truncate "../../common/scripts/skill-runtime"
@@ -1218,7 +1220,7 @@ data.  In particular, Flymake is never started by the default context query."
      (t (error "Diagnostics requires :file or :directory")))))
 
 ;;;###autoload
-(defun emacs-code-navigator-query (request)
+(defun emacs-code-navigator--query (request)
   "Execute compact code-navigation REQUEST and return a standard plist.
 
 Use :operation `describe' to request operation schemas only when needed."
@@ -1320,6 +1322,12 @@ Use :operation `describe' to request operation schemas only when needed."
       (dolist (buffer emacs-code-navigator--temporary-buffers)
         (when (buffer-live-p buffer)
           (kill-buffer buffer))))))
+
+;;;###autoload
+(defun emacs-code-navigator-query (request)
+  "Execute measured code-navigation REQUEST."
+  (skill-runtime-measure
+   request (lambda () (emacs-code-navigator--query request))))
 
 (provide 'emacs-code-navigator)
 

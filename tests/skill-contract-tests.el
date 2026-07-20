@@ -6,6 +6,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'xref)
 
 (defvar emacs-code-navigator-documentation-maximum-characters)
 (defvar emacs-code-navigator-symbol-batch-limit)
@@ -21,6 +22,8 @@
 
 (declare-function skill-runtime-result "../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-measure "../common/scripts/skill-runtime"
+                  (request function))
 (declare-function skill-runtime-page "../common/scripts/skill-runtime"
                   (items offset limit total))
 (declare-function skill-runtime-truncate "../common/scripts/skill-runtime"
@@ -39,6 +42,11 @@
 (declare-function emacs-code-navigator-search
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (directory regexp &optional limit glob literal))
+(declare-function emacs-code-navigator-workspace-symbol
+                  "../emacs-code-navigator/scripts/emacs-code-navigator"
+                  (file pattern &optional limit))
+(declare-function emacs-code-navigator--semantic-xref-backend
+                  "../emacs-code-navigator/scripts/emacs-code-navigator" ())
 (declare-function emacs-code-navigator-context-at-line
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (file line &optional radius include-defun include-eldoc
@@ -108,6 +116,28 @@
           '(:status ok :operation list :count 2 :data (a b)
                     :page (:truncated nil)))))
 
+(ert-deftest skill-runtime-measures-calls-without-retaining-content ()
+  (let ((times '(10.0 10.042)))
+    (cl-letf (((symbol-function 'float-time)
+               (lambda (&optional _) (pop times))))
+      (let* ((request '(:operation sample :name "private request"))
+             (result
+              (skill-runtime-measure
+               request
+               (lambda ()
+                 (skill-runtime-result 'sample '(:value "private result") 1))))
+             (metrics (plist-get result :metrics)))
+        (should (= (plist-get metrics :elapsed-ms) 42))
+        (should (= (plist-get metrics :request-characters)
+                   (length (prin1-to-string request))))
+        (should (= (plist-get metrics :payload-characters)
+                   (length (prin1-to-string '(:value "private result")))))
+        (should (= (plist-get metrics :result-count) 1))
+        (should-not (plist-get metrics :truncated))
+        (should-not (string-match-p
+                     "private"
+                     (prin1-to-string metrics)))))))
+
 (ert-deftest skill-runtime-pagination-exposes-next-offset ()
   (let ((page (skill-runtime-page '(a b c d) 1 2 4)))
     (should (equal (plist-get page :items) '(b c)))
@@ -149,6 +179,9 @@
       (should (eq (plist-get result :status) 'ok))
       (should (eq (plist-get result :operation) 'describe))
       (should (plist-member result :data))
+      (should (plist-member result :metrics))
+      (should (natnump
+               (plist-get (plist-get result :metrics) :elapsed-ms)))
       (should (plist-get (plist-get result :data) :operations)))))
 
 (ert-deftest facade-operation-schemas-carry-elisp-owned-guidance ()

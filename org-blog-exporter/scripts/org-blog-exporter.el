@@ -28,6 +28,8 @@
 
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))
+(declare-function skill-runtime-measure "../../common/scripts/skill-runtime"
+                  (request function))
 (declare-function skill-runtime-page "../../common/scripts/skill-runtime"
                   (items offset limit total))
 (declare-function skill-runtime-page-metadata
@@ -920,7 +922,7 @@ publishing authorization before invoking it."
            :push (plist-get result :push)))))
 
 ;;;###autoload
-(defun org-blog-exporter-run (request)
+(defun org-blog-exporter--run (request)
   "Execute blog REQUEST through one compact public entry point.
 
 Use :operation `describe' to request operation schemas only when needed."
@@ -964,13 +966,18 @@ Use :operation `describe' to request operation schemas only when needed."
        nil
        (org-blog-exporter--effects operation result)))
      ((eq operation 'preflight)
-      (skill-runtime-result
+     (skill-runtime-result
        operation result 1
        (if (plist-get result :errors) 'blocked 'ok)))
      (t
       (org-blog-exporter--compact-result
        operation result (plist-get request :offset)
        (plist-get request :limit))))))
+
+;;;###autoload
+(defun org-blog-exporter-run (request)
+  "Execute measured blog REQUEST."
+  (skill-runtime-measure request (lambda () (org-blog-exporter--run request))))
 
 (provide 'org-blog-exporter)
 

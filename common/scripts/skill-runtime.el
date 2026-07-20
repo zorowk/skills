@@ -5,6 +5,47 @@
 (require 'seq)
 (require 'subr-x)
 
+(defun skill-runtime--printed-length (value)
+  "Return the deterministic printed character length of VALUE."
+  (let ((print-circle t)
+        (print-length nil)
+        (print-level nil))
+    (length (prin1-to-string value))))
+
+(defun skill-runtime--plist-value (value key)
+  "Return KEY from plist VALUE, or nil when VALUE is not a plist."
+  (and (listp value) (keywordp (car value)) (plist-get value key)))
+
+(defun skill-runtime-measure (request function)
+  "Call FUNCTION and append privacy-safe call metrics for REQUEST.
+
+Measure serialized character counts rather than claiming exact model-token
+usage.  Preserve existing errors and avoid retaining request or result content."
+  (let ((started (float-time)))
+    (let* ((result (funcall function))
+           (elapsed-ms (max 0 (round (* 1000 (- (float-time) started)))))
+           (data (plist-get result :data))
+           (page (plist-get result :page))
+           (provenance (plist-get result :provenance))
+           (metrics
+            (list :elapsed-ms elapsed-ms
+                  :request-characters (skill-runtime--printed-length request)
+                  :payload-characters (skill-runtime--printed-length data)
+                  :base-response-characters
+                  (skill-runtime--printed-length result)
+                  :result-count (or (plist-get result :count) 0)
+                  :truncated
+                  (and (or (skill-runtime--plist-value page :truncated)
+                           (skill-runtime--plist-value data :truncated))
+                       t)
+                  :degraded
+                  (and (or (skill-runtime--plist-value result :degraded)
+                           (skill-runtime--plist-value provenance :degraded))
+                       t)
+                  :resolved-source
+                  (skill-runtime--plist-value provenance :resolved-source))))
+      (append result (list :metrics metrics)))))
+
 (defun skill-runtime-result (operation data &optional count status page effects)
   "Return a compact standard envelope for OPERATION and DATA.
 

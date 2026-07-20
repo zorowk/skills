@@ -20,6 +20,8 @@
                   (spec))
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))
+(declare-function skill-runtime-measure "../../common/scripts/skill-runtime"
+                  (request function))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
 (declare-function skill-runtime-require-authorization
@@ -368,7 +370,7 @@ Permit regular files, symlinks, and tracked paths deleted from the worktree."
                   :amended (and amend t))))))))
 
 ;;;###autoload
-(defun ai-git-commit-run (request)
+(defun ai-git-commit--run (request)
   "Execute compact Git commit REQUEST and return a standard envelope."
   (skill-runtime-validate-request ai-git-commit--schemas request)
   (let ((operation (plist-get request :operation)))
@@ -394,6 +396,11 @@ Permit regular files, symlinks, and tracked paths deleted from the worktree."
           (list :committed t :amended amend))))
       (_ (error "Unknown Git commit operation %S; expected %S"
                 operation (mapcar #'car ai-git-commit--schemas))))))
+
+;;;###autoload
+(defun ai-git-commit-run (request)
+  "Execute measured Git commit REQUEST."
+  (skill-runtime-measure request (lambda () (ai-git-commit--run request))))
 
 (provide 'ai-git-commit)
 

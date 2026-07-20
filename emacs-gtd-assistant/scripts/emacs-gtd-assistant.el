@@ -15,6 +15,8 @@
 
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))
+(declare-function skill-runtime-measure "../../common/scripts/skill-runtime"
+                  (request function))
 (declare-function skill-runtime-page "../../common/scripts/skill-runtime"
                   (items offset limit total))
 (declare-function skill-runtime-require-authorization
@@ -466,7 +468,7 @@ PLIST may select :context `personal' or `work', or override it with :headline."
           (emacs-gtd--compact-resolution resolution)))))
 
 ;;;###autoload
-(defun emacs-gtd-execute (request)
+(defun emacs-gtd--execute (request)
   "Execute compact GTD REQUEST through one public entry point.
 
 Use :operation `describe' to request operation schemas only when needed."
@@ -521,6 +523,11 @@ Use :operation `describe' to request operation schemas only when needed."
               1 nil nil (list :mutated t))))))
       (_ (error "Unknown GTD operation %S; expected %S"
                 operation (mapcar #'car emacs-gtd--schemas))))))
+
+;;;###autoload
+(defun emacs-gtd-execute (request)
+  "Execute measured GTD REQUEST."
+  (skill-runtime-measure request (lambda () (emacs-gtd--execute request))))
 
 (provide 'emacs-gtd-assistant)
 

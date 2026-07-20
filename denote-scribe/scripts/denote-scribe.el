@@ -28,6 +28,8 @@
 
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))
+(declare-function skill-runtime-measure "../../common/scripts/skill-runtime"
+                  (request function))
 (declare-function skill-runtime-page "../../common/scripts/skill-runtime"
                   (items offset limit total))
 (declare-function skill-runtime-require-authorization
@@ -665,7 +667,7 @@ plain HyWikiWord without a section suffix."
             :status (if existing-nonempty 'replaced 'created)))))
 
 ;;;###autoload
-(defun denote-scribe-run (request)
+(defun denote-scribe--run (request)
   "Execute Denote Scribe REQUEST through one compact public entry point.
 
 Use :operation `describe' to request operation schemas only when needed."
@@ -765,6 +767,11 @@ Use :operation `describe' to request operation schemas only when needed."
         1 nil nil (list :committed t)))
       (_ (error "Unknown Denote Scribe operation %S; expected %S"
                 operation (mapcar #'car denote-scribe--schemas))))))
+
+;;;###autoload
+(defun denote-scribe-run (request)
+  "Execute measured Denote Scribe REQUEST."
+  (skill-runtime-measure request (lambda () (denote-scribe--run request))))
 
 (provide 'denote-scribe)
 
