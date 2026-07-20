@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Usage Review"
+  short_description: "Review skill call efficiency from current evidence"
+  default_prompt: "Use $skill-usage-review to evaluate the skills used in this conversation."
