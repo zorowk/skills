@@ -57,6 +57,9 @@
                   (request))
 (declare-function denote-scribe-run
                   "../denote-scribe/scripts/denote-scribe" (request))
+(declare-function denote-scribe-create
+                  "../denote-scribe/scripts/denote-scribe"
+                  (title body-file &optional keywords notes-dir signature date))
 (declare-function denote-scribe-git-commit
                   "../denote-scribe/scripts/denote-scribe"
                   (title paths review-completed &optional kind git-dir))
@@ -377,6 +380,108 @@
             (should (file-exists-p
                      (car (plist-get (plist-get result :data) :exported))))))
       (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest denote-create-writes-only-to-the-selected-notes-directory ()
+  (let* ((root (make-temp-file "denote-create-" t))
+         (notes (expand-file-name "notes" root))
+         (sentinel (expand-file-name "outside.txt" root))
+         (body (expand-file-name
+                "denote-scribe/assets/critical-note-template.org"
+                skill-contract-tests-root))
+         (created (expand-file-name "20260720T120000--test-note.org" notes))
+         (original-require (symbol-function 'require)))
+    (unwind-protect
+        (progn
+          (make-directory notes)
+          (with-temp-file sentinel (insert "unchanged"))
+          (cl-letf (((symbol-function 'require)
+                     (lambda (feature &optional filename noerror)
+                       (if (eq feature 'denote)
+                           t
+                         (funcall original-require feature filename noerror))))
+                    ((symbol-function 'denote)
+                     (lambda (_title _keywords _file-type directory &rest _)
+                       (should
+                        (equal (file-name-as-directory
+                                (file-truename directory))
+                               (file-name-as-directory
+                                (file-truename notes))))
+                       (with-temp-file created (insert "#+title: Test note\n"))
+                       created)))
+            (should
+             (equal
+              (denote-scribe-create "Test note" body nil notes)
+              created)))
+          (should (file-in-directory-p (file-truename created)
+                                       (file-truename notes)))
+          (should (string-match-p
+                   "\\* Question"
+                   (with-temp-buffer
+                     (insert-file-contents created)
+                     (buffer-string))))
+          (should
+           (equal
+            (with-temp-buffer
+              (insert-file-contents sentinel)
+              (buffer-string))
+            "unchanged")))
+      (when-let* ((buffer (get-file-buffer created))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest denote-hywiki-create-and-replace-stay-in-the-selected-directory ()
+  (let* ((root (make-temp-file "denote-hywiki-" t))
+         (hywiki (expand-file-name "hywiki" root))
+         (sentinel (expand-file-name "outside.txt" root))
+         (page (expand-file-name "TestConcept.org" hywiki))
+         (body (expand-file-name
+                "denote-scribe/assets/hywiki-concept-template.org"
+                skill-contract-tests-root))
+         (original-require (symbol-function 'require)))
+    (unwind-protect
+        (progn
+          (make-directory hywiki)
+          (with-temp-file sentinel (insert "unchanged"))
+          (cl-letf (((symbol-function 'require)
+                     (lambda (feature &optional filename noerror)
+                       (if (eq feature 'hywiki)
+                           t
+                         (funcall original-require feature filename noerror))))
+                    ((symbol-function 'hywiki-word-is-p)
+                     (lambda (name) (string= name "TestConcept")))
+                    ((symbol-function 'hywiki-get-existing-page-file)
+                     (lambda (_name) (and (file-exists-p page) page)))
+                    ((symbol-function 'hywiki-add-page)
+                     (lambda (_name &optional _force)
+                       (unless (file-exists-p page)
+                         (with-temp-file page))
+                       (cons 'page page))))
+            (let ((created
+                   (denote-scribe-run
+                    (list :operation 'hywiki :page-name "TestConcept"
+                          :body-file body :hywiki-dir hywiki))))
+              (should (eq (plist-get (plist-get created :data) :status)
+                          'created)))
+            (should-error
+             (denote-scribe-run
+              (list :operation 'hywiki :page-name "TestConcept"
+                    :body-file body :hywiki-dir hywiki :replace t)))
+            (let ((replaced
+                   (denote-scribe-run
+                    (list :operation 'hywiki :page-name "TestConcept"
+                          :body-file body :hywiki-dir hywiki :replace t
+                          :authorization 'explicit))))
+              (should (eq (plist-get (plist-get replaced :data) :status)
+                          'replaced))))
+          (should (file-in-directory-p (file-truename page)
+                                       (file-truename hywiki)))
+          (should
+           (equal
+            (with-temp-buffer
+              (insert-file-contents sentinel)
+              (buffer-string))
+            "unchanged")))
+      (when-let* ((buffer (get-file-buffer page))) (kill-buffer buffer))
       (delete-directory root t))))
 
 (ert-deftest facade-schemas-expose-migrated-core-operations ()
