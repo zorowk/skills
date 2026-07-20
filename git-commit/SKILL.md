@@ -1,8 +1,8 @@
 ---
 name: git-commit
 description: >-
-  Generate evidence-backed Git messages for any write, commit, revision, or amend request; collect
-  actual changes, adapt detail to risk, and preserve natural 100-column output for AI and humans.
+  Generate evidence-backed Git commit messages and perform explicitly requested commit or amend
+  operations; collect actual changes, adapt detail to risk, and preserve natural 100-column output.
 ---
 
 # Git Commit
