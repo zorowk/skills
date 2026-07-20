@@ -8,6 +8,7 @@
 (require 'subr-x)
 
 (defvar emacs-code-navigator-documentation-maximum-characters)
+(defvar emacs-code-navigator-symbol-batch-limit)
 (defvar emacs-gtd-directory)
 (defvar emacs-gtd-file)
 (defvar ai-git-commit-untracked-file-maximum-characters)
@@ -32,6 +33,9 @@
 (declare-function emacs-code-navigator--compact-facet
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (info))
+(declare-function emacs-code-navigator-symbols
+                  "../emacs-code-navigator/scripts/emacs-code-navigator"
+                  (names &optional full))
 (declare-function emacs-code-navigator-search
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (directory regexp &optional limit glob literal))
@@ -308,7 +312,8 @@
           (plist-get (ai-git-commit-run '(:operation describe)) :data)
           :operations)))
     (dolist (operation
-             '(region imenu file-state workspace-symbol xref locate diagnostics))
+             '(symbols region imenu file-state workspace-symbol xref locate
+                       diagnostics))
       (should (memq operation navigator)))
     (should (memq 'preflight denote))
     (should (memq 'preflight gtd))
@@ -469,6 +474,29 @@
     (should (equal (plist-get facet :documentation) "abc"))
     (should (eq (plist-get facet :documentation-truncated) t))
     (should (= (plist-get facet :documentation-original-length) 6))))
+
+(ert-deftest navigator-batches-known-and-missing-symbols-in-order ()
+  (let* ((missing "emacs-code-navigator-test-missing-symbol")
+         (noninteractive nil)
+         (result
+          (emacs-code-navigator-query
+           (list :operation 'symbols :names (list 'car missing 'user-init-file))))
+         (data (plist-get result :data))
+         (provenance (plist-get result :provenance)))
+    (should (= (plist-get result :count) 3))
+    (should (equal (mapcar (lambda (item) (plist-get item :symbol)) data)
+                   (list "car" missing "user-init-file")))
+    (should (eq (plist-get (nth 0 data) :found) t))
+    (should-not (plist-get (nth 1 data) :found))
+    (should (stringp (plist-get (nth 1 data) :error)))
+    (should (eq (plist-get (nth 2 data) :found) t))
+    (should (eq (plist-get provenance :session) 'live))
+    (should (eq (plist-get provenance :resolved-source) 'session))))
+
+(ert-deftest navigator-batch-symbol-limit-is-enforced ()
+  (let ((emacs-code-navigator-symbol-batch-limit 2))
+    (should-error
+     (emacs-code-navigator-symbols '(car cdr cons)))))
 
 (ert-deftest git-message-auto-compacts-low-risk-work ()
   (let ((message (ai-git-commit-format skill-contract-tests-message-spec)))

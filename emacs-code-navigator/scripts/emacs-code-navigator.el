@@ -38,6 +38,11 @@
   :type 'positive-integer
   :group 'emacs-code-navigator)
 
+(defcustom emacs-code-navigator-symbol-batch-limit 50
+  "Maximum number of symbols accepted by one batch query."
+  :type 'positive-integer
+  :group 'emacs-code-navigator)
+
 (defconst emacs-code-navigator-ignored-directories
   '(".git" "node_modules" "target" "build" "dist" ".cache" ".venv" "vendor" "__pycache__")
   "Directory names skipped by fallback recursive file discovery.")
@@ -52,6 +57,8 @@
                :optional (:kind :limit :documentation :full))
     (symbol :summary "Inspect one known Emacs symbol; compact by default."
             :required (:name) :optional (:full))
+    (symbols :summary "Inspect several known Emacs symbols in one compact response."
+             :required (:names) :optional (:full))
     (library :summary "Locate and describe one Emacs library."
              :required (:name))
     (search :summary "Run bounded project text or literal search."
@@ -210,7 +217,7 @@
      (sources (nreverse sources))
      ((memq operation '(search files)) 'disk)
      ((eq operation 'file-state) '(live disk))
-     ((memq operation '(capability symbol library describe)) 'session)
+     ((memq operation '(capability symbol symbols library describe)) 'session)
      (t emacs-code-navigator--requested-source))))
 
 (defun emacs-code-navigator--provenance (request operation)
@@ -380,6 +387,56 @@ large, or sensitive runtime state."
           (emacs-code-navigator--compact-facet (plist-get info :function))
           :variable
           (emacs-code-navigator--compact-facet (plist-get info :variable)))))
+
+(defun emacs-code-navigator--symbol-row (name)
+  "Return a compact, flat summary for known symbol NAME."
+  (let* ((symbol (emacs-code-navigator--symbol name))
+         (functionp (fboundp symbol))
+         (variablep (boundp symbol)))
+    (unless (or functionp variablep)
+      (error "Emacs symbol has no function or variable definition: %S" symbol))
+    (let ((source (emacs-code-navigator--source-location
+                   symbol (if functionp 'function 'variable))))
+      (append
+       (list :symbol (symbol-name symbol)
+             :found t
+             :kinds (emacs-code-navigator--symbol-kinds symbol)
+             :summary (emacs-code-navigator--documentation-summary symbol))
+       (and functionp
+            (list :arguments (help-function-arglist symbol t)
+                  :interactive (and (commandp symbol) t)))
+       (list :source-file (plist-get source :file)
+             :source-line (plist-get source :line)
+             :library (plist-get source :library))))))
+
+(defun emacs-code-navigator-symbols (names &optional full)
+  "Inspect NAMES in order, returning one result for each entry.
+
+When FULL is non-nil, return complete Help facets.  Unknown names and symbols
+without function or variable definitions are reported per item instead of
+aborting the batch."
+  (unless (and (listp names) names
+               (seq-every-p
+                (lambda (name)
+                  (or (symbolp name)
+                      (and (stringp name) (not (string-empty-p name)))))
+                names))
+    (error "NAMES must be a non-empty list of symbols or non-empty strings"))
+  (when (> (length names) emacs-code-navigator-symbol-batch-limit)
+    (error "NAMES exceeds the batch limit of %d"
+           emacs-code-navigator-symbol-batch-limit))
+  (mapcar
+   (lambda (name)
+     (condition-case error-data
+         (if full
+             (append (list :found t)
+                     (emacs-code-navigator-symbol-info name))
+           (emacs-code-navigator--symbol-row name))
+       (error
+        (list :symbol (if (symbolp name) (symbol-name name) name)
+              :found nil
+              :error (error-message-string error-data)))))
+   names))
 
 (defun emacs-code-navigator-apropos (pattern &optional kind limit documentation)
   "Discover Emacs capabilities matching PATTERN.
@@ -1190,6 +1247,12 @@ Use :operation `describe' to request operation schemas only when needed."
                                 #'emacs-code-navigator-symbol-info
                               #'emacs-code-navigator-symbol-summary)
                             (plist-get request :name)))
+                  ('symbols
+                   (emacs-code-navigator--require-live-semantic
+                    "Emacs batch symbol inspection")
+                   (emacs-code-navigator-symbols
+                    (plist-get request :names)
+                    (plist-get request :full)))
                   ('library
                    (emacs-code-navigator--require-live-semantic
                     "Emacs library inspection")
@@ -1246,7 +1309,8 @@ Use :operation `describe' to request operation schemas only when needed."
                   ((and (listp result) (plist-member result :matches))
                    (length (plist-get result :matches)))
                   ((memq operation
-                         '(search files imenu workspace-symbol xref diagnostics))
+                         '(symbols search files imenu workspace-symbol xref
+                                   diagnostics))
                    (length result))
                   (t 1)))))
           (append envelope

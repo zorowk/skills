@@ -22,6 +22,11 @@ matter. Let `auto` retain the live-session default. Read each result's
 `:provenance` before combining it with filesystem or batch evidence, and call
 `file-state` when the live buffer may differ from disk.
 
+Use `symbol` for one exact name and `symbols` for several exact names in one
+request. The batch operation preserves input order and reports unknown names as
+`:found nil`; pass `:full t` only when complete Help facets are needed. Use
+`capability` instead when the name is uncertain or pattern discovery is needed.
+
 Do not run this facade in batch Emacs as a substitute for the user's session.
 When the server is unavailable, use direct filesystem reads for `search`,
 `files`, and saved `region` work. Report live Help, xref, workspace symbols,
