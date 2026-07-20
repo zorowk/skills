@@ -5,6 +5,9 @@
 (require 'seq)
 (require 'subr-x)
 
+(defconst skill-runtime-metrics-version 1
+  "Schema version for metrics returned by `skill-runtime-measure'.")
+
 (defun skill-runtime--printed-length (value)
   "Return the deterministic printed character length of VALUE."
   (let ((print-circle t)
@@ -28,8 +31,10 @@ usage.  Preserve existing errors and avoid retaining request or result content."
            (page (plist-get result :page))
            (provenance (plist-get result :provenance))
            (metrics
-            (list :elapsed-ms elapsed-ms
+            (list :metrics-version skill-runtime-metrics-version
+                  :elapsed-ms elapsed-ms
                   :request-characters (skill-runtime--printed-length request)
+                  :request-field-count (/ (length request) 2)
                   :payload-characters (skill-runtime--printed-length data)
                   :base-response-characters
                   (skill-runtime--printed-length result)

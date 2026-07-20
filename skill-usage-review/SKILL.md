@@ -18,12 +18,16 @@ tool history even though failed facades may not return metrics.
 
 Aggregate these measured fields when available:
 
-- `:request-characters`, `:payload-characters`, and `:base-response-characters`
+- `:metrics-version`, `:request-characters`, and `:request-field-count`
+- `:payload-characters` and `:base-response-characters`
 - `:elapsed-ms`, `:result-count`, `:truncated`, `:degraded`, and `:resolved-source`
 
 Character counts are deterministic local proxies, not exact model tokens. Never claim exact input
 or output Token usage unless the model provider supplied usage data. If metrics or earlier calls
 are unavailable, state the limitation and make only a qualitative assessment.
+
+Compare metrics only when their versions match. Treat field count as a surface-complexity signal,
+not proof that a request is cognitively simple or difficult.
 
 Classify visible response content by task relevance:
 

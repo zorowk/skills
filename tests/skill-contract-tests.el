@@ -19,6 +19,7 @@
 (defvar org-blog-exporter-setupfile)
 (defvar org-id-locations-file)
 (defvar skill-git--body-label-regexp)
+(defvar skill-runtime-metrics-version)
 
 (declare-function skill-runtime-result "../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
@@ -127,9 +128,11 @@
                (lambda ()
                  (skill-runtime-result 'sample '(:value "private result") 1))))
              (metrics (plist-get result :metrics)))
+        (should (= (plist-get metrics :metrics-version) 1))
         (should (= (plist-get metrics :elapsed-ms) 42))
         (should (= (plist-get metrics :request-characters)
                    (length (prin1-to-string request))))
+        (should (= (plist-get metrics :request-field-count) 2))
         (should (= (plist-get metrics :payload-characters)
                    (length (prin1-to-string '(:value "private result")))))
         (should (= (plist-get metrics :result-count) 1))
