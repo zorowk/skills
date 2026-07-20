@@ -69,9 +69,14 @@
   :type 'positive-integer
   :group 'ai-git-commit)
 
+(defcustom ai-git-commit-untracked-maximum-characters 24000
+  "Maximum total characters retained from untracked file diffs."
+  :type 'positive-integer
+  :group 'ai-git-commit)
+
 (defconst ai-git-commit--schemas
   '((context :summary "Collect bounded staged and unstaged evidence; compact by default."
-             :optional (:directory :full) :effects nil)
+             :optional (:directory :full :paths) :effects nil)
     (format :summary "Generate and validate one evidence-backed message."
             :required (:type :summary :context :changes :reason :validation
                             :boundary)
@@ -117,9 +122,17 @@
                status (string-join arguments " ")))
       (string-trim-right (buffer-string)))))
 
-(defun ai-git-commit--untracked-diff ()
-  "Return bounded diff evidence for every untracked file."
-  (let ((paths (magit-git-lines "ls-files" "--others" "--exclude-standard"))
+(defun ai-git-commit--git-output-for-paths (arguments paths)
+  "Return Git output for ARGUMENTS, optionally restricted to PATHS."
+  (apply #'ai-git-commit--git-output
+         (append arguments (and paths (cons "--" paths)))))
+
+(defun ai-git-commit--untracked-diff (&optional scope-paths)
+  "Return bounded untracked diff evidence, optionally within SCOPE-PATHS."
+  (let ((paths
+         (apply #'magit-git-lines
+                (append '("ls-files" "--others" "--exclude-standard")
+                        (and scope-paths (cons "--" scope-paths)))))
         sections
         truncated)
     (dolist (path paths)
@@ -135,16 +148,24 @@
                'untracked-file-diff)))
         (push (plist-get bounded :text) sections)
         (setq truncated (or truncated (plist-get bounded :truncated)))))
-    (list :text (string-join (nreverse sections) "\n")
-          :files paths
-          :truncated (and truncated t))))
+    (let* ((combined (string-join (nreverse sections) "\n"))
+           (bounded
+            (ai-git-commit--bounded-diff
+             combined ai-git-commit-untracked-maximum-characters
+             'untracked-diff)))
+      (list :text (plist-get bounded :text)
+            :files paths
+            :truncated
+            (and (or truncated (plist-get bounded :truncated)) t)
+            :original-length (plist-get bounded :original-length)))))
 
 ;;;###autoload
-(defun ai-git-commit-context (&optional directory compact)
+(defun ai-git-commit-context (&optional directory compact paths)
   "Return Git evidence for DIRECTORY with explicit truncation metadata.
 
 Use one combined bounded diff against HEAD when COMPACT is non-nil.  Otherwise
-return separate staged and unstaged diffs."
+return separate staged and unstaged diffs.  When PATHS is non-nil, retain global
+status but restrict diff content and untracked-file reads to those paths."
   (unless (require 'magit nil t)
     (error "Magit is not available in this Emacs session"))
   (let ((root (magit-toplevel (or directory default-directory))))
@@ -152,25 +173,38 @@ return separate staged and unstaged diffs."
       (error "Not inside a Git repository: %s"
              (expand-file-name (or directory default-directory))))
     (let* ((default-directory root)
+           (scope-paths (and paths (ai-git-commit--normalize-paths root paths)))
            (status (ai-git-commit--git-output
                     "status" "--porcelain=v1" "--untracked-files=all"))
-           (unstaged-stat (ai-git-commit--git-output "diff" "--stat"))
-           (staged-stat (ai-git-commit--git-output "diff" "--cached" "--stat"))
-           (untracked (ai-git-commit--untracked-diff))
+           (scoped-status
+            (ai-git-commit--git-output-for-paths
+             '("status" "--porcelain=v1" "--untracked-files=all")
+             scope-paths))
+           (change-count (length (split-string status "\n" t)))
+           (scoped-change-count
+            (length (split-string scoped-status "\n" t)))
+           (unstaged-stat
+            (ai-git-commit--git-output-for-paths '("diff" "--stat") scope-paths))
+           (staged-stat
+            (ai-git-commit--git-output-for-paths
+             '("diff" "--cached" "--stat") scope-paths))
+           (untracked (ai-git-commit--untracked-diff scope-paths))
            (untracked-text (plist-get untracked :text))
            (untracked-files (plist-get untracked :files)))
       (if compact
           (let* ((has-head (magit-git-success "rev-parse" "--verify" "HEAD"))
                  (combined
                   (if has-head
-                      (ai-git-commit--git-output "diff" "HEAD" "--no-ext-diff")
+                      (ai-git-commit--git-output-for-paths
+                       '("diff" "HEAD" "--no-ext-diff") scope-paths)
                     (string-join
                      (seq-remove
                       #'string-empty-p
                       (list
-                       (ai-git-commit--git-output
-                        "diff" "--cached" "--no-ext-diff")
-                       (ai-git-commit--git-output "diff" "--no-ext-diff")))
+                       (ai-git-commit--git-output-for-paths
+                        '("diff" "--cached" "--no-ext-diff") scope-paths)
+                       (ai-git-commit--git-output-for-paths
+                        '("diff" "--no-ext-diff") scope-paths)))
                      "\n")))
                  (combined (ai-git-commit--join-diffs combined untracked-text))
                  (bounded
@@ -178,7 +212,11 @@ return separate staged and unstaged diffs."
                    combined ai-git-commit-compact-maximum-characters 'diff)))
             (list :git-root root
                   :status status
-                  :change-count (length (split-string status "\n" t))
+                  :scoped-status scoped-status
+                  :change-count change-count
+                  :diff-scope (or scope-paths 'all)
+                  :excluded-change-count
+                  (max 0 (- change-count scoped-change-count))
                   :unstaged-stat unstaged-stat
                   :staged-stat staged-stat
                   :untracked-files untracked-files
@@ -190,17 +228,22 @@ return separate staged and unstaged diffs."
         (let* ((unstaged
                 (ai-git-commit--bounded-diff
                  (ai-git-commit--join-diffs
-                  (ai-git-commit--git-output "diff" "--no-ext-diff")
+                  (ai-git-commit--git-output-for-paths
+                   '("diff" "--no-ext-diff") scope-paths)
                   untracked-text)
                  ai-git-commit-context-maximum-characters 'unstaged-diff))
                (staged
                 (ai-git-commit--bounded-diff
-                 (ai-git-commit--git-output
-                  "diff" "--cached" "--no-ext-diff")
+                 (ai-git-commit--git-output-for-paths
+                  '("diff" "--cached" "--no-ext-diff") scope-paths)
                  ai-git-commit-context-maximum-characters 'staged-diff)))
           (list :git-root root
                 :status status
-                :change-count (length (split-string status "\n" t))
+                :scoped-status scoped-status
+                :change-count change-count
+                :diff-scope (or scope-paths 'all)
+                :excluded-change-count
+                (max 0 (- change-count scoped-change-count))
                 :unstaged-stat unstaged-stat
                 :staged-stat staged-stat
                 :untracked-files untracked-files
@@ -338,7 +381,8 @@ Permit regular files, symlinks, and tracked paths deleted from the worktree."
       ('context
        (let ((data (ai-git-commit-context
                     (plist-get request :directory)
-                    (not (plist-get request :full)))))
+                    (not (plist-get request :full))
+                    (plist-get request :paths))))
          (skill-runtime-result operation data (plist-get data :change-count))))
       ('format
        (skill-runtime-result operation (ai-git-commit-format request) 1))

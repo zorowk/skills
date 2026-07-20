@@ -11,6 +11,7 @@
 (defvar emacs-gtd-directory)
 (defvar emacs-gtd-file)
 (defvar ai-git-commit-untracked-file-maximum-characters)
+(defvar ai-git-commit-untracked-maximum-characters)
 (defvar magit-display-buffer-noselect)
 (defvar magit-process-popup-time)
 (defvar org-blog-exporter-setupfile)
@@ -67,7 +68,7 @@
 (declare-function ai-git-commit--normalize-paths
                   "../git-commit/scripts/ai-git-commit" (root paths))
 (declare-function ai-git-commit--untracked-diff
-                  "../git-commit/scripts/ai-git-commit" ())
+                  "../git-commit/scripts/ai-git-commit" (&optional scope-paths))
 
 (defconst skill-contract-tests-root
   (file-name-directory
@@ -506,6 +507,44 @@
         (should (equal (plist-get result :files) '("new.el")))
         (should (string-prefix-p "diff --git" (plist-get result :text)))
         (should (eq (plist-get result :truncated) t))))))
+
+(ert-deftest git-context-paths-exclude-unrelated-untracked-content ()
+  (unless (require 'magit nil t)
+    (ert-skip "Magit is unavailable in the pure -Q contract environment"))
+  (let* ((root (make-temp-file "git-context-scope-" t))
+         (default-directory root)
+         (target (expand-file-name "target.el" root))
+         (new (expand-file-name "new.el" root))
+         (unrelated (expand-file-name "unrelated-secret.el" root)))
+    (unwind-protect
+        (progn
+          (should (zerop (call-process "git" nil nil nil "init" "-q")))
+          (with-temp-file target (insert "baseline\n"))
+          (should (zerop (call-process "git" nil nil nil "add" "target.el")))
+          (should
+           (zerop
+            (call-process "git" nil nil nil
+                          "-c" "user.name=Skill Test"
+                          "-c" "user.email=skill@example.invalid"
+                          "commit" "-q" "-m" "baseline")))
+          (with-temp-file target (insert "changed target\n"))
+          (with-temp-file new (insert "new scoped content\n"))
+          (with-temp-file unrelated (insert "UNRELATED-SECRET-CONTENT\n"))
+          (let* ((result
+                  (ai-git-commit-run
+                   (list :operation 'context :directory root
+                         :paths '("target.el" "new.el"))))
+                 (data (plist-get result :data))
+                 (diff (plist-get data :diff)))
+            (should (equal (plist-get data :diff-scope)
+                           '("target.el" "new.el")))
+            (should (= (plist-get data :excluded-change-count) 1))
+            (should (string-match-p "unrelated-secret.el"
+                                    (plist-get data :status)))
+            (should-not (string-match-p "UNRELATED-SECRET-CONTENT" diff))
+            (should (string-match-p "changed target" diff))
+            (should (string-match-p "new scoped content" diff))))
+      (delete-directory root t))))
 
 (ert-deftest git-path-validation-allows-tracked-deletions-and-rejects-escape ()
   (let ((root (make-temp-file "git-commit-paths-" t)))

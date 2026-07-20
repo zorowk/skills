@@ -11,6 +11,9 @@ Load `scripts/ai-git-commit.el` and call `ai-git-commit-run`. Collect `context`
 before deriving the structured evidence used by `format`, `commit`, or `amend`.
 Context includes bounded diffs for untracked files, with truncation metadata;
 do not infer their contents from `git status` alone.
+When the intended file set is known, pass the same exact `:paths` to `context`.
+It keeps global status visibility while excluding unrelated diff contents and
+untracked-file reads.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
