@@ -218,8 +218,9 @@ push 流程。
 - `emacs-gtd-assistant`：Org mode 和已有的 GTD 文件及目标 heading；
 - `org-blog-exporter`：Org HTML exporter；发布流程还需要 Magit、Git 仓库和远端权限；
 - `git-commit`：Magit（用于从任意当前仓库收集提交证据）；
-- agent-shell 自动上下文和回合审阅：支持 `agent-shell-context-sources` 与
-  `agent-shell-subscribe-to` 的 agent-shell；
+- agent-shell 自动上下文和回合审阅：agent-shell 0.63.3 或更高版本，并支持
+  `agent-shell-context-sources`、`agent-shell-subscribe-to` 与取消订阅 API；可运行
+  `M-x skill-agent-shell-diagnose` 检查当前 session；
 - `skill-usage-review`：无额外运行时依赖；
 - `ai-constitution`：无额外运行时依赖。
 
@@ -257,9 +258,11 @@ zip -r ai-skills.zip \
 开发修改后可运行统一契约测试：
 
 ```bash
-emacs -Q --batch -l tests/skill-contract-tests.el \
-  -f ert-run-tests-batch-and-exit
+emacs -Q --batch -l tests/run-tests.el
 ```
+
+测试入口会初始化已安装的 Emacs packages，并明确要求 Magit 和 Git，使真实的路径限定
+context 测试不会在 `-Q` 环境中静默跳过；缺少依赖时测试会直接失败并给出说明。
 
 在 Emacs 配置中启用公共代码上下文和 Git 回合审阅：
 

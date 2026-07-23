@@ -27,6 +27,9 @@
   :type 'boolean
   :group 'skill-agent-shell-bridge)
 
+(defconst skill-agent-shell-minimum-version "0.63.3"
+  "Minimum agent-shell version validated with the shared bridge.")
+
 (defvar skill-agent-shell-context-providers nil
   "Registered automatic context provider plists.")
 
@@ -38,6 +41,7 @@
 
 (defvar agent-shell-context-sources)
 (defvar agent-shell-mode-hook)
+(defvar agent-shell--version)
 
 (defvar-local skill-agent-shell--subscription nil
   "agent-shell event subscription token for the current shell buffer.")
@@ -55,6 +59,62 @@
                   (&key shell-buffer event on-event))
 (declare-function agent-shell-unsubscribe "agent-shell"
                   (&key subscription))
+
+(defun skill-agent-shell-compatibility ()
+  "Return agent-shell bridge compatibility diagnostics as a plist."
+  (let* ((version
+          (and (boundp 'agent-shell--version)
+               (stringp agent-shell--version)
+               agent-shell--version))
+         (version-ok
+          (and version
+               (condition-case nil
+                   (not (version< version
+                                  skill-agent-shell-minimum-version))
+                 (error nil))))
+         (missing
+          (delq
+           nil
+           (list
+            (unless (boundp 'agent-shell-context-sources)
+              'agent-shell-context-sources)
+            (unless (boundp 'agent-shell-mode-hook)
+              'agent-shell-mode-hook)
+            (unless (fboundp 'agent-shell-subscribe-to)
+              'agent-shell-subscribe-to)
+            (unless (fboundp 'agent-shell-unsubscribe)
+              'agent-shell-unsubscribe)))))
+    (list :compatible (and version-ok (null missing))
+          :version version
+          :minimum-version skill-agent-shell-minimum-version
+          :missing missing)))
+
+(defun skill-agent-shell--assert-compatible ()
+  "Require a compatible loaded agent-shell and return its diagnostics."
+  (let* ((diagnostics (skill-agent-shell-compatibility))
+         (version (or (plist-get diagnostics :version) "unknown"))
+         (missing (plist-get diagnostics :missing)))
+    (unless (plist-get diagnostics :compatible)
+      (user-error
+       "agent-shell %s+ required (found %s%s)"
+       skill-agent-shell-minimum-version
+       version
+       (if missing
+           (format "; missing API: %s"
+                   (mapconcat #'symbol-name missing ", "))
+         "")))
+    diagnostics))
+
+;;;###autoload
+(defun skill-agent-shell-diagnose ()
+  "Report whether the loaded agent-shell supports the shared bridge."
+  (interactive)
+  (unless (featurep 'agent-shell)
+    (user-error "agent-shell is not loaded"))
+  (let ((diagnostics (skill-agent-shell--assert-compatible)))
+    (message "agent-shell %s is compatible with the skill bridge"
+             (plist-get diagnostics :version))
+    diagnostics))
 
 (defun skill-agent-shell--entry (id entries)
   "Return the entry identified by ID in ENTRIES."
@@ -347,6 +407,7 @@ shared action menu.  LABEL is the English menu label.  APPLICABLE-P gates both."
   (interactive)
   (if (featurep 'agent-shell)
       (progn
+        (skill-agent-shell--assert-compatible)
         (skill-agent-shell--install-context-source)
         (add-hook 'agent-shell-mode-hook #'skill-agent-shell--subscribe)
         (dolist (buffer (buffer-list))
@@ -354,6 +415,7 @@ shared action menu.  LABEL is the English menu label.  APPLICABLE-P gates both."
             (when (derived-mode-p 'agent-shell-mode)
               (skill-agent-shell--subscribe)))))
     (with-eval-after-load 'agent-shell
+      (skill-agent-shell--assert-compatible)
       (skill-agent-shell--install-context-source)
       (add-hook 'agent-shell-mode-hook #'skill-agent-shell--subscribe))))
 

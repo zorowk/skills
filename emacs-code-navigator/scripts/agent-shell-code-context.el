@@ -280,7 +280,6 @@ collection error, allowing agent-shell to try its next configured source."
          nil)))))
 
 ;;;###autoload
-;;;###autoload
 (defun emacs-code-navigator-agent-shell-enable ()
   "Register bounded code context with the shared agent-shell bridge."
   (interactive)

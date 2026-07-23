@@ -25,6 +25,8 @@
 (defvar skill-agent-shell--turn-state)
 (defvar skill-agent-shell--last-completed-turn)
 (defvar skill-agent-shell--available-actions)
+(defvar skill-agent-shell-minimum-version)
+(defvar agent-shell--version)
 (defvar agent-shell-gtd-capture--suppress-count)
 (defvar agent-shell-denote-capture--suppress-count)
 (defvar agent-shell-skill-usage-review--suppress-count)
@@ -34,6 +36,7 @@
 (defvar emacs-code-navigator-semantic-buffer-limit)
 (defvar emacs-code-navigator--semantic-buffers)
 (defvar agent-shell-context-sources)
+(defvar agent-shell-mode-hook)
 (defvar emacs-gtd-directory)
 (defvar emacs-gtd-file)
 (defvar ai-git-commit-untracked-file-maximum-characters)
@@ -88,6 +91,10 @@
 (declare-function emacs-code-navigator-agent-shell-enable
                   "../emacs-code-navigator/scripts/agent-shell-code-context" ())
 (declare-function skill-agent-shell-context
+                  "../common/scripts/agent-shell-bridge" ())
+(declare-function skill-agent-shell-compatibility
+                  "../common/scripts/agent-shell-bridge" ())
+(declare-function skill-agent-shell--assert-compatible
                   "../common/scripts/agent-shell-bridge" ())
 (declare-function skill-agent-shell-register-context-provider
                   "../common/scripts/agent-shell-bridge" (id &rest arguments))
@@ -1009,7 +1016,9 @@
         (skill-agent-shell-context-providers nil))
     (cl-letf (((symbol-function 'featurep)
                (lambda (feature)
-                 (eq feature 'agent-shell))))
+                 (eq feature 'agent-shell)))
+              ((symbol-function 'skill-agent-shell--assert-compatible)
+               #'ignore))
       (emacs-code-navigator-agent-shell-enable)
       (emacs-code-navigator-agent-shell-enable))
     (should
@@ -1019,6 +1028,29 @@
     (should (= (length skill-agent-shell-context-providers) 1))
     (should (eq (plist-get (car skill-agent-shell-context-providers) :id)
                 'emacs-code-navigator))))
+
+(ert-deftest agent-shell-bridge-reports-version-and-api-compatibility ()
+  (let ((agent-shell--version skill-agent-shell-minimum-version)
+        (agent-shell-context-sources '(files region error line))
+        (agent-shell-mode-hook nil))
+    (cl-letf (((symbol-function 'agent-shell-subscribe-to) #'ignore)
+              ((symbol-function 'agent-shell-unsubscribe) #'ignore))
+      (let ((diagnostics (skill-agent-shell-compatibility)))
+        (should (plist-get diagnostics :compatible))
+        (should-not (plist-get diagnostics :missing)))
+      (let ((agent-shell--version "0.63.2"))
+        (should-error (skill-agent-shell--assert-compatible)
+                      :type 'user-error))
+      (let ((original-fboundp (symbol-function 'fboundp)))
+        (cl-letf (((symbol-function 'fboundp)
+                   (lambda (symbol)
+                     (and (not (eq symbol 'agent-shell-unsubscribe))
+                          (funcall original-fboundp symbol)))))
+          (let ((diagnostics (skill-agent-shell-compatibility)))
+            (should-not (plist-get diagnostics :compatible))
+            (should
+             (memq 'agent-shell-unsubscribe
+                   (plist-get diagnostics :missing)))))))))
 
 (ert-deftest agent-shell-bridge-shares-one-hard-context-budget ()
   (let ((skill-agent-shell-context-providers nil)
