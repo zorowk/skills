@@ -26,6 +26,10 @@ fails.
 Derive claims only from actual changes and validation. Do not invent issues, tests,
 products, or impact. Ask when unrelated changes do not fit one truthful commit.
 Treat commit and amend as authorized only when the user explicitly requested them.
+Always supply `:validation` as internal evidence, but do not repeat test commands,
+pass counts, or routine validation results in the commit body. Report them to the
+user after the operation. Include validation in Git history only when the user
+explicitly enables that formatter option.
 
 For `commit` or `amend`, pass `:paths` with the exact repository files authorized
 for the operation. The facade validates and stages those paths, commits only that
@@ -35,3 +39,9 @@ intentionally wants to commit the existing index as-is.
 Prefer `:detail compact` for routine personal-repository work. Automatic detail
 also stays compact for up to four low-risk or three medium-risk changes; use
 `:detail full` when risk, boundaries, or independent change groups need visibility.
+
+For agent-shell turn review, load `scripts/agent-shell-git-review.el` and call
+`agent-shell-git-review-enable`. Event paths are advisory candidates only.
+Review and commit requests must re-read Git through `ai-git-commit-run`, use the
+same explicit path set, split different repositories, and require confirmation
+before submitting a commit request.

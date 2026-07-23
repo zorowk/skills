@@ -42,10 +42,11 @@ a code-search backend.
 
 For bounded automatic context in agent-shell, load
 `scripts/agent-shell-code-context.el` and call
-`emacs-code-navigator-agent-shell-enable`. It preserves explicit region and
-error context priority, adds bounded definitions and synchronous Eldoc at the
-actual cursor, reads existing Flymake diagnostics without starting Flymake, and
-returns nil on failure so agent-shell can continue to its next source.
+`emacs-code-navigator-agent-shell-enable`. It registers with the shared
+`common/scripts/agent-shell-bridge.el`, preserves explicit region and error
+context priority, adds bounded definitions and synchronous Eldoc at the actual
+cursor, reads existing Flymake diagnostics without starting Flymake, and
+returns nil on failure so other providers or agent-shell fallbacks can continue.
 
 Multi-project semantic queries reuse an existing project buffer or, under the
 `open-on-demand` policy, visit one hidden anchor file per explicit project and

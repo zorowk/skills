@@ -224,7 +224,10 @@ relative path and must return non-nil.  DESCRIPTION explains that constraint."
 Require :type, :summary, :context, :changes, :reason, :validation, and
 :boundary.  :scope, :risk, :detail, and trailers are optional.  Adaptive
 detail is compact for routine low- and medium-risk changes, while high-risk
-or broader changes retain their complete evidence and boundary."
+or broader changes retain their complete evidence and boundary.
+
+VALIDATION remains required evidence.  Set :include-validation to nil to keep
+it out of the rendered message while still validating that it was supplied."
   (unless (listp spec)
     (error "SPEC must be a plist"))
   (let* ((changes (skill-git--changes (plist-get spec :changes)))
@@ -236,6 +239,10 @@ or broader changes retain their complete evidence and boundary."
                       (plist-get spec :validation) "VALIDATION"))
          (boundary (skill-git--required-text
                     (plist-get spec :boundary) "BOUNDARY"))
+         (include-validation
+          (if (plist-member spec :include-validation)
+              (plist-get spec :include-validation)
+            t))
          (detail (skill-git--detail spec changes))
          (body
           (string-join
@@ -246,16 +253,21 @@ or broader changes retain their complete evidence and boundary."
                                 (skill-git--fill change "- "))
                               changes)
                       "\n")
-                     (skill-git--fill (concat reason " " validation)))
-             (list (skill-git--fill context)
-                   (string-join
-                    (mapcar (lambda (change)
-                              (skill-git--fill change "- "))
-                            changes)
-                    "\n")
-                   (skill-git--fill reason)
-                   (skill-git--fill validation)
-                   (skill-git--fill boundary)))
+                     (skill-git--fill
+                      (if include-validation
+                          (concat reason " " validation)
+                        reason)))
+             (delq
+              nil
+              (list (skill-git--fill context)
+                    (string-join
+                     (mapcar (lambda (change)
+                               (skill-git--fill change "- "))
+                             changes)
+                     "\n")
+                    (skill-git--fill reason)
+                    (and include-validation (skill-git--fill validation))
+                    (skill-git--fill boundary))))
            "\n\n"))
          (trailers (skill-git--trailers spec))
          (message

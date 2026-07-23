@@ -76,6 +76,14 @@
   :type 'positive-integer
   :group 'ai-git-commit)
 
+(defcustom ai-git-commit-include-validation-in-message nil
+  "Whether validation evidence is rendered in the Git commit message.
+
+Validation remains a required structured field and should be reported to the
+user after the operation.  It is omitted from Git history by default."
+  :type 'boolean
+  :group 'ai-git-commit)
+
 (defconst ai-git-commit--schemas
   '((context :summary "Collect bounded staged and unstaged evidence; compact by default."
              :optional (:directory :full :paths)
@@ -282,7 +290,11 @@ status but restrict diff content and untracked-file reads to those paths."
 (defun ai-git-commit-format (spec)
   "Return a validated adaptive commit message from structured SPEC."
   (let ((skill-git-message-column ai-git-commit-fill-column))
-    (ai-git-commit--validate-message (skill-git-format-message spec))))
+    (ai-git-commit--validate-message
+     (skill-git-format-message
+      (plist-put (copy-sequence spec)
+                 :include-validation
+                 ai-git-commit-include-validation-in-message)))))
 
 (defun ai-git-commit--validate-message (message)
   "Return MESSAGE after validating its maximum line width."

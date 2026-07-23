@@ -18,6 +18,13 @@
 (defvar emacs-code-navigator-agent-shell-semantic-level)
 (defvar emacs-code-navigator-agent-shell-definition-limit)
 (defvar emacs-code-navigator-agent-shell-semantic-timeout-ms)
+(defvar skill-agent-shell-context-maximum-characters)
+(defvar skill-agent-shell-context-providers)
+(defvar skill-agent-shell-turn-actions)
+(defvar skill-agent-shell-last-context-metrics)
+(defvar skill-agent-shell--turn-state)
+(defvar skill-agent-shell--last-completed-turn)
+(defvar ai-git-commit-include-validation-in-message)
 (defvar emacs-code-navigator-semantic-buffer-policy)
 (defvar emacs-code-navigator-semantic-buffer-limit)
 (defvar emacs-code-navigator--semantic-buffers)
@@ -75,6 +82,20 @@
                   "../emacs-code-navigator/scripts/agent-shell-code-context" ())
 (declare-function emacs-code-navigator-agent-shell-enable
                   "../emacs-code-navigator/scripts/agent-shell-code-context" ())
+(declare-function skill-agent-shell-context
+                  "../common/scripts/agent-shell-bridge" ())
+(declare-function skill-agent-shell-register-context-provider
+                  "../common/scripts/agent-shell-bridge" (id &rest arguments))
+(declare-function skill-agent-shell-register-turn-action
+                  "../common/scripts/agent-shell-bridge" (id &rest arguments))
+(declare-function skill-agent-shell--handle-event
+                  "../common/scripts/agent-shell-bridge" (shell-buffer event))
+(declare-function skill-agent-shell-current-turn-paths
+                  "../common/scripts/agent-shell-bridge"
+                  (&optional shell-buffer))
+(declare-function agent-shell-git-review--request-text
+                  "../git-commit/scripts/agent-shell-git-review"
+                  (shell-buffer action))
 (declare-function emacs-gtd-execute
                   "../emacs-gtd-assistant/scripts/emacs-gtd-assistant"
                   (request))
@@ -117,12 +138,14 @@
 (dolist (relative
          '("common/scripts/skill-runtime.el"
            "common/scripts/skill-git.el"
+           "common/scripts/agent-shell-bridge.el"
            "emacs-code-navigator/scripts/emacs-code-navigator.el"
            "emacs-code-navigator/scripts/agent-shell-code-context.el"
            "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
            "denote-scribe/scripts/denote-scribe.el"
            "org-blog-exporter/scripts/org-blog-exporter.el"
-           "git-commit/scripts/ai-git-commit.el"))
+           "git-commit/scripts/ai-git-commit.el"
+           "git-commit/scripts/agent-shell-git-review.el"))
   (load (expand-file-name relative skill-contract-tests-root) nil nil t))
 
 (defconst skill-contract-tests-message-spec
@@ -749,12 +772,75 @@
           (should-not (string-match-p "second diagnostic" context)))))))
 
 (ert-deftest navigator-agent-shell-enable-preserves-explicit-priority ()
-  (let ((agent-shell-context-sources '(files region error line custom-source)))
-    (emacs-code-navigator-agent-shell-enable)
+  (let ((agent-shell-context-sources
+         '(files region error emacs-code-navigator-agent-shell-context
+                 line custom-source))
+        (skill-agent-shell-context-providers nil))
+    (cl-letf (((symbol-function 'featurep)
+               (lambda (feature)
+                 (eq feature 'agent-shell))))
+      (emacs-code-navigator-agent-shell-enable)
+      (emacs-code-navigator-agent-shell-enable))
     (should
      (equal agent-shell-context-sources
-            '(region error emacs-code-navigator-agent-shell-context
-                     files line custom-source)))))
+            '(region error skill-agent-shell-context
+                     files line custom-source)))
+    (should (= (length skill-agent-shell-context-providers) 1))
+    (should (eq (plist-get (car skill-agent-shell-context-providers) :id)
+                'emacs-code-navigator))))
+
+(ert-deftest agent-shell-bridge-shares-one-hard-context-budget ()
+  (let ((skill-agent-shell-context-providers nil)
+        (skill-agent-shell-context-maximum-characters 12))
+    (skill-agent-shell-register-context-provider
+     'first :function (lambda () "abcdefgh") :priority 20)
+    (skill-agent-shell-register-context-provider
+     'broken :function (lambda () (error "unavailable")) :priority 15)
+    (skill-agent-shell-register-context-provider
+     'second :function (lambda () "ijklmnop") :priority 10)
+    (let ((context (skill-agent-shell-context)))
+      (should (= (length context) 12))
+      (should (string-prefix-p "abcdefgh" context))
+      (should (= (length
+                  (plist-get skill-agent-shell-last-context-metrics
+                             :providers))
+                 3))
+      (should-not
+       (string-match-p "unavailable"
+                       (prin1-to-string
+                        skill-agent-shell-last-context-metrics))))))
+
+(ert-deftest agent-shell-bridge-tracks-structured-turn-paths ()
+  (with-temp-buffer
+    (let ((skill-agent-shell-turn-actions nil)
+          observed)
+      (setq default-directory "/tmp/")
+      (skill-agent-shell-register-turn-action
+       'observe
+       :function (lambda (_buffer state) (setq observed state)))
+      (skill-agent-shell--handle-event
+       (current-buffer) '((:event . input-submitted)))
+      (skill-agent-shell--handle-event
+       (current-buffer)
+       '((:event . file-write)
+         (:data . ((:path . "one.el")))))
+      (skill-agent-shell--handle-event
+       (current-buffer)
+       '((:event . tool-call-update)
+         (:data
+          . ((:tool-call
+              . ((:diffs
+                  . (((:file . "/tmp/two.el"))
+                     ((:file . "/tmp/one.el"))))))))))
+      (skill-agent-shell--handle-event
+       (current-buffer)
+       '((:event . turn-complete)
+         (:data . ((:stop-reason . "end_turn")))))
+      (should observed)
+      (should
+       (equal (skill-agent-shell-current-turn-paths (current-buffer))
+              '("/tmp/one.el" "/tmp/two.el")))
+      (should (equal (plist-get observed :stop-reason) "end_turn")))))
 
 (ert-deftest navigator-semantic-context-uses-the-exact-column-and-limit ()
   (with-temp-buffer
@@ -952,6 +1038,35 @@
           (plist-put (copy-sequence skill-contract-tests-message-spec)
                      :detail 'full))))
     (should (string-match-p "Domain capabilities" message))))
+
+(ert-deftest git-message-keeps-validation-internal-by-default ()
+  (let ((ai-git-commit-include-validation-in-message nil)
+        (message
+         (ai-git-commit-format
+          (plist-put (copy-sequence skill-contract-tests-message-spec)
+                     :detail 'full))))
+    (should-not (string-match-p "Validated formatter" message))
+    (should (string-match-p "Domain capabilities" message)))
+  (let ((ai-git-commit-include-validation-in-message t))
+    (should
+     (string-match-p
+      "Validated formatter"
+      (ai-git-commit-format
+       (plist-put (copy-sequence skill-contract-tests-message-spec)
+                  :detail 'full))))))
+
+(ert-deftest agent-shell-git-request-preserves-advisory-boundary ()
+  (with-temp-buffer
+    (setq-local skill-agent-shell--last-completed-turn
+                '(:paths (("/tmp/repository/one.el" . file-write))))
+    (cl-letf (((symbol-function 'agent-shell-git-review--root)
+               (lambda (_path) "/tmp/repository/")))
+      (let ((text
+             (agent-shell-git-review--request-text
+              (current-buffer) 'commit)))
+        (should (string-match-p "re-read actual Git/Magit" text))
+        (should (string-match-p "/tmp/repository/one.el" text))
+        (should (string-match-p "omit test results" text))))))
 
 (ert-deftest git-message-auto-compacts-routine-medium-risk-work ()
   (let* ((spec (copy-sequence skill-contract-tests-message-spec))

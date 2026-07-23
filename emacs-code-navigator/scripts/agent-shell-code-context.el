@@ -2,13 +2,19 @@
 
 ;;; Commentary:
 
-;; Add compact position, semantic, and existing diagnostic context to
-;; `agent-shell-context-sources' without displaying or modifying source buffers.
+;; Provide compact position, semantic, and existing diagnostic context through
+;; the shared agent-shell bridge without displaying or modifying source buffers.
 
 ;;; Code:
 
 (require 'seq)
 (require 'subr-x)
+
+(unless (featurep 'agent-shell-bridge)
+  (load (expand-file-name "../../common/scripts/agent-shell-bridge.el"
+                          (file-name-directory
+                           (or load-file-name buffer-file-name)))
+        nil nil t))
 
 (unless (featurep 'emacs-code-navigator)
   (load (expand-file-name "emacs-code-navigator.el"
@@ -23,6 +29,13 @@
 (declare-function flymake-diagnostic-text "flymake" (diagnostic))
 (declare-function flymake-diagnostic-type "flymake" (diagnostic))
 (declare-function flymake-diagnostics "flymake" (&optional beg end))
+(declare-function skill-agent-shell-register-context-provider
+                  "../../common/scripts/agent-shell-bridge"
+                  (id &rest arguments))
+(declare-function skill-agent-shell-unregister-context-provider
+                  "../../common/scripts/agent-shell-bridge" (id))
+(declare-function skill-agent-shell-bridge-enable
+                  "../../common/scripts/agent-shell-bridge" ())
 (defvar agent-shell-context-sources)
 
 (defgroup emacs-code-navigator-agent-shell nil
@@ -79,6 +92,13 @@ definitions and synchronous Eldoc from the current live buffer."
 
 (defvar emacs-code-navigator-agent-shell-last-context-metrics nil
   "Metrics for the latest automatic context attempt, without context text.")
+
+(defun emacs-code-navigator-agent-shell-applicable-p ()
+  "Return non-nil when the current buffer can provide live code context."
+  (and emacs-code-navigator-agent-shell-context-enabled
+       buffer-file-name
+       (derived-mode-p 'prog-mode)
+       (not (file-remote-p buffer-file-name))))
 
 (defun emacs-code-navigator-agent-shell--truncate (text maximum)
   "Return TEXT bounded to MAXIMUM characters with a visible suffix."
@@ -204,10 +224,7 @@ already-existing Flymake messages."
 Return nil outside local file-backed programming buffers or after any context
 collection error, allowing agent-shell to try its next configured source."
   (let ((started (float-time)))
-    (if (not (and emacs-code-navigator-agent-shell-context-enabled
-                  buffer-file-name
-                  (derived-mode-p 'prog-mode)
-                  (not (file-remote-p buffer-file-name))))
+    (if (not (emacs-code-navigator-agent-shell-applicable-p))
         (progn
           (setq emacs-code-navigator-agent-shell-last-context-metrics
                 (list :status 'skipped :reason 'inapplicable))
@@ -263,34 +280,32 @@ collection error, allowing agent-shell to try its next configured source."
          nil)))))
 
 ;;;###autoload
-(defun emacs-code-navigator-agent-shell--install-source ()
-  "Install the bounded source after agent-shell region and error sources."
-  (let* ((function #'emacs-code-navigator-agent-shell-context)
-         (sources (remove function agent-shell-context-sources))
-         (priority (seq-filter (lambda (source) (memq source '(region error)))
-                               sources))
-         (fallbacks (seq-remove (lambda (source) (memq source '(region error)))
-                                sources)))
-    (setq agent-shell-context-sources
-          (append priority (list function) fallbacks))))
-
 ;;;###autoload
 (defun emacs-code-navigator-agent-shell-enable ()
-  "Enable bounded code context after agent-shell region and error sources."
-  (interactive)
-  (if (boundp 'agent-shell-context-sources)
-      (emacs-code-navigator-agent-shell--install-source)
-    (with-eval-after-load 'agent-shell
-      (emacs-code-navigator-agent-shell--install-source))))
-
-;;;###autoload
-(defun emacs-code-navigator-agent-shell-disable ()
-  "Remove bounded code context from `agent-shell-context-sources'."
+  "Register bounded code context with the shared agent-shell bridge."
   (interactive)
   (when (boundp 'agent-shell-context-sources)
     (setq agent-shell-context-sources
           (remove #'emacs-code-navigator-agent-shell-context
-                  agent-shell-context-sources))))
+                  agent-shell-context-sources)))
+  (skill-agent-shell-register-context-provider
+   'emacs-code-navigator
+   :function #'emacs-code-navigator-agent-shell-context
+   :applicable-p #'emacs-code-navigator-agent-shell-applicable-p
+   :priority 50
+   :maximum-characters
+   emacs-code-navigator-agent-shell-context-maximum-characters)
+  (skill-agent-shell-bridge-enable))
+
+;;;###autoload
+(defun emacs-code-navigator-agent-shell-disable ()
+  "Unregister bounded code context from the shared agent-shell bridge."
+  (interactive)
+  (when (boundp 'agent-shell-context-sources)
+    (setq agent-shell-context-sources
+          (remove #'emacs-code-navigator-agent-shell-context
+                  agent-shell-context-sources)))
+  (skill-agent-shell-unregister-context-provider 'emacs-code-navigator))
 
 (provide 'agent-shell-code-context)
 
