@@ -54,6 +54,7 @@ flowchart LR
         GITUI["agent-shell-git-review.el<br/>候选路径与审阅菜单"]
         GTDUI["agent-shell-gtd-capture.el<br/>Capture as GTD"]
         DENOTEUI["agent-shell-denote-capture.el<br/>Capture as Denote"]
+        USAGEUI["agent-shell-skill-usage-review.el<br/>Review skill usage"]
     end
 
     subgraph SKILLS["Skills 与 compact facades"]
@@ -92,6 +93,8 @@ flowchart LR
     DENOTEUI -->|"确认后 capture"| SCRIBE
     DENOTEUI -->|"Denote file: 写入 RESOURCES"| GTD
     GTD -.->|"GTD id: 回写开放问题"| SCRIBE
+    BRIDGE -->|"成功回合 + tool calls"| USAGEUI
+    USAGEUI -.->|"只读审阅请求，不复制 telemetry"| AS
 
     AGENT -->|"按 SKILL.md 触发"| NAV
     AGENT --> COMMIT
@@ -162,6 +165,12 @@ Denote adapter 提供英文 `Capture as Denote` action，先生成符合 critica
 任务完成后可要求“评价本轮 skills 使用情况”。`skill-usage-review` 会以正确完成为门槛，
 结合当前对话中的失败重试和各调用的 `:metrics`，区分必要信息、安全信息与冗余信息；
 它不会在 GitHub Actions 中调用 AI，也不会持久化调用内容。
+
+Skill usage adapter 在成功且包含 tool call 的回合后提供英文 `Review skill usage` action。
+点击后只向同一个 agent-shell 会话发送短提示，由 Agent 使用对话中已经可见的调用和
+metrics 进行评价；它不重新运行任务、不把 tool 输出复制进 Emacs，也不增加自动上下文。
+完成一次评价后默认抑制两轮，避免审阅动作递归评价自身。评价得到的具体工作或长期经验，
+仍由用户分别选择 `Capture as GTD` 或 `Capture as Denote`，不会自动写入。
 
 ## 主要工作流
 
@@ -265,9 +274,12 @@ emacs -Q --batch -l tests/skill-contract-tests.el \
 
 (load "/path/to/skills/denote-scribe/scripts/agent-shell-denote-capture.el")
 (agent-shell-denote-capture-enable)
+
+(load "/path/to/skills/skill-usage-review/scripts/agent-shell-skill-usage-review.el")
+(agent-shell-skill-usage-review-enable)
 ```
 
 回合发生文件写入后运行 `M-x agent-shell-git-review-menu`，可以查看候选文件的当前 Git
 diff、插入提交信息请求，或在确认后向 Agent 提交限定路径的提交请求。运行
 `M-x skill-agent-shell-turn-action-menu` 可统一选择 `Review Git changes` 或
-`Capture as GTD`、`Capture as Denote`。
+`Capture as GTD`、`Capture as Denote`、`Review skill usage`。

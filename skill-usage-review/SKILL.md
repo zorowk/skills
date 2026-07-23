@@ -2,8 +2,9 @@
 name: skill-usage-review
 description: >-
   Evaluate skills used in the current conversation for effective context use, call economy,
-  retries, routing complexity, safety overhead, and avoidable output. Use when the user asks how
-  well, efficiently, or economically the skills performed after completing a task.
+  retries, routing complexity, safety overhead, and avoidable output. Use after a tool-driven task
+  when the user asks how well, efficiently, or economically the skills performed, including from
+  an agent-shell post-turn review action.
 ---
 
 # Skill Usage Review
@@ -11,6 +12,12 @@ description: >-
 Review only the skill calls visible in the current conversation. Treat each facade's `:metrics`
 as measurement evidence and its request, result, errors, and final task outcome as semantic
 evidence. Do not rerun the task, modify files, or create persistent telemetry unless requested.
+
+For the English agent-shell action, load
+`scripts/agent-shell-skill-usage-review.el` and call
+`agent-shell-skill-usage-review-enable`. It offers `Review skill usage` only
+after a successful turn containing tool calls, sends a read-only review request
+to the same conversation, and suppresses recursive review suggestions.
 
 Apply correctness as a gate: if the requested outcome was not achieved, report that first and do
 not reward a short response as efficient. Count failed calls and schema retries from the visible

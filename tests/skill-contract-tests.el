@@ -27,6 +27,7 @@
 (defvar skill-agent-shell--available-actions)
 (defvar agent-shell-gtd-capture--suppress-count)
 (defvar agent-shell-denote-capture--suppress-count)
+(defvar agent-shell-skill-usage-review--suppress-count)
 (defvar emacs-gtd-capture-task-limit)
 (defvar ai-git-commit-include-validation-in-message)
 (defvar emacs-code-navigator-semantic-buffer-policy)
@@ -127,6 +128,18 @@
 (declare-function agent-shell-denote-capture--applicable-p
                   "../denote-scribe/scripts/agent-shell-denote-capture"
                   (shell-buffer state))
+(declare-function agent-shell-skill-usage-review--prompt
+                  "../skill-usage-review/scripts/agent-shell-skill-usage-review"
+                  ())
+(declare-function agent-shell-skill-usage-review--applicable-p
+                  "../skill-usage-review/scripts/agent-shell-skill-usage-review"
+                  (shell-buffer state))
+(declare-function agent-shell-skill-usage-review
+                  "../skill-usage-review/scripts/agent-shell-skill-usage-review"
+                  (&optional shell-buffer))
+(declare-function agent-shell-skill-usage-review-enable
+                  "../skill-usage-review/scripts/agent-shell-skill-usage-review"
+                  ())
 (declare-function org-blog-exporter-run
                   "../org-blog-exporter/scripts/org-blog-exporter" (request))
 (declare-function org-blog-exporter--finish-publish
@@ -165,6 +178,7 @@
            "emacs-gtd-assistant/scripts/agent-shell-gtd-capture.el"
            "denote-scribe/scripts/denote-scribe.el"
            "denote-scribe/scripts/agent-shell-denote-capture.el"
+           "skill-usage-review/scripts/agent-shell-skill-usage-review.el"
            "org-blog-exporter/scripts/org-blog-exporter.el"
            "git-commit/scripts/ai-git-commit.el"
            "git-commit/scripts/agent-shell-git-review.el"))
@@ -641,6 +655,57 @@
     (should
      (agent-shell-denote-capture--applicable-p
       (current-buffer) '(:stop-reason "end_turn")))))
+
+(ert-deftest skill-usage-review-action-is-read-only-and-tool-gated ()
+  (let ((prompt (agent-shell-skill-usage-review--prompt)))
+    (should (string-match-p "\\$skill-usage-review" prompt))
+    (should (string-match-p "Do not rerun" prompt))
+    (should (string-match-p "modify files" prompt))
+    (should (string-match-p "rather than exact token usage" prompt)))
+  (with-temp-buffer
+    (should-not
+     (agent-shell-skill-usage-review--applicable-p
+      (current-buffer) '(:stop-reason "end_turn")))
+    (should
+     (agent-shell-skill-usage-review--applicable-p
+      (current-buffer)
+      '(:stop-reason "end_turn" :tool-call-ids ("call-1"))))
+    (should-not
+     (agent-shell-skill-usage-review--applicable-p
+      (current-buffer)
+      '(:stop-reason "cancelled" :tool-call-ids ("call-1"))))
+    (setq agent-shell-skill-usage-review--suppress-count 1)
+    (should-not
+     (agent-shell-skill-usage-review--applicable-p
+      (current-buffer)
+      '(:stop-reason "end_turn" :tool-call-ids ("call-1"))))
+    (should
+     (agent-shell-skill-usage-review--applicable-p
+      (current-buffer)
+      '(:stop-reason "end_turn" :tool-call-ids ("call-1"))))))
+
+(ert-deftest skill-usage-review-registers-one-english-prompt-action ()
+  (let ((skill-agent-shell-turn-actions nil)
+        inserted)
+    (cl-letf (((symbol-function 'skill-agent-shell-bridge-enable)
+               #'ignore)
+              ((symbol-function 'agent-shell-insert)
+               (lambda (&rest arguments) (setq inserted arguments))))
+      (agent-shell-skill-usage-review-enable)
+      (let ((action
+             (seq-find
+              (lambda (entry)
+                (eq (plist-get entry :id) 'skill-usage-review))
+              skill-agent-shell-turn-actions)))
+        (should (equal (plist-get action :label) "Review skill usage"))
+        (should (= (plist-get action :priority) 10)))
+      (with-temp-buffer
+        (agent-shell-skill-usage-review (current-buffer))
+        (should (eq (plist-get inserted :submit) t))
+        (should (eq (plist-get inserted :shell-buffer) (current-buffer)))
+        (should
+         (equal (plist-get inserted :text)
+                (agent-shell-skill-usage-review--prompt)))))))
 
 (ert-deftest denote-hywiki-create-and-replace-stay-in-the-selected-directory ()
   (let* ((root (make-temp-file "denote-hywiki-" t))
