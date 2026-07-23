@@ -85,6 +85,49 @@
     (add-many
      :summary "Atomically add confirmed structured tasks from a conversation."
      :required (:tasks :authorization)
+     :types
+     ((:tasks
+       (list-of
+        (plist
+         :required (:title)
+         :optional (:headline :context :todo :scheduled :deadline :priority
+                              :tags :body :context-notes :links :properties)
+         :types
+         ((:title
+           (custom emacs-gtd--validate-single-line-contract
+                   :description "A non-empty single-line task title."))
+          (:headline
+           (custom emacs-gtd--validate-single-line-contract
+                   :description "A non-empty single-line Org heading."))
+          (:todo
+           (custom emacs-gtd--validate-single-line-contract
+                   :description "A single-line configured Org TODO state."))
+          (:scheduled
+           (custom emacs-gtd-normalize-timestamp
+                   :description "An Org date or timestamp."))
+          (:deadline
+           (custom emacs-gtd-normalize-timestamp
+                   :description "An Org date or timestamp."))
+          (:priority (string :length 1))
+          (:tags
+           (custom emacs-gtd--validate-tags
+                   :description "Org tags without whitespace or colons."))
+          (:body string)
+          (:context-notes
+           (custom emacs-gtd--validate-context-notes
+                   :description "Bounded plain context text."))
+          (:links
+           (custom emacs-gtd--validate-links
+                   :description "Safe HTTP, file, or id resource links."))
+          (:properties
+           (custom emacs-gtd--validate-properties
+                   :description "Safe non-reserved Org properties.")))
+         :choices ((:context personal work))
+         :closed t)
+        :min-items 1)))
+     :validators
+     ((:tasks emacs-gtd--validate-task-list
+              "Task count is bounded by emacs-gtd-capture-task-limit."))
      :choices ((:authorization explicit))
      :effects (:mutated))
     (set-state :summary "Resolve an ID or unique query, then update its state."
@@ -205,6 +248,41 @@ When INACTIVE is non-nil, return an inactive timestamp like
    "^\\([*:][^\n]*\\)$" ",\\1"
    (string-trim-right (substring-no-properties text))))
 
+(defun emacs-gtd--validate-single-line-contract (text)
+  "Return validated non-empty single-line TEXT."
+  (emacs-gtd--single-line text "VALUE"))
+
+(defun emacs-gtd--validate-tags (tags)
+  "Return validated Org TAGS."
+  (unless (or (null tags)
+              (and (listp tags)
+                   (seq-every-p
+                    (lambda (tag)
+                      (and (stringp tag)
+                           (string-match-p "\\`[^[:space:]:]+\\'" tag)))
+                    tags)))
+    (error "TAGS must contain valid Org tag strings"))
+  tags)
+
+(defun emacs-gtd--validate-context-notes (text)
+  "Return validated bounded context-note TEXT."
+  (when text
+    (unless (stringp text)
+      (error "CONTEXT-NOTES must be a string"))
+    (when (> (length text) emacs-gtd-context-maximum-characters)
+      (error "CONTEXT-NOTES exceeds the configured limit of %d"
+             emacs-gtd-context-maximum-characters)))
+  text)
+
+(defun emacs-gtd--validate-task-list (tasks)
+  "Return TASKS after validating conversation-capture cardinality."
+  (unless (and (listp tasks) tasks)
+    (error "TASKS must be a non-empty list"))
+  (when (> (length tasks) emacs-gtd-capture-task-limit)
+    (error "TASKS exceeds the configured limit of %d"
+           emacs-gtd-capture-task-limit))
+  tasks)
+
 (defun emacs-gtd--validate-properties (properties)
   "Return validated Org PROPERTIES without reserved keys."
   (unless (or (null properties)
@@ -259,23 +337,10 @@ When INACTIVE is non-nil, return an inactive timestamp like
     (when (and priority
                (not (and (stringp priority) (= (length priority) 1))))
       (error "PRIORITY must be one character"))
-    (unless (or (null tags)
-                (and (listp tags)
-                     (seq-every-p
-                      (lambda (tag)
-                        (and (stringp tag)
-                             (string-match-p "\\`[^[:space:]:]+\\'" tag)))
-                      tags)))
-      (error "TAGS must contain valid Org tag strings"))
-    (dolist (pair `((,context-notes . "CONTEXT-NOTES") (,body . "BODY")))
-      (when (car pair)
-        (unless (stringp (car pair))
-          (error "%s must be a string" (cdr pair)))))
-    (when (and context-notes
-               (> (length context-notes)
-                  emacs-gtd-context-maximum-characters))
-      (error "CONTEXT-NOTES exceeds the configured limit of %d"
-             emacs-gtd-context-maximum-characters))
+    (emacs-gtd--validate-tags tags)
+    (emacs-gtd--validate-context-notes context-notes)
+    (when (and body (not (stringp body)))
+      (error "BODY must be a string"))
     (plist-put copy :title title)
     (plist-put copy :properties
                (emacs-gtd--validate-properties
@@ -448,11 +513,6 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
          (properties (plist-get plist :properties))
          (tags (plist-get plist :tags)))
     (emacs-gtd--single-line todo "TODO")
-    (unless (or (null body) (stringp body))
-      (error "BODY must be a string or nil"))
-    (unless (or (null tags)
-                (and (listp tags) (seq-every-p #'stringp tags)))
-      (error "TAGS must be a list of strings or nil"))
     (with-current-buffer (emacs-gtd--buffer t)
       (unless (member todo org-todo-keywords-1)
         (error "Unknown TODO state in the configured Org buffer: %S" todo))
@@ -495,11 +555,7 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
 
 (defun emacs-gtd-add-many (tasks)
   "Atomically add validated structured TASKS and return created items."
-  (unless (and (listp tasks) tasks)
-    (error "TASKS must be a non-empty list"))
-  (when (> (length tasks) emacs-gtd-capture-task-limit)
-    (error "TASKS exceeds the configured limit of %d"
-           emacs-gtd-capture-task-limit))
+  (emacs-gtd--validate-task-list tasks)
   (let ((validated (mapcar #'emacs-gtd--validate-task-spec tasks)))
     (with-current-buffer (emacs-gtd--buffer t)
       (atomic-change-group

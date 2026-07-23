@@ -606,6 +606,37 @@
       (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
       (delete-directory root t))))
 
+(ert-deftest gtd-add-many-schema-exposes-and-enforces-task-shape ()
+  (let* ((description
+          (emacs-gtd-execute '(:operation describe :target add-many)))
+         (schema (plist-get (plist-get description :data) :schema))
+         (tasks-type (cadr (assq :tasks (plist-get schema :types))))
+         (task-type (cadr tasks-type)))
+    (should (eq (car tasks-type) 'list-of))
+    (should (eq (car task-type) 'plist))
+    (should (plist-get (cdr task-type) :closed))
+    (should (assq :tasks (plist-get schema :validators))))
+  (let ((error-data
+         (should-error
+          (emacs-gtd-execute
+           '(:operation add-many :authorization explicit
+             :tasks ((:title "Task" :priority "AB")))))))
+    (should (string-match-p "tasks\\[0\\]"
+                            (error-message-string error-data))))
+  (should-error
+   (emacs-gtd-execute
+    '(:operation add-many :authorization explicit
+      :tasks ((:title "Task" :unknown t)))))
+  (should-error
+   (emacs-gtd-execute
+    '(:operation add-many :authorization explicit
+      :tasks ((:title "Task" :context someday)))))
+  (let ((emacs-gtd-capture-task-limit 1))
+    (should-error
+     (emacs-gtd-execute
+      '(:operation add-many :authorization explicit
+        :tasks ((:title "One") (:title "Two")))))))
+
 (ert-deftest gtd-capture-prompt-is-read-only-and-suppresses-loops ()
   (let ((prompt (agent-shell-gtd-capture--prompt)))
     (should (string-match-p "Do not write to gtd.org yet" prompt))
