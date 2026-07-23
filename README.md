@@ -270,10 +270,12 @@ zip -r ai-skills.zip \
 
 ```bash
 emacs -Q --batch -l tests/run-tests.el
+emacs -Q --batch -l tests/run-tests.el emacs-gtd-assistant-tests.el
 ```
 
-测试入口会初始化已安装的 Emacs packages，并明确要求 Magit 和 Git，使真实的路径限定
-context 测试不会在 `-Q` 环境中静默跳过；缺少依赖时测试会直接失败并给出说明。
+不带 suite 参数时运行全部测试；传入一个或多个 suite 文件名时，只加载对应领域实现，
+便于隔离定位失败。测试入口会初始化已安装的 Emacs packages；需要 Magit 或 Git 的 suite
+会显式检查依赖，使真实的路径限定 context 测试不会在 `-Q` 环境中静默跳过。
 
 在 Emacs 配置中启用公共代码上下文和 Git 回合审阅：
 

@@ -1,20 +1,40 @@
-;;; run-tests.el --- Load dependencies and run skill contracts -*- lexical-binding: t; -*-
+;;; run-tests.el --- Load and run isolated skill test suites -*- lexical-binding: t; -*-
 
 ;;; Code:
 
 (require 'package)
 (package-initialize)
 
-(unless (require 'magit nil t)
-  (error "Magit is required for the full contract suite; install it in an Emacs package directory"))
+(defconst skill-test-suite-files
+  '("skill-runtime-tests.el"
+    "agent-shell-bridge-tests.el"
+    "emacs-code-navigator-tests.el"
+    "emacs-gtd-assistant-tests.el"
+    "denote-scribe-tests.el"
+    "org-blog-exporter-tests.el"
+    "git-commit-tests.el"
+    "skill-usage-review-tests.el"
+    "contract-conformance-tests.el")
+  "Test suites loaded when no explicit suite arguments are supplied.")
 
-(unless (executable-find "git")
-  (error "Git is required for the full contract suite"))
+(defun skill-test-runner--normalize-suite (argument)
+  "Return a known suite basename for command-line ARGUMENT."
+  (let ((suite (file-name-nondirectory argument)))
+    (unless (member suite skill-test-suite-files)
+      (error "Unknown skill test suite: %s" argument))
+    suite))
 
-(load (expand-file-name
-       "skill-contract-tests.el"
-       (file-name-directory (or load-file-name buffer-file-name)))
-      nil nil t)
+(let* ((directory
+        (file-name-directory (or load-file-name buffer-file-name)))
+       (requested command-line-args-left)
+       (suites
+        (if requested
+            (mapcar #'skill-test-runner--normalize-suite requested)
+          skill-test-suite-files)))
+  (setq command-line-args-left nil)
+  (add-to-list 'load-path directory)
+  (dolist (suite suites)
+    (load (expand-file-name suite directory) nil nil t)))
 
 (ert-run-tests-batch-and-exit)
 
