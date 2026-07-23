@@ -10,6 +10,9 @@ description: >-
 Resolve `scripts/org-blog-exporter.el` from this skill directory, not the working
 directory; load it and call `org-blog-exporter-run` through the running Emacs
 server.
+Call documented script entry points directly. If a facade schema is unclear, use
+its `describe` operation. Do not inspect script implementations unless the
+documented entry point fails.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",

@@ -10,6 +10,9 @@ description: >-
 Resolve `scripts/ai-git-commit.el` from this skill directory, not the working
 directory; load it and call `ai-git-commit-run`. Collect `context` before deriving
 the structured evidence used by `format`, `commit`, or `amend`.
+Call documented script entry points directly. If a facade schema is unclear, use
+its `describe` operation. Do not inspect script implementations unless the
+documented entry point fails.
 Context includes bounded diffs for untracked files, with truncation metadata;
 do not infer their contents from `git status` alone.
 When the intended file set is known, pass the same exact `:paths` to `context`.

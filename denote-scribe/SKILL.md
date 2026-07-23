@@ -13,6 +13,9 @@ Treat Denote as reasoning history and HyWiki as stable knowledge.
 Resolve bundled paths from this skill directory, not the working directory. Load
 `scripts/denote-scribe.el` and call `denote-scribe-run`. Read
 `references/hywiki-denote-interface.md` only when integration details are needed.
+Call documented script entry points directly. If a facade schema is unclear, use
+its `describe` operation. Do not inspect script implementations unless the
+documented entry point fails.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",

@@ -18,6 +18,9 @@ For the English agent-shell action, load
 `agent-shell-skill-usage-review-enable`. It offers `Review skill usage` only
 after a successful turn containing tool calls, sends a read-only review request
 to the same conversation, and suppresses recursive review suggestions.
+Call documented script entry points directly. If a facade schema is unclear, use
+its `describe` operation. Do not inspect script implementations unless the
+documented entry point fails.
 
 Apply correctness as a gate: if the requested outcome was not achieved, report that first and do
 not reward a short response as efficient. Count failed calls and schema retries from the visible

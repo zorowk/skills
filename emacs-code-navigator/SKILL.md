@@ -11,6 +11,9 @@ description: >-
 Resolve `scripts/emacs-code-navigator.el` from this skill directory, not the working
 directory; load it and call `emacs-code-navigator-query` through the
 running Emacs session.
+Call documented script entry points directly. If a facade schema is unclear, use
+its `describe` operation. Do not inspect script implementations unless the
+documented entry point fails.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
