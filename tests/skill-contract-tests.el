@@ -93,6 +93,15 @@
 (defun skill-contract-test-even-integer-p (value)
   "Return non-nil when VALUE is an even integer."
   (and (integerp value) (zerop (% value 2))))
+
+(defun skill-contract-tests-assert-failure (result status code)
+  "Assert RESULT is a structured failure with STATUS and CODE."
+  (should (= (plist-get result :protocol-version) 2))
+  (should (eq (plist-get result :status) status))
+  (should (eq (plist-get (plist-get result :error) :code) code))
+  (should (plist-member result :effects))
+  (should (plist-get result :metrics))
+  result)
 (declare-function emacs-code-navigator-agent-shell-context
                   "../emacs-code-navigator/scripts/agent-shell-code-context" ())
 (declare-function emacs-code-navigator-agent-shell-enable
@@ -450,20 +459,18 @@
          (types (plist-get schema :types)))
     (should (equal (cadr (assq :line types)) '(integer :min 1)))
     (should (eq (cadr (assq :definitions types)) 'boolean)))
-  (should-error
-   (emacs-code-navigator-query
-    '(:operation context :file "/tmp/example.el" :line "1")))
-  (should-error
-   (emacs-code-navigator-query
-    '(:operation context :file "/tmp/example.el" :line 1
-                 :definitions yes)))
-  (should-error
-   (emacs-code-navigator-query
-    '(:operation locate-many :query "value"
-                 :directories ("/a" "/b" "/c" "/d" "/e" "/f"))))
-  (should-error
-   (emacs-code-navigator-query
-    '(:operation diagnostics :file "/tmp/example.el" :directory "/tmp"))))
+  (dolist
+      (request
+       '((:operation context :file "/tmp/example.el" :line "1")
+         (:operation context :file "/tmp/example.el" :line 1
+                     :definitions yes)
+         (:operation locate-many :query "value"
+                     :directories ("/a" "/b" "/c" "/d" "/e" "/f"))
+         (:operation diagnostics :file "/tmp/example.el"
+                     :directory "/tmp")))
+    (skill-contract-tests-assert-failure
+     (emacs-code-navigator-query request)
+     'needs-input 'invalid-request)))
 
 (ert-deftest skill-facades-describe-with-standard-envelope ()
   (dolist (call (list #'emacs-code-navigator-query
@@ -479,6 +486,19 @@
       (should (natnump
                (plist-get (plist-get result :metrics) :elapsed-ms)))
       (should (plist-get (plist-get result :data) :operations)))))
+
+(ert-deftest skill-facades-return-structured-invalid-requests ()
+  (dolist (call (list #'emacs-code-navigator-query
+                      #'emacs-gtd-execute
+                      #'denote-scribe-run
+                      #'org-blog-exporter-run
+                      #'ai-git-commit-run))
+    (let ((result (funcall call '(:operation unknown))))
+      (skill-contract-tests-assert-failure
+       result 'needs-input 'invalid-request)
+      (should (equal
+               (plist-get (plist-get result :error) :field-path)
+               '(:operation))))))
 
 (ert-deftest facade-operation-schemas-carry-elisp-owned-guidance ()
   (dolist (call (list #'emacs-code-navigator-query
@@ -620,7 +640,9 @@
         (progn
           (with-temp-file file (insert "* Personal\n* Deepin\n"))
           (with-temp-file org-id-locations-file (insert "()\n"))
-          (should-error (emacs-gtd-execute request))
+          (skill-contract-tests-assert-failure
+           (emacs-gtd-execute request)
+           'needs-input 'authorization-required)
           (let ((result
                  (emacs-gtd-execute
                   (append request '(:authorization explicit)))))
@@ -648,26 +670,31 @@
     (should (eq (car task-type) 'plist))
     (should (plist-get (cdr task-type) :closed))
     (should (assq :tasks (plist-get schema :validators))))
-  (let ((error-data
-         (should-error
+  (let* ((result
           (emacs-gtd-execute
            '(:operation add-many :authorization explicit
-             :tasks ((:title "Task" :priority "AB")))))))
+             :tasks ((:title "Task" :priority "AB")))))
+         (error-data (plist-get result :error)))
+    (skill-contract-tests-assert-failure
+     result 'needs-input 'invalid-request)
     (should (string-match-p "tasks\\[0\\]"
-                            (error-message-string error-data))))
-  (should-error
+                            (plist-get error-data :message))))
+  (skill-contract-tests-assert-failure
    (emacs-gtd-execute
     '(:operation add-many :authorization explicit
-      :tasks ((:title "Task" :unknown t)))))
-  (should-error
+      :tasks ((:title "Task" :unknown t))))
+   'needs-input 'invalid-request)
+  (skill-contract-tests-assert-failure
    (emacs-gtd-execute
     '(:operation add-many :authorization explicit
-      :tasks ((:title "Task" :context someday)))))
+      :tasks ((:title "Task" :context someday))))
+   'needs-input 'invalid-request)
   (let ((emacs-gtd-capture-task-limit 1))
-    (should-error
+    (skill-contract-tests-assert-failure
      (emacs-gtd-execute
       '(:operation add-many :authorization explicit
-        :tasks ((:title "One") (:title "Two")))))))
+        :tasks ((:title "One") (:title "Two"))))
+     'needs-input 'invalid-request)))
 
 (ert-deftest gtd-capture-prompt-is-read-only-and-suppresses-loops ()
   (let ((prompt (agent-shell-gtd-capture--prompt)))
@@ -685,13 +712,14 @@
       (current-buffer) '(:stop-reason "end_turn")))))
 
 (ert-deftest gtd-capture-rejects-executable-org-links ()
-  (should-error
+  (skill-contract-tests-assert-failure
    (emacs-gtd-execute
     '(:operation add-many
       :authorization explicit
       :tasks
       ((:title "Unsafe link"
-        :links ((:target "elisp:(message \"unsafe\")"))))))))
+        :links ((:target "elisp:(message \"unsafe\")"))))))
+   'needs-input 'invalid-request))
 
 (ert-deftest blog-facade-exports-into-an-isolated-directory ()
   (let* ((root (make-temp-file "blog-facade-" t))
@@ -774,7 +802,9 @@
     (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)
                (lambda (&rest _)
                  '(:file "/tmp/created.org" :review-state (:review-due nil)))))
-      (should-error (denote-scribe-run request))
+      (skill-contract-tests-assert-failure
+       (denote-scribe-run request)
+       'needs-input 'authorization-required)
       (let ((result
              (denote-scribe-run
               (append request '(:authorization explicit)))))
@@ -798,10 +828,11 @@
           (make-directory notes)
           (with-temp-file note
             (insert-file-contents template))
-          (should-error
+          (skill-contract-tests-assert-failure
            (denote-scribe-run
             (list :operation 'link-gtd :file note :tasks tasks
-                  :notes-dir notes)))
+                  :notes-dir notes))
+           'needs-input 'authorization-required)
           (denote-scribe-run
            (list :operation 'link-gtd :file note :tasks tasks
                  :notes-dir notes :authorization 'explicit))
@@ -928,10 +959,11 @@
                           :body-file body :hywiki-dir hywiki))))
               (should (eq (plist-get (plist-get created :data) :status)
                           'created)))
-            (should-error
+            (skill-contract-tests-assert-failure
              (denote-scribe-run
               (list :operation 'hywiki :page-name "TestConcept"
-                    :body-file body :hywiki-dir hywiki :replace t)))
+                    :body-file body :hywiki-dir hywiki :replace t))
+             'needs-input 'authorization-required)
             (let ((replaced
                    (denote-scribe-run
                     (list :operation 'hywiki :page-name "TestConcept"
@@ -1659,12 +1691,18 @@
    (ai-git-commit-format '(:type "fix" :summary "reject incomplete input"))))
 
 (ert-deftest destructive-facades-require-authorization-before-effects ()
-  (should-error (emacs-gtd-execute '(:operation delete :id "sample")))
-  (should-error (denote-scribe-run '(:operation commit)))
-  (should-error (org-blog-exporter-run '(:operation publish)))
-  (should-error
-   (ai-git-commit-run
-    (append '(:operation commit) skill-contract-tests-message-spec))))
+  (dolist
+      (result
+       (list
+        (emacs-gtd-execute '(:operation delete :id "sample"))
+        (denote-scribe-run
+         '(:operation commit :title "Review note" :paths ("note.org")))
+        (org-blog-exporter-run '(:operation publish))
+        (ai-git-commit-run
+         (append '(:operation commit) skill-contract-tests-message-spec))))
+    (skill-contract-tests-assert-failure
+     result 'needs-input 'authorization-required)
+    (should-not (plist-get result :effects))))
 
 (ert-deftest git-commit-facade-uses-one-headless-magit-message-argument ()
   (let (captured)

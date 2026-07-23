@@ -91,6 +91,11 @@
     (error "Public skill condition properties must be a plist: %S" properties))
   (signal condition (list (append (list :message message) properties))))
 
+(defun skill-runtime-reject-request (message &rest properties)
+  "Signal an invalid public request with MESSAGE and PROPERTIES."
+  (apply #'skill-runtime-signal
+         'skill-runtime-invalid-request message properties))
+
 (defun skill-runtime--plist-without (plist keys)
   "Return PLIST without any entries whose key is in KEYS."
   (let ((tail plist)
@@ -242,7 +247,12 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
 (defun skill-runtime-require-authorization (request action)
   "Require explicit authorization in REQUEST for ACTION."
   (unless (eq (plist-get request :authorization) 'explicit)
-    (error "%s requires :authorization `explicit'" action))
+    (skill-runtime-signal
+     'skill-runtime-authorization-required
+     (format "%s requires :authorization `explicit'" action)
+     :field-path '(:authorization)
+     :expected 'explicit
+     :actual (plist-get request :authorization)))
   t)
 
 (defun skill-runtime--well-formed-plist-p (value)
@@ -292,7 +302,10 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
              (lambda (field) (skill-runtime--field-active-p value field))
              group))))
       (unless (= count 1)
-        (error "%S %s requires exactly one of %S" operation path group))))
+        (skill-runtime-reject-request
+         (format "%S %s requires exactly one of %S" operation path group)
+         :field-path path :expected (list :exactly-one-of group)
+         :actual count))))
   (dolist (group
            (skill-runtime--constraint-groups
             (plist-get schema :mutually-exclusive) ":mutually-exclusive"))
@@ -302,8 +315,11 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
              (lambda (field) (skill-runtime--field-active-p value field))
              group))))
       (when (> count 1)
-        (error "%S %s fields are mutually exclusive: %S"
-               operation path group)))))
+        (skill-runtime-reject-request
+         (format "%S %s fields are mutually exclusive: %S"
+                 operation path group)
+         :field-path path :expected (list :at-most-one-of group)
+         :actual count)))))
 
 (defun skill-runtime--validate-dependencies (operation schema value path)
   "Validate dependent fields in VALUE against SCHEMA at PATH."
@@ -315,8 +331,11 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
     (when (skill-runtime--field-active-p value (car spec))
       (dolist (dependent (cdr spec))
         (unless (skill-runtime--field-active-p value dependent)
-          (error "%S %s %S requires non-nil %S"
-                 operation path (car spec) dependent))))))
+          (skill-runtime-reject-request
+           (format "%S %s %S requires non-nil %S"
+                   operation path (car spec) dependent)
+           :field-path (list path dependent)
+           :required-by (car spec)))))))
 
 (defun skill-runtime--validate-custom (operation path value validator)
   "Validate VALUE with named VALIDATOR for OPERATION at PATH."
@@ -326,8 +345,10 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
       (unless (funcall validator value)
         (error "validator returned nil"))
     (error
-     (error "%S %s failed validator %S: %s"
-            operation path validator (error-message-string error-data)))))
+     (skill-runtime-reject-request
+      (format "%S %s failed validator %S: %s"
+              operation path validator (error-message-string error-data))
+      :field-path path :validator validator))))
 
 (defun skill-runtime--validate-type (operation path value type)
   "Validate VALUE as TYPE for OPERATION at PATH."
@@ -361,7 +382,9 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
            (and (listp value)
                 (seq-every-p #'skill-runtime--well-formed-plist-p value)))
           (_ (error "Unknown schema field type: %S" type)))
-      (error "%S %s must be %S" operation path type)))
+      (skill-runtime-reject-request
+       (format "%S %s must be %S" operation path type)
+       :field-path path :expected type :actual value)))
    ((and (listp type) (eq (car type) 'integer))
     (let ((options (cdr type)))
       (unless (and (integerp value)
@@ -369,7 +392,9 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
                        (>= value (plist-get options :min)))
                    (or (not (plist-member options :max))
                        (<= value (plist-get options :max))))
-        (error "%S %s must satisfy %S" operation path type))))
+        (skill-runtime-reject-request
+         (format "%S %s must satisfy %S" operation path type)
+         :field-path path :expected type :actual value))))
    ((and (listp type) (eq (car type) 'string))
     (let ((options (cdr type)))
       (unless
@@ -381,18 +406,26 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
                (>= (length value) (plist-get options :min-length)))
            (or (not (plist-member options :max-length))
                (<= (length value) (plist-get options :max-length))))
-        (error "%S %s must satisfy %S" operation path type))))
+        (skill-runtime-reject-request
+         (format "%S %s must satisfy %S" operation path type)
+         :field-path path :expected type :actual value))))
    ((and (listp type) (eq (car type) 'list-of))
     (let ((item-type (cadr type))
           (options (cddr type)))
       (unless (listp value)
-        (error "%S %s must satisfy %S" operation path type))
+        (skill-runtime-reject-request
+         (format "%S %s must satisfy %S" operation path type)
+         :field-path path :expected type :actual value))
       (when (and (plist-member options :min-items)
                  (< (length value) (plist-get options :min-items)))
-        (error "%S %s must satisfy %S" operation path type))
+        (skill-runtime-reject-request
+         (format "%S %s must satisfy %S" operation path type)
+         :field-path path :expected type :actual value))
       (when (and (plist-member options :max-items)
                  (> (length value) (plist-get options :max-items)))
-        (error "%S %s must satisfy %S" operation path type))
+        (skill-runtime-reject-request
+         (format "%S %s must satisfy %S" operation path type)
+         :field-path path :expected type :actual value))
       (let ((index 0))
         (dolist (item value)
           (skill-runtime--validate-type
@@ -400,7 +433,9 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
           (setq index (1+ index))))))
    ((and (listp type) (eq (car type) 'plist))
     (unless (skill-runtime--well-formed-plist-p value)
-      (error "%S %s must be a well-formed plist" operation path))
+      (skill-runtime-reject-request
+       (format "%S %s must be a well-formed plist" operation path)
+       :field-path path :expected 'plist :actual value))
     (skill-runtime--validate-plist-schema operation (cdr type) value path))
    ((and (listp type) (eq (car type) 'custom))
     (skill-runtime--validate-custom operation path value (cadr type)))
@@ -423,8 +458,20 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
           (choices (cdr spec)))
       (when (and (skill-runtime--field-active-p value field)
                  (not (member (plist-get value field) choices)))
-        (error "%S %s.%s must be one of %S: %S"
-               operation path field choices (plist-get value field))))))
+        (if (eq field :authorization)
+            (skill-runtime-signal
+             'skill-runtime-authorization-required
+             (format "%S requires authorized %S to be one of %S"
+                     operation field choices)
+             :field-path '(:authorization)
+             :expected choices
+             :actual (plist-get value field))
+          (skill-runtime-reject-request
+           (format "%S %s.%s must be one of %S: %S"
+                   operation path field choices (plist-get value field))
+           :field-path (list path field)
+           :expected choices
+           :actual (plist-get value field)))))))
 
 (defun skill-runtime--validate-field-validators (operation schema value path)
   "Run named field validators declared by SCHEMA against VALUE at PATH."
@@ -459,12 +506,24 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
   "Validate plist VALUE against SCHEMA for OPERATION at PATH."
   (dolist (field (plist-get schema :required))
     (unless (skill-runtime--field-active-p value field)
-      (error "%S %s requires non-nil %S" operation path field)))
+      (if (eq field :authorization)
+          (skill-runtime-signal
+           'skill-runtime-authorization-required
+           (format "%S requires :authorization `explicit'" operation)
+           :field-path '(:authorization)
+           :expected 'explicit
+           :actual (plist-get value field))
+        (skill-runtime-reject-request
+         (format "%S %s requires non-nil %S" operation path field)
+         :field-path (list path field)
+         :expected 'non-nil))))
   (when-let* ((fields (plist-get schema :required-one-of)))
     (unless (seq-some
              (lambda (field) (skill-runtime--field-active-p value field))
              fields)
-      (error "%S %s requires one of %S" operation path fields)))
+      (skill-runtime-reject-request
+       (format "%S %s requires one of %S" operation path fields)
+       :field-path path :expected (list :at-least-one-of fields))))
   (skill-runtime--validate-cardinality operation schema value path)
   (skill-runtime--validate-dependencies operation schema value path)
   (skill-runtime--validate-field-types operation schema value path)
@@ -475,7 +534,11 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
           (tail value))
       (while tail
         (unless (memq (car tail) allowed)
-          (error "%S %s does not allow field %S" operation path (car tail)))
+          (skill-runtime-reject-request
+           (format "%S %s does not allow field %S"
+                   operation path (car tail))
+           :field-path (list path (car tail))
+           :expected allowed))
         (setq tail (cddr tail)))))
   value)
 
@@ -490,12 +553,18 @@ operation-specific validation remains the facade's responsibility."
                (condition-case nil
                    (zerop (% (length request) 2))
                  (error nil)))
-    (error "REQUEST must be a well-formed plist"))
+    (skill-runtime-reject-request
+     "REQUEST must be a well-formed plist"
+     :field-path nil :expected 'plist :actual request))
   (let* ((operation (plist-get request :operation))
          (schema (alist-get operation schemas)))
     (unless schema
-      (error "Unknown operation %S; expected %S"
-             operation (mapcar #'car schemas)))
+      (skill-runtime-reject-request
+       (format "Unknown operation %S; expected %S"
+               operation (mapcar #'car schemas))
+       :field-path '(:operation)
+       :expected (mapcar #'car schemas)
+       :actual operation))
     (skill-runtime--validate-plist-schema
      operation schema request (symbol-name operation))))
 
@@ -516,7 +585,11 @@ SCHEMAS is an alist whose entries are (OPERATION . PLIST)."
   (if target
       (let ((schema (alist-get target schemas)))
         (unless schema
-          (error "Unknown operation for describe: %S" target))
+          (skill-runtime-reject-request
+           (format "Unknown operation for describe: %S" target)
+           :field-path '(:target)
+           :expected (mapcar #'car schemas)
+           :actual target))
         (list :operation target :schema schema))
     (list :operations (mapcar #'car schemas)
           :catalog (mapcar #'skill-runtime--catalog-entry schemas))))
