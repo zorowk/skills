@@ -11,6 +11,29 @@
 (defvar skill-runtime-envelope-version)
 (defvar skill-runtime-metrics-version)
 
+(defconst skill-runtime-test-public-failures
+  '((skill-runtime-invalid-request
+     needs-input invalid-request after-input revise-request)
+    (skill-runtime-authorization-required
+     needs-input authorization-required after-input confirm)
+    (skill-runtime-permission-denied
+     blocked permission-denied after-permission-change grant-permission)
+    (skill-runtime-not-found
+     needs-input not-found after-input select-target)
+    (skill-runtime-ambiguous
+     needs-input ambiguous after-input disambiguate)
+    (skill-runtime-conflict
+     blocked conflict after-refresh refresh-state)
+    (skill-runtime-unavailable
+     blocked unavailable after-environment-change restore-environment)
+    (skill-runtime-stale-context
+     blocked stale-context after-refresh refresh-context)
+    (skill-runtime-partial-failure
+     partial partial-failure selective inspect-failures)
+    (skill-runtime-internal-error
+     failed internal-error never inspect-implementation))
+  "Stable lifecycle mapping for every typed public runtime failure.")
+
 (defun skill-contract-test-even-integer-p (value)
   "Return non-nil when VALUE is an even integer."
   (and (integerp value) (zerop (% value 2))))
@@ -74,6 +97,37 @@
      (equal (plist-get result :verification)
             '(:workflow (:authorization-checked t))))
     (should (plist-get result :metrics))))
+
+(ert-deftest skill-runtime-public-failure-matrix-is-stable ()
+  (dolist (case skill-runtime-test-public-failures)
+    (pcase-let ((`(,condition ,status ,code ,retry ,required-action)
+                 case))
+      (let* ((partial (eq condition 'skill-runtime-partial-failure))
+             (properties
+              (and partial
+                   '(:data (:completed ("one"))
+                     :count 1
+                     :effects (:mutated-count 1))))
+             (result
+              (skill-runtime-measure
+               '(:operation sample)
+               (lambda ()
+                 (apply #'skill-runtime-signal
+                        condition "Expected public failure." properties))))
+             (error-data (plist-get result :error)))
+        (skill-contract-tests-assert-failure result status code)
+        (should (stringp (plist-get error-data :message)))
+        (should (eq (plist-get error-data :retry) retry))
+        (should (eq (plist-get error-data :required-action)
+                    required-action))
+        (if partial
+            (progn
+              (should (equal (plist-get result :data)
+                             '(:completed ("one"))))
+              (should (= (plist-get result :count) 1))
+              (should (equal (plist-get result :effects)
+                             '(:mutated-count 1))))
+          (should-not (plist-get result :effects)))))))
 
 (ert-deftest skill-runtime-preserves-unexpected-lisp-errors ()
   (should-error
