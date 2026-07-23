@@ -72,8 +72,11 @@
    "persistent telemetry solely for this review. Treat local character metrics "
    "as proxies rather than exact token usage, state missing-evidence limits, "
    "and return the compact outcome gate, per-skill evidence, measured totals, "
-   "efficiency range, score, and at most three prioritized improvements. "
-   "Separate observed facts from inferences."))
+   "and independent 0-3 ratings for correctness, evidence sufficiency, safety, "
+   "and economy. Do not combine the ratings into a composite score. Report "
+   "observed recovery cost separately from inferred latent recovery risk, treat "
+   "the efficiency range as diagnostic only, and give at most three prioritized "
+   "improvements. Separate observed facts from inferences."))
 
 ;;;###autoload
 (defun agent-shell-skill-usage-review (&optional shell-buffer)

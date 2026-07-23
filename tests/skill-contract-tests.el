@@ -1343,7 +1343,15 @@
     (should (string-match-p "\\$skill-usage-review" prompt))
     (should (string-match-p "Do not rerun" prompt))
     (should (string-match-p "modify files" prompt))
-    (should (string-match-p "rather than exact token usage" prompt)))
+    (should (string-match-p "rather than exact token usage" prompt))
+    (dolist (dimension
+             '("correctness" "evidence sufficiency" "safety" "economy"))
+      (should (string-match-p dimension prompt)))
+    (should (string-match-p "Do not combine" prompt))
+    (should (string-match-p "composite score" prompt))
+    (should (string-match-p "observed recovery cost" prompt))
+    (should (string-match-p "latent recovery risk" prompt))
+    (should (string-match-p "diagnostic only" prompt)))
   (with-temp-buffer
     (should-not
      (agent-shell-skill-usage-review--applicable-p
