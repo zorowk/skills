@@ -1,4 +1,4 @@
 interface:
   display_name: "Emacs GTD Assistant"
-  short_description: "Manage Org GTD tasks through Emacs"
-  default_prompt: "Use $emacs-gtd-assistant to query or update my Emacs Org GTD tasks."
+  short_description: "Manage and capture Org GTD follow-up work"
+  default_prompt: "Use $emacs-gtd-assistant to query my Org GTD tasks or capture confirmed follow-up work with context and resource links."

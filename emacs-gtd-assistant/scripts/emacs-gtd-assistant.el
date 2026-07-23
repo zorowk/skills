@@ -55,6 +55,21 @@
   :type 'positive-integer
   :group 'emacs-gtd-assistant)
 
+(defcustom emacs-gtd-capture-task-limit 3
+  "Maximum tasks accepted by one confirmed conversation capture."
+  :type 'positive-integer
+  :group 'emacs-gtd-assistant)
+
+(defcustom emacs-gtd-context-maximum-characters 1600
+  "Maximum characters stored in one task CONTEXT drawer."
+  :type 'positive-integer
+  :group 'emacs-gtd-assistant)
+
+(defcustom emacs-gtd-link-limit 10
+  "Maximum resource links stored on one task."
+  :type 'positive-integer
+  :group 'emacs-gtd-assistant)
+
 (defconst emacs-gtd--schemas
   '((preflight :summary "Validate the configured GTD file without mutation.")
     (list :summary "Return a filtered page with explicit continuation metadata."
@@ -63,9 +78,15 @@
              :required (:query) :optional (:include-done))
     (add :summary "Add one task through Org and return its compact identity."
          :required (:title)
-         :optional (:headline :context :scheduled :deadline)
+         :optional (:headline :context :scheduled :deadline :priority :tags
+                              :body :context-notes :links :properties)
          :choices ((:context personal work))
          :effects (:mutated))
+    (add-many
+     :summary "Atomically add confirmed structured tasks from a conversation."
+     :required (:tasks :authorization)
+     :choices ((:authorization explicit))
+     :effects (:mutated))
     (set-state :summary "Resolve an ID or unique query, then update its state."
                :required-one-of (:id :query) :required (:state)
                :effects (:mutated))
@@ -177,6 +198,108 @@ When INACTIVE is non-nil, return an inactive timestamp like
 (defun emacs-gtd--optional-timestamp (text)
   "Normalize optional timestamp TEXT for insertion into Org."
   (and text (emacs-gtd-normalize-timestamp text)))
+
+(defun emacs-gtd--drawer-content (text)
+  "Return TEXT safe for insertion inside an Org drawer."
+  (replace-regexp-in-string
+   "^\\([*:][^\n]*\\)$" ",\\1"
+   (string-trim-right (substring-no-properties text))))
+
+(defun emacs-gtd--validate-properties (properties)
+  "Return validated Org PROPERTIES without reserved keys."
+  (unless (or (null properties)
+              (and (listp properties)
+                   (seq-every-p #'consp properties)))
+    (error "PROPERTIES must be an alist or nil"))
+  (mapcar
+   (lambda (property)
+     (let ((key (car property))
+           (value (cdr property)))
+       (unless (and (stringp key)
+                    (string-match-p "\\`[A-Z][A-Z0-9_]*\\'" key)
+                    (not (member key '("ID" "TODO" "PRIORITY"
+                                       "SCHEDULED" "DEADLINE"))))
+         (error "Unsafe or reserved Org property: %S" key))
+       (emacs-gtd--single-line value (format "PROPERTY %s" key))
+       (when (> (length value) 500)
+         (error "Org property %s exceeds 500 characters" key))
+       (cons key value)))
+   properties))
+
+(defun emacs-gtd--validate-links (links)
+  "Return validated structured resource LINKS."
+  (unless (or (null links) (listp links))
+    (error "LINKS must be a list or nil"))
+  (when (> (length links) emacs-gtd-link-limit)
+    (error "LINKS exceeds the configured limit of %d" emacs-gtd-link-limit))
+  (mapcar
+   (lambda (link)
+     (unless (listp link)
+       (error "Each link must be a plist"))
+     (let ((target (emacs-gtd--single-line
+                    (plist-get link :target) "LINK target"))
+           (description (plist-get link :description)))
+       (unless (string-match-p "\\`\\(?:https?\\|file\\|id\\):" target)
+         (error "Unsupported or unsafe Org link target: %S" target))
+       (when description
+         (emacs-gtd--single-line description "LINK description"))
+       (list :target target :description description)))
+   links))
+
+(defun emacs-gtd--validate-task-spec (task)
+  "Return a validated copy of structured TASK."
+  (unless (listp task)
+    (error "TASK must be a plist"))
+  (let* ((copy (copy-tree task))
+         (title (emacs-gtd--single-line (plist-get copy :title) "TITLE"))
+         (priority (plist-get copy :priority))
+         (tags (plist-get copy :tags))
+         (context-notes (plist-get copy :context-notes))
+         (body (plist-get copy :body)))
+    (when (and priority
+               (not (and (stringp priority) (= (length priority) 1))))
+      (error "PRIORITY must be one character"))
+    (unless (or (null tags)
+                (and (listp tags)
+                     (seq-every-p
+                      (lambda (tag)
+                        (and (stringp tag)
+                             (string-match-p "\\`[^[:space:]:]+\\'" tag)))
+                      tags)))
+      (error "TAGS must contain valid Org tag strings"))
+    (dolist (pair `((,context-notes . "CONTEXT-NOTES") (,body . "BODY")))
+      (when (car pair)
+        (unless (stringp (car pair))
+          (error "%s must be a string" (cdr pair)))))
+    (when (and context-notes
+               (> (length context-notes)
+                  emacs-gtd-context-maximum-characters))
+      (error "CONTEXT-NOTES exceeds the configured limit of %d"
+             emacs-gtd-context-maximum-characters))
+    (plist-put copy :title title)
+    (plist-put copy :properties
+               (emacs-gtd--validate-properties
+                (plist-get copy :properties)))
+    (plist-put copy :links
+               (emacs-gtd--validate-links (plist-get copy :links)))
+    copy))
+
+(defun emacs-gtd--insert-drawer (name content)
+  "Insert Org drawer NAME containing CONTENT at point."
+  (when (and content (not (string-empty-p content)))
+    (insert (format ":%s:\n%s\n:END:\n"
+                    name (emacs-gtd--drawer-content content)))))
+
+(defun emacs-gtd--resource-text (links)
+  "Return an Org list for structured LINKS."
+  (when links
+    (mapconcat
+     (lambda (link)
+       (format "- %s"
+               (org-link-make-string
+                (plist-get link :target)
+                (plist-get link :description))))
+     links "\n")))
 
 (defun emacs-gtd--item-at-point (&optional create-id)
   "Return an alist for the Org heading at point.
@@ -302,12 +425,15 @@ result contains one :item with a persistent ID.  Other results contain
                    (cdr (assq 'line item))))))))))
 
 ;;;###autoload
-(defun emacs-gtd-add-task (title &optional plist)
+(defun emacs-gtd-add-task (title &optional plist defer-save)
   "Add TITLE as a GTD task according to PLIST and return the created item.
 
-PLIST may select :context `personal' or `work', or override it with :headline."
+PLIST may select :context `personal' or `work', or override it with :headline.
+When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
   (emacs-gtd--single-line title "TITLE")
-  (let* ((headline (emacs-gtd--single-line
+  (let* ((plist (emacs-gtd--validate-task-spec
+                 (plist-put (copy-tree plist) :title title)))
+         (headline (emacs-gtd--single-line
                     (emacs-gtd--headline plist)
                     "HEADLINE"))
          (todo (or (plist-get plist :todo) "TODO"))
@@ -317,6 +443,9 @@ PLIST may select :context `personal' or `work', or override it with :headline."
          (deadline (emacs-gtd--optional-timestamp
                     (plist-get plist :deadline)))
          (body (plist-get plist :body))
+         (context-text (plist-get plist :context-notes))
+         (links (plist-get plist :links))
+         (properties (plist-get plist :properties))
          (tags (plist-get plist :tags)))
     (emacs-gtd--single-line todo "TODO")
     (unless (or (null body) (stringp body))
@@ -348,16 +477,39 @@ PLIST may select :context `personal' or `work', or override it with :headline."
            (org-schedule nil scheduled))
          (when deadline
            (org-deadline nil deadline))
+         (dolist (property properties)
+           (org-entry-put heading-point (car property) (cdr property)))
+         (goto-char heading-point)
+         (org-end-of-meta-data t)
          (when (and body (not (string-empty-p body)))
-           (goto-char heading-point)
-           (org-end-of-meta-data t)
            (insert body)
            (unless (bolp) (insert "\n")))
+         (emacs-gtd--insert-drawer "CONTEXT" context-text)
+         (emacs-gtd--insert-drawer "RESOURCES"
+                                   (emacs-gtd--resource-text links))
          (goto-char heading-point)
          (let ((item (emacs-gtd--item-at-point t)))
            (set-marker heading-point nil)
-           (emacs-gtd--save)
+           (unless defer-save (emacs-gtd--save))
            item))))))
+
+(defun emacs-gtd-add-many (tasks)
+  "Atomically add validated structured TASKS and return created items."
+  (unless (and (listp tasks) tasks)
+    (error "TASKS must be a non-empty list"))
+  (when (> (length tasks) emacs-gtd-capture-task-limit)
+    (error "TASKS exceeds the configured limit of %d"
+           emacs-gtd-capture-task-limit))
+  (let ((validated (mapcar #'emacs-gtd--validate-task-spec tasks)))
+    (with-current-buffer (emacs-gtd--buffer t)
+      (atomic-change-group
+        (let (items)
+          (dolist (task validated)
+            (push (emacs-gtd-add-task
+                   (plist-get task :title) task t)
+                  items))
+          (emacs-gtd--save)
+          (nreverse items))))))
 
 ;;;###autoload
 (defun emacs-gtd-set-state (id state)
@@ -504,6 +656,12 @@ Use :operation `describe' to request operation schemas only when needed."
           (plist-get request :title)
           (or (plist-get request :task) request)))
         1 nil nil (list :mutated t)))
+      ('add-many
+       (skill-runtime-require-authorization request operation)
+       (let ((items (emacs-gtd-add-many (plist-get request :tasks))))
+         (skill-runtime-result
+          operation (mapcar #'emacs-gtd--compact-item items)
+          (length items) nil nil (list :mutated t))))
       ((or 'set-state 'reschedule 'set-deadline 'delete 'archive)
        (when (memq operation '(delete archive))
          (skill-runtime-require-authorization request operation))

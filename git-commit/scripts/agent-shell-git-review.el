@@ -38,11 +38,6 @@
   "Path-scoped Git review after agent-shell turns."
   :group 'skill-agent-shell-bridge)
 
-(defcustom agent-shell-git-review-notify t
-  "Whether to announce the review command after a turn changes files."
-  :type 'boolean
-  :group 'agent-shell-git-review)
-
 (defvar agent-shell-git-review-last-shell-buffer nil
   "Most recent agent-shell buffer with Git review candidates.")
 
@@ -175,13 +170,9 @@
   (plist-get state :paths))
 
 (defun agent-shell-git-review--turn-complete (shell-buffer state)
-  "Remember SHELL-BUFFER and announce available review for STATE."
+  "Remember SHELL-BUFFER for Git review of advisory STATE."
   (setq agent-shell-git-review-last-shell-buffer shell-buffer)
-  (when (and agent-shell-git-review-notify
-             (plist-get state :paths))
-    (message
-     "Agent turn changed %d candidate file(s); run M-x agent-shell-git-review-menu"
-     (length (plist-get state :paths)))))
+  state)
 
 ;;;###autoload
 (defun agent-shell-git-review-enable ()
@@ -190,6 +181,9 @@
   (skill-agent-shell-register-turn-action
    'git-review
    :function #'agent-shell-git-review--turn-complete
+   :command (lambda (shell-buffer _state)
+              (agent-shell-git-review-menu shell-buffer))
+   :label "Review Git changes"
    :applicable-p #'agent-shell-git-review--applicable-p
    :priority 50)
   (skill-agent-shell-bridge-enable))

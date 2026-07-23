@@ -48,6 +48,9 @@
 (defvar-local skill-agent-shell--last-completed-turn nil
   "Frozen advisory state for the latest completed agent turn.")
 
+(defvar-local skill-agent-shell--available-actions nil
+  "Applicable action entries for the latest completed turn.")
+
 (declare-function agent-shell-subscribe-to "agent-shell"
                   (&key shell-buffer event on-event))
 (declare-function agent-shell-unsubscribe "agent-shell"
@@ -198,16 +201,23 @@ MAXIMUM-CHARACTERS is a provider-local cap inside the shared hard budget."
        (map-elt diff :file) shell-buffer 'tool-call-diff))))
 
 (cl-defun skill-agent-shell-register-turn-action
-    (id &key function applicable-p (priority 0))
+    (id &key function command label applicable-p (priority 0))
   "Register turn-complete action ID.
 
-FUNCTION receives SHELL-BUFFER and the frozen turn state.  APPLICABLE-P, when
-non-nil, receives the same arguments and gates the action."
-  (unless (and (symbolp id) (functionp function))
-    (error "Turn action requires a symbol ID and callable FUNCTION"))
+FUNCTION, when non-nil, observes completion and receives SHELL-BUFFER and the
+frozen turn state.  COMMAND receives the same arguments when selected from the
+shared action menu.  LABEL is the English menu label.  APPLICABLE-P gates both."
+  (unless (symbolp id)
+    (error "Turn action ID must be a symbol"))
+  (when (and function (not (functionp function)))
+    (error "Turn action FUNCTION must be callable"))
+  (unless (functionp command)
+    (error "Turn action COMMAND must be callable"))
+  (unless (and (stringp label) (not (string-empty-p label)))
+    (error "Turn action LABEL must be a non-empty string"))
   (setq skill-agent-shell-turn-actions
-        (cons (list :id id :function function :applicable-p applicable-p
-                    :priority priority)
+        (cons (list :id id :function function :command command :label label
+                    :applicable-p applicable-p :priority priority)
               (seq-remove
                (lambda (entry) (eq (plist-get entry :id) id))
                skill-agent-shell-turn-actions)))
@@ -220,17 +230,55 @@ non-nil, receives the same arguments and gates the action."
                     skill-agent-shell-turn-actions))
   id)
 
+(defun skill-agent-shell--applicable-actions (shell-buffer state)
+  "Return applicable registered actions for SHELL-BUFFER and STATE."
+  (seq-filter
+   (lambda (action)
+     (condition-case nil
+         (or (not (plist-get action :applicable-p))
+             (funcall (plist-get action :applicable-p) shell-buffer state))
+       (error nil)))
+   (skill-agent-shell--sort skill-agent-shell-turn-actions)))
+
 (defun skill-agent-shell--run-turn-actions (shell-buffer state)
-  "Run applicable registered actions for SHELL-BUFFER and frozen STATE."
-  (dolist (action (skill-agent-shell--sort skill-agent-shell-turn-actions))
+  "Prepare and notify applicable actions for SHELL-BUFFER and frozen STATE."
+  (let ((actions (skill-agent-shell--applicable-actions shell-buffer state)))
+    (with-current-buffer shell-buffer
+      (setq skill-agent-shell--available-actions actions))
+    (dolist (action actions)
     (condition-case err
-        (when (or (not (plist-get action :applicable-p))
-                  (funcall (plist-get action :applicable-p)
-                           shell-buffer state))
+        (when (plist-get action :function)
           (funcall (plist-get action :function) shell-buffer state))
       (error
        (message "agent-shell action %s failed: %s"
-                (plist-get action :id) (error-message-string err))))))
+                (plist-get action :id) (error-message-string err)))))
+    (when (and actions skill-agent-shell-notify-turn-actions)
+      (message "Turn actions available: M-x skill-agent-shell-turn-action-menu"))))
+
+;;;###autoload
+(defun skill-agent-shell-turn-action-menu (&optional shell-buffer)
+  "Select an English-labeled action for SHELL-BUFFER's completed turn."
+  (interactive)
+  (let* ((shell (or shell-buffer
+                    (and (derived-mode-p 'agent-shell-mode) (current-buffer))
+                    (seq-find
+                     (lambda (buffer)
+                       (with-current-buffer buffer
+                         skill-agent-shell--available-actions))
+                     (buffer-list)))))
+    (unless (buffer-live-p shell)
+      (user-error "No agent-shell turn actions are available"))
+    (with-current-buffer shell
+      (unless skill-agent-shell--available-actions
+        (user-error "No actions are available for the latest turn"))
+      (let* ((choices
+              (mapcar (lambda (entry)
+                        (cons (plist-get entry :label) entry))
+                      skill-agent-shell--available-actions))
+             (label (completing-read "Turn action: " choices nil t))
+             (action (cdr (assoc-string label choices))))
+        (funcall (plist-get action :command)
+                 shell skill-agent-shell--last-completed-turn)))))
 
 (defun skill-agent-shell--handle-event (shell-buffer event)
   "Handle agent-shell EVENT for SHELL-BUFFER."
@@ -249,6 +297,15 @@ non-nil, receives the same arguments and gates the action."
            (skill-agent-shell--record-path
             (map-elt data :path) shell-buffer 'file-write))
           ('tool-call-update
+           (let ((id (map-elt data :tool-call-id)))
+             (when id
+               (setq skill-agent-shell--turn-state
+                     (plist-put
+                      skill-agent-shell--turn-state :tool-call-ids
+                      (delete-dups
+                       (append
+                        (plist-get skill-agent-shell--turn-state :tool-call-ids)
+                        (list id)))))))
            (skill-agent-shell--record-tool-call data shell-buffer))
           ('turn-complete
            (let ((frozen
@@ -257,8 +314,7 @@ non-nil, receives the same arguments and gates the action."
                    (list :completed-at (float-time)
                          :stop-reason (map-elt data :stop-reason)))))
              (setq skill-agent-shell--last-completed-turn frozen)
-             (when (plist-get frozen :paths)
-               (skill-agent-shell--run-turn-actions shell-buffer frozen))))
+             (skill-agent-shell--run-turn-actions shell-buffer frozen)))
           ('clean-up
            (skill-agent-shell--unsubscribe)))))))
 

@@ -24,6 +24,9 @@
 (defvar skill-agent-shell-last-context-metrics)
 (defvar skill-agent-shell--turn-state)
 (defvar skill-agent-shell--last-completed-turn)
+(defvar skill-agent-shell--available-actions)
+(defvar agent-shell-gtd-capture--suppress-count)
+(defvar emacs-gtd-capture-task-limit)
 (defvar ai-git-commit-include-validation-in-message)
 (defvar emacs-code-navigator-semantic-buffer-policy)
 (defvar emacs-code-navigator-semantic-buffer-limit)
@@ -93,12 +96,20 @@
 (declare-function skill-agent-shell-current-turn-paths
                   "../common/scripts/agent-shell-bridge"
                   (&optional shell-buffer))
+(declare-function skill-agent-shell-turn-action-menu
+                  "../common/scripts/agent-shell-bridge"
+                  (&optional shell-buffer))
 (declare-function agent-shell-git-review--request-text
                   "../git-commit/scripts/agent-shell-git-review"
                   (shell-buffer action))
 (declare-function emacs-gtd-execute
                   "../emacs-gtd-assistant/scripts/emacs-gtd-assistant"
                   (request))
+(declare-function agent-shell-gtd-capture--prompt
+                  "../emacs-gtd-assistant/scripts/agent-shell-gtd-capture" ())
+(declare-function agent-shell-gtd-capture--applicable-p
+                  "../emacs-gtd-assistant/scripts/agent-shell-gtd-capture"
+                  (shell-buffer state))
 (declare-function denote-scribe-run
                   "../denote-scribe/scripts/denote-scribe" (request))
 (declare-function denote-scribe-create
@@ -142,6 +153,7 @@
            "emacs-code-navigator/scripts/emacs-code-navigator.el"
            "emacs-code-navigator/scripts/agent-shell-code-context.el"
            "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
+           "emacs-gtd-assistant/scripts/agent-shell-gtd-capture.el"
            "denote-scribe/scripts/denote-scribe.el"
            "org-blog-exporter/scripts/org-blog-exporter.el"
            "git-commit/scripts/ai-git-commit.el"
@@ -401,6 +413,73 @@
                        0))))
       (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
       (delete-directory root t))))
+
+(ert-deftest gtd-conversation-capture-requires-confirmation-and-writes-structure ()
+  (let* ((root (make-temp-file "gtd-capture-" t))
+         (file (expand-file-name "gtd.org" root))
+         (emacs-gtd-directory root)
+         (emacs-gtd-file "gtd.org")
+         (org-id-locations-file (expand-file-name "org-id-locations" root))
+         (request
+          '(:operation add-many
+            :tasks
+            ((:title "Trace drop action mapping"
+              :headline "Deepin"
+              :priority "B"
+              :tags ("research" "wayland")
+              :context-notes "Find the cursor update boundary."
+              :properties (("SOURCE" . "agent-shell")
+                           ("PROJECT" . "qt6-wayland"))
+              :links
+              ((:target "https://wayland.app/protocols/wayland"
+                :description "Wayland protocol")
+               (:target "file:/tmp/drag.cpp::42"
+                :description "Drag implementation")))))))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "* Personal\n* Deepin\n"))
+          (with-temp-file org-id-locations-file (insert "()\n"))
+          (should-error (emacs-gtd-execute request))
+          (let ((result
+                 (emacs-gtd-execute
+                  (append request '(:authorization explicit)))))
+            (should (= (plist-get result :count) 1))
+            (with-temp-buffer
+              (insert-file-contents file)
+              (let ((text (buffer-string)))
+                (should (string-match-p
+                         "\\*\\* TODO \\[#B\\] Trace drop action mapping"
+                         text))
+                (should (string-match-p ":SOURCE:.*agent-shell" text))
+                (should (string-match-p ":CONTEXT:" text))
+                (should (string-match-p ":RESOURCES:" text))
+                (should (string-match-p "Wayland protocol" text))))))
+      (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest gtd-capture-prompt-is-read-only-and-suppresses-loops ()
+  (let ((prompt (agent-shell-gtd-capture--prompt)))
+    (should (string-match-p "Do not write to gtd.org yet" prompt))
+    (should (string-match-p ":operation add-many" prompt))
+    (should (string-match-p ":authorization explicit" prompt))
+    (should (string-match-p ":context work" prompt)))
+  (with-temp-buffer
+    (setq agent-shell-gtd-capture--suppress-count 1)
+    (should-not
+     (agent-shell-gtd-capture--applicable-p
+      (current-buffer) '(:stop-reason "end_turn")))
+    (should
+     (agent-shell-gtd-capture--applicable-p
+      (current-buffer) '(:stop-reason "end_turn")))))
+
+(ert-deftest gtd-capture-rejects-executable-org-links ()
+  (should-error
+   (emacs-gtd-execute
+    '(:operation add-many
+      :authorization explicit
+      :tasks
+      ((:title "Unsafe link"
+        :links ((:target "elisp:(message \"unsafe\")"))))))))
 
 (ert-deftest blog-facade-exports-into-an-isolated-directory ()
   (let* ((root (make-temp-file "blog-facade-" t))
@@ -817,7 +896,9 @@
       (setq default-directory "/tmp/")
       (skill-agent-shell-register-turn-action
        'observe
-       :function (lambda (_buffer state) (setq observed state)))
+       :function (lambda (_buffer state) (setq observed state))
+       :command (lambda (&rest _) nil)
+       :label "Observe turn")
       (skill-agent-shell--handle-event
        (current-buffer) '((:event . input-submitted)))
       (skill-agent-shell--handle-event
@@ -841,6 +922,25 @@
        (equal (skill-agent-shell-current-turn-paths (current-buffer))
               '("/tmp/one.el" "/tmp/two.el")))
       (should (equal (plist-get observed :stop-reason) "end_turn")))))
+
+(ert-deftest agent-shell-bridge-offers-english-actions-without-file-writes ()
+  (with-temp-buffer
+    (let ((skill-agent-shell-turn-actions nil)
+          (skill-agent-shell-notify-turn-actions nil))
+      (skill-agent-shell-register-turn-action
+       'capture
+       :command (lambda (&rest _) nil)
+       :label "Capture as GTD")
+      (skill-agent-shell--handle-event
+       (current-buffer) '((:event . input-submitted)))
+      (skill-agent-shell--handle-event
+       (current-buffer)
+       '((:event . turn-complete)
+         (:data . ((:stop-reason . "end_turn")))))
+      (should
+       (equal (mapcar (lambda (entry) (plist-get entry :label))
+                      skill-agent-shell--available-actions)
+              '("Capture as GTD"))))))
 
 (ert-deftest navigator-semantic-context-uses-the-exact-column-and-limit ()
   (with-temp-buffer

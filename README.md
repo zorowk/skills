@@ -52,6 +52,7 @@ flowchart LR
     subgraph ADAPTERS["agent-shell adapters"]
         CODECTX["agent-shell-code-context.el<br/>代码上下文 provider"]
         GITUI["agent-shell-git-review.el<br/>候选路径与审阅菜单"]
+        GTDUI["agent-shell-gtd-capture.el<br/>Capture as GTD"]
     end
 
     subgraph SKILLS["Skills 与 compact facades"]
@@ -82,6 +83,9 @@ flowchart LR
     BRIDGE -->|"turn-complete + 候选路径"| GITUI
     GITUI -->|"查看真实 diff"| COMMIT
     GITUI -.->|"插入限定路径的生成或提交请求"| AS
+    BRIDGE -->|"成功回合"| GTDUI
+    GTDUI -.->|"提取 1–3 个候选，不写入"| AS
+    GTDUI -->|"用户确认后 add-many"| GTD
 
     AGENT -->|"按 SKILL.md 触发"| NAV
     AGENT --> COMMIT
@@ -126,6 +130,11 @@ Git adapter 在写文件的回合结束后提供当前 diff、提交信息请求
 拆分候选路径；真正审阅或提交时，`git-commit` 必须再次从 Git/Magit 获取状态和 diff，
 并传入明确的 `:paths`。不同仓库不会合并提交，agent-shell 事件不会替代 Git 事实，也不会
 触发自动提交。
+
+GTD adapter 为成功回合提供英文 `Capture as GTD` action。点击后由同一个 Agent 从上一轮
+回答提取一至三个候选任务，先在对话中确认标题、优先级、标签、背景和资源链接；只有用户
+明确确认后，才通过 `add-many` 写入 Org。可查询的来源和项目放入 properties，简短背景与
+HTTP、文档、源码链接分别放入可折叠 drawer，不保存整段对话。
 
 提交信息中的 `validation` 仍是 AI 必须提供的内部证据，用于判断声明是否可靠；`git-commit`
 默认不把测试命令、通过数量等 validation 内容写入 commit body，而是在操作完成后向用户
@@ -238,7 +247,12 @@ emacs -Q --batch -l tests/skill-contract-tests.el \
 
 (load "/path/to/skills/git-commit/scripts/agent-shell-git-review.el")
 (agent-shell-git-review-enable)
+
+(load "/path/to/skills/emacs-gtd-assistant/scripts/agent-shell-gtd-capture.el")
+(agent-shell-gtd-capture-enable)
 ```
 
 回合发生文件写入后运行 `M-x agent-shell-git-review-menu`，可以查看候选文件的当前 Git
-diff、插入提交信息请求，或在确认后向 Agent 提交限定路径的提交请求。
+diff、插入提交信息请求，或在确认后向 Agent 提交限定路径的提交请求。运行
+`M-x skill-agent-shell-turn-action-menu` 可统一选择 `Review Git changes` 或
+`Capture as GTD`。
