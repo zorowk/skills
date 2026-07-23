@@ -5,8 +5,69 @@
 (require 'seq)
 (require 'subr-x)
 
+(defconst skill-runtime-envelope-version 2
+  "Version of the public skill result envelope.")
+
 (defconst skill-runtime-metrics-version 1
   "Schema version for metrics returned by `skill-runtime-measure'.")
+
+(define-error 'skill-runtime-public-error "Public skill failure")
+(define-error 'skill-runtime-invalid-request "Invalid skill request"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-authorization-required "Skill authorization required"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-permission-denied "Skill permission denied"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-not-found "Skill target not found"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-ambiguous "Skill target is ambiguous"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-conflict "Skill state conflict"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-unavailable "Skill environment unavailable"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-stale-context "Skill context is stale"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-partial-failure "Skill operation partially failed"
+  'skill-runtime-public-error)
+(define-error 'skill-runtime-internal-error "Skill internal failure"
+  'skill-runtime-public-error)
+
+(defconst skill-runtime--public-error-defaults
+  '((skill-runtime-public-error
+     :status failed :code public-error :retry never
+     :required-action inspect-failure)
+    (skill-runtime-invalid-request
+     :status needs-input :code invalid-request :retry after-input
+     :required-action revise-request)
+    (skill-runtime-authorization-required
+     :status needs-input :code authorization-required :retry after-input
+     :required-action confirm)
+    (skill-runtime-permission-denied
+     :status blocked :code permission-denied :retry after-permission-change
+     :required-action grant-permission)
+    (skill-runtime-not-found
+     :status needs-input :code not-found :retry after-input
+     :required-action select-target)
+    (skill-runtime-ambiguous
+     :status needs-input :code ambiguous :retry after-input
+     :required-action disambiguate)
+    (skill-runtime-conflict
+     :status blocked :code conflict :retry after-refresh
+     :required-action refresh-state)
+    (skill-runtime-unavailable
+     :status blocked :code unavailable :retry after-environment-change
+     :required-action restore-environment)
+    (skill-runtime-stale-context
+     :status blocked :code stale-context :retry after-refresh
+     :required-action refresh-context)
+    (skill-runtime-partial-failure
+     :status partial :code partial-failure :retry selective
+     :required-action inspect-failures)
+    (skill-runtime-internal-error
+     :status failed :code internal-error :retry never
+     :required-action inspect-implementation))
+  "Default recovery metadata for structured public conditions.")
 
 (defun skill-runtime--printed-length (value)
   "Return the deterministic printed character length of VALUE."
@@ -19,13 +80,81 @@
   "Return KEY from plist VALUE, or nil when VALUE is not a plist."
   (and (listp value) (keywordp (car value)) (plist-get value key)))
 
+(defun skill-runtime-signal (condition message &rest properties)
+  "Signal public CONDITION with MESSAGE and structured PROPERTIES."
+  (unless (memq 'skill-runtime-public-error
+                (get condition 'error-conditions))
+    (error "Not a public skill condition: %S" condition))
+  (unless (stringp message)
+    (error "Public skill condition message must be a string: %S" message))
+  (unless (zerop (% (length properties) 2))
+    (error "Public skill condition properties must be a plist: %S" properties))
+  (signal condition (list (append (list :message message) properties))))
+
+(defun skill-runtime--plist-without (plist keys)
+  "Return PLIST without any entries whose key is in KEYS."
+  (let ((tail plist)
+        result)
+    (while tail
+      (unless (memq (car tail) keys)
+        (setq result (append result (list (car tail) (cadr tail)))))
+      (setq tail (cddr tail)))
+    result))
+
+(defun skill-runtime-failure-result
+    (operation status error &optional data count effects)
+  "Return a versioned failure envelope for OPERATION.
+
+STATUS is one of the public lifecycle states.  ERROR is a structured plist.
+DATA, COUNT, and EFFECTS describe partial evidence and actual side effects."
+  (let ((result
+         (skill-runtime-result
+          (or operation 'unknown) data (or count 0) status nil effects error)))
+    (if effects result (append result '(:effects nil)))))
+
+(defun skill-runtime--public-error-result (request error-data)
+  "Convert typed ERROR-DATA raised for REQUEST into a failure envelope."
+  (let* ((condition (car error-data))
+         (payload (or (cadr error-data) nil))
+         (defaults
+          (or (cdr (assq condition skill-runtime--public-error-defaults))
+              (cdr (assq 'skill-runtime-public-error
+                         skill-runtime--public-error-defaults))))
+         (combined (append defaults payload))
+         (status (plist-get combined :status))
+         (data (plist-get combined :data))
+         (count (plist-get combined :count))
+         (effects (plist-get combined :effects))
+         (error
+          (skill-runtime--plist-without
+           combined '(:status :data :count :effects)))
+         (operation
+          (condition-case nil
+              (and (listp request) (plist-get request :operation))
+            (error nil))))
+    (skill-runtime-failure-result
+     operation status error data count effects)))
+
+(defun skill-runtime--request-field-count (request)
+  "Return REQUEST plist field count, or zero for malformed input."
+  (condition-case nil
+      (if (and (listp request) (zerop (% (length request) 2)))
+          (/ (length request) 2)
+        0)
+    (error 0)))
+
 (defun skill-runtime-measure (request function)
   "Call FUNCTION and append privacy-safe call metrics for REQUEST.
 
 Measure serialized character counts rather than claiming exact model-token
-usage.  Preserve existing errors and avoid retaining request or result content."
+usage.  Convert typed public conditions into failure envelopes while preserving
+unexpected Lisp errors.  Avoid retaining request or result content."
   (let ((started (float-time)))
-    (let* ((result (funcall function))
+    (let* ((result
+            (condition-case error-data
+                (funcall function)
+              (skill-runtime-public-error
+               (skill-runtime--public-error-result request error-data))))
            (elapsed-ms (max 0 (round (* 1000 (- (float-time) started)))))
            (data (plist-get result :data))
            (page (plist-get result :page))
@@ -34,7 +163,8 @@ usage.  Preserve existing errors and avoid retaining request or result content."
             (list :metrics-version skill-runtime-metrics-version
                   :elapsed-ms elapsed-ms
                   :request-characters (skill-runtime--printed-length request)
-                  :request-field-count (/ (length request) 2)
+                  :request-field-count
+                  (skill-runtime--request-field-count request)
                   :payload-characters (skill-runtime--printed-length data)
                   :base-response-characters
                   (skill-runtime--printed-length result)
@@ -51,13 +181,15 @@ usage.  Preserve existing errors and avoid retaining request or result content."
                   (skill-runtime--plist-value provenance :resolved-source))))
       (append result (list :metrics metrics)))))
 
-(defun skill-runtime-result (operation data &optional count status page effects)
+(defun skill-runtime-result
+    (operation data &optional count status page effects error)
   "Return a compact standard envelope for OPERATION and DATA.
 
 COUNT defaults to zero for nil DATA and one otherwise.
-STATUS defaults to `ok'.  Include PAGE and EFFECTS only when non-nil."
+STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
   (let ((result
-         (list :status (or status 'ok)
+         (list :protocol-version skill-runtime-envelope-version
+               :status (or status 'ok)
                :operation operation
                :count (or count (if (null data) 0 1))
                :data data)))
@@ -65,6 +197,8 @@ STATUS defaults to `ok'.  Include PAGE and EFFECTS only when non-nil."
       (setq result (append result (list :page page))))
     (when effects
       (setq result (append result (list :effects effects))))
+    (when error
+      (setq result (append result (list :error error))))
     result))
 
 (defun skill-runtime-page-metadata (offset limit total returned)

@@ -46,12 +46,15 @@
 (defvar org-blog-exporter-setupfile)
 (defvar org-id-locations-file)
 (defvar skill-git--body-label-regexp)
+(defvar skill-runtime-envelope-version)
 (defvar skill-runtime-metrics-version)
 
 (declare-function skill-runtime-result "../common/scripts/skill-runtime"
-                  (operation data &optional count status page effects))
+                  (operation data &optional count status page effects error))
 (declare-function skill-runtime-measure "../common/scripts/skill-runtime"
                   (request function))
+(declare-function skill-runtime-signal "../common/scripts/skill-runtime"
+                  (condition message &rest properties))
 (declare-function skill-runtime-page "../common/scripts/skill-runtime"
                   (items offset limit total))
 (declare-function skill-runtime-truncate "../common/scripts/skill-runtime"
@@ -211,8 +214,9 @@
 (ert-deftest skill-runtime-standard-envelope ()
   (should
    (equal (skill-runtime-result 'list '(a b) 2 'ok '(:truncated nil))
-          '(:status ok :operation list :count 2 :data (a b)
-                    :page (:truncated nil)))))
+          '(:protocol-version 2
+            :status ok :operation list :count 2 :data (a b)
+            :page (:truncated nil)))))
 
 (ert-deftest skill-runtime-measures-calls-without-retaining-content ()
   (let ((times '(10.0 10.042)))
@@ -237,6 +241,34 @@
         (should-not (string-match-p
                      "private"
                      (prin1-to-string metrics)))))))
+
+(ert-deftest skill-runtime-measures-structured-public-failures ()
+  (let* ((result
+          (skill-runtime-measure
+           '(:operation commit)
+           (lambda ()
+             (skill-runtime-signal
+              'skill-runtime-authorization-required
+              "Commit requires explicit authorization."
+              :field-path '(:authorization)))))
+         (error-data (plist-get result :error)))
+    (should (= (plist-get result :protocol-version) 2))
+    (should (eq (plist-get result :status) 'needs-input))
+    (should (eq (plist-get result :operation) 'commit))
+    (should (zerop (plist-get result :count)))
+    (should-not (plist-get result :data))
+    (should (plist-member result :effects))
+    (should-not (plist-get result :effects))
+    (should (eq (plist-get error-data :code) 'authorization-required))
+    (should (eq (plist-get error-data :retry) 'after-input))
+    (should (equal (plist-get error-data :field-path) '(:authorization)))
+    (should (plist-get result :metrics))))
+
+(ert-deftest skill-runtime-preserves-unexpected-lisp-errors ()
+  (should-error
+   (skill-runtime-measure
+    '(:operation sample)
+    (lambda () (error "unexpected implementation failure")))))
 
 (ert-deftest skill-runtime-pagination-exposes-next-offset ()
   (let ((page (skill-runtime-page '(a b c d) 1 2 4)))
