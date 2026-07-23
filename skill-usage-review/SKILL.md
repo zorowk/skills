@@ -1,10 +1,11 @@
 ---
 name: skill-usage-review
 description: >-
-  Evaluate skills used in the current conversation for effective context use, call economy,
-  retries, routing complexity, safety overhead, and avoidable output. Use after a tool-driven task
-  when the user asks how well, efficiently, or economically the skills performed, including from
-  an agent-shell post-turn review action.
+  Evaluate skills used in the current conversation across correctness, evidence sufficiency,
+  safety, and economy without combining those dimensions into one score. Diagnose observed
+  recovery cost, latent recovery risk, context use, retries, and avoidable output. Use after a
+  tool-driven task when the user asks how well, efficiently, or economically the skills performed,
+  including from an agent-shell post-turn review action.
 ---
 
 # Skill Usage Review
@@ -22,9 +23,12 @@ Call documented script entry points directly. If a facade schema is unclear, use
 its `describe` operation. Do not inspect script implementations unless the
 documented entry point fails.
 
-Apply correctness as a gate: if the requested outcome was not achieved, report that first and do
-not reward a short response as efficient. Count failed calls and schema retries from the visible
-tool history even though failed facades may not return metrics.
+Evaluate in this order: correctness, evidence sufficiency, safety, then economy. Earlier dimensions
+are gates for later praise: if the requested outcome was not achieved, evidence is materially
+insufficient, or safety was compromised, report that first and do not reward a short response or
+small call count as efficient. Still report all four ratings when visible evidence permits, but
+never let a later rating compensate for an earlier one. Count failed calls and schema retries from
+the visible tool history even though failed facades may not return metrics.
 
 Aggregate these measured fields when available:
 
@@ -37,7 +41,8 @@ or output Token usage unless the model provider supplied usage data. If metrics 
 are unavailable, state the limitation and make only a qualitative assessment.
 
 Compare metrics only when their versions match. Treat field count as a surface-complexity signal,
-not proof that a request is cognitively simple or difficult.
+not proof that a request is cognitively simple or difficult. Metrics are diagnostic evidence, not
+optimization targets.
 
 Classify visible response content by task relevance:
 
@@ -54,15 +59,35 @@ Estimate effective context efficiency as a range, not false precision:
 Explain the classification behind the range. Distinguish necessary validation calls from retries;
 identify calls that a batch operation could replace, ambiguous schemas that caused retry, hidden
 state or prerequisites, duplicated skill responsibilities, and avoidable full-output requests.
+The range is a diagnostic only: it cannot determine the economy rating or outweigh missing evidence,
+unsafe behavior, or an incomplete outcome.
 
-Score only from visible evidence:
+Rate each dimension independently from visible evidence on a `0` to `3` scale:
 
-- Call economy: 25
-- Response relevance: 25
-- Routing and logical complexity: 20
-- Error recovery and retry cost: 15
-- Safety and context discipline: 15
+- Correctness: `0` failed or wrong; `1` partially achieved; `2` apparently achieved with a material
+  limitation or uncertainty; `3` achieved with decisive visible verification.
+- Evidence sufficiency: `0` no evidence for material claims; `1` major gaps; `2` adequate evidence
+  for the outcome and important claims; `3` decisive, traceable evidence with appropriate coverage.
+- Safety: `0` a material boundary or authorization violation; `1` important safety gaps; `2`
+  proportionate safeguards; `3` robust, reversible safeguards without unnecessary safety overhead.
+- Economy: `0` wasteful or strongly misrouted; `1` material avoidable cost; `2` proportionate cost;
+  `3` lean execution that still preserved sufficient evidence and safety.
+
+Do not sum, average, weight, or otherwise combine the four ratings into a composite score. Give each
+rating its evidence and confidence. Assess evidence sufficiency semantically by matching material
+claims to visible verification, not by using character counts as a proxy.
+
+Report recovery separately as a diagnostic, not as a fifth rating:
+
+- Observed recovery cost: visible failed calls, schema retries, repeated reads, partial-state repair,
+  and the extra elapsed time or output attributable to them.
+- Latent recovery risk: inferred future rework made more likely by missing evidence, skipped
+  validation, unclear state, or an unsupported conclusion.
+
+Keep observed recovery facts separate from inferred latent risk and state when either cannot be
+measured.
 
 Return a compact review containing the outcome gate, a per-skill evidence table, measured totals,
-the effective-efficiency range with confidence, the score, and at most three prioritized interface
+the four independent ratings with evidence and confidence, observed recovery cost, latent recovery
+risk, the diagnostic effective-efficiency range, and at most three prioritized interface
 improvements. Separate observed facts from inferences.

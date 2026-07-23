@@ -1315,6 +1315,29 @@
      (agent-shell-denote-capture--applicable-p
       (current-buffer) '(:stop-reason "end_turn")))))
 
+(ert-deftest skill-usage-review-keeps-quality-dimensions-independent ()
+  (let ((contract
+         (with-temp-buffer
+           (insert-file-contents
+            (expand-file-name
+             "skill-usage-review/SKILL.md"
+             skill-contract-tests-root))
+           (buffer-string))))
+    (dolist (dimension
+             '("Correctness:" "Evidence sufficiency:" "Safety:" "Economy:"))
+      (should (string-match-p (regexp-quote dimension) contract)))
+    (should
+     (string-match-p
+      (regexp-quote
+       "Do not sum, average, weight, or otherwise combine the four ratings")
+      contract))
+    (should (string-match-p "Observed recovery cost:" contract))
+    (should (string-match-p "Latent recovery risk:" contract))
+    (should (string-match-p "Metrics are diagnostic evidence" contract))
+    (should (string-match-p "optimization targets" contract))
+    (should-not (string-match-p "Call economy: 25" contract))
+    (should-not (string-match-p "Response relevance: 25" contract))))
+
 (ert-deftest skill-usage-review-action-is-read-only-and-tool-gated ()
   (let ((prompt (agent-shell-skill-usage-review--prompt)))
     (should (string-match-p "\\$skill-usage-review" prompt))
