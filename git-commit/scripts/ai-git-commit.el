@@ -197,8 +197,9 @@ user after the operation.  It is omitted from Git history by default."
   "Return Git evidence for DIRECTORY with explicit truncation metadata.
 
 Use one combined bounded diff against HEAD when COMPACT is non-nil.  Otherwise
-return separate staged and unstaged diffs.  When PATHS is non-nil, retain global
-status but restrict diff content and untracked-file reads to those paths."
+return separate staged and unstaged diffs.  When PATHS is non-nil, restrict
+returned status, counts, diff content, and untracked-file reads to those paths;
+report unrelated repository changes only as `:excluded-change-count'."
   (unless (require 'magit nil t)
     (error "Magit is not available in this Emacs session"))
   (let ((root (magit-toplevel (or directory default-directory))))
@@ -216,6 +217,9 @@ status but restrict diff content and untracked-file reads to those paths."
            (change-count (length (split-string status "\n" t)))
            (scoped-change-count
             (length (split-string scoped-status "\n" t)))
+           (reported-status (if scope-paths scoped-status status))
+           (reported-change-count
+            (if scope-paths scoped-change-count change-count))
            (unstaged-stat
             (ai-git-commit--git-output-for-paths '("diff" "--stat") scope-paths))
            (staged-stat
@@ -244,9 +248,9 @@ status but restrict diff content and untracked-file reads to those paths."
                   (ai-git-commit--bounded-diff
                    combined ai-git-commit-compact-maximum-characters 'diff)))
             (list :git-root root
-                  :status status
+                  :status reported-status
                   :scoped-status scoped-status
-                  :change-count change-count
+                  :change-count reported-change-count
                   :diff-scope (or scope-paths 'all)
                   :excluded-change-count
                   (max 0 (- change-count scoped-change-count))
@@ -271,9 +275,9 @@ status but restrict diff content and untracked-file reads to those paths."
                   '("diff" "--cached" "--no-ext-diff") scope-paths)
                  ai-git-commit-context-maximum-characters 'staged-diff)))
           (list :git-root root
-                :status status
+                :status reported-status
                 :scoped-status scoped-status
-                :change-count change-count
+                :change-count reported-change-count
                 :diff-scope (or scope-paths 'all)
                 :excluded-change-count
                 (max 0 (- change-count scoped-change-count))

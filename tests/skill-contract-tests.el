@@ -1186,16 +1186,28 @@
         (should (eq (plist-get project :strategy) 'text))
         (should (= (length (plist-get project :matches)) 1))))))
 
-(ert-deftest navigator-semantic-backend-activates-deferred-buffer-hooks ()
+(ert-deftest navigator-semantic-backend-runs-only-eglot-deferred-hook ()
+  (require 'eglot)
   (with-temp-buffer
-    (let (ready)
-      (setq-local post-command-hook (list (lambda () (setq ready t))))
+    (let ((unrelated-hook-ran nil)
+          (eglot-hook-ran nil))
+      (setq buffer-file-name "/tmp/navigator-eglot.el")
+      (setq-local post-command-hook
+                  (list (lambda () (setq unrelated-hook-ran t))))
       (cl-letf (((symbol-function 'eglot-managed-p) (lambda () nil))
+                ((symbol-function 'eglot-ensure)
+                 (lambda ()
+                   (add-hook
+                    'post-command-hook
+                    (lambda () (setq eglot-hook-ran t))
+                    'append t)))
                 ((symbol-function 'xref-find-backend)
-                 (lambda () (and ready 'semantic-backend))))
+                 (lambda () (and eglot-hook-ran 'semantic-backend))))
         (should
          (eq (emacs-code-navigator--semantic-xref-backend)
-             'semantic-backend))))))
+             'semantic-backend))
+        (should eglot-hook-ran)
+        (should-not unrelated-hook-ran)))))
 
 (ert-deftest navigator-locate-prefers-workspace-symbol-and-falls-back-to-text ()
   (let ((symbol-match '(("symbol.cpp" 4 "Widget")))
@@ -1343,6 +1355,35 @@
         (should (string-prefix-p "diff --git" (plist-get result :text)))
         (should (eq (plist-get result :truncated) t))))))
 
+(ert-deftest git-context-paths-hide-global-status-names ()
+  (let ((original-require (symbol-function 'require)))
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &rest arguments)
+                 (if (eq feature 'magit)
+                     t
+                   (apply original-require feature arguments))))
+              ((symbol-function 'magit-toplevel) (lambda (&rest _) "/repo/"))
+              ((symbol-function 'ai-git-commit--normalize-paths)
+               (lambda (&rest _) '("target.el")))
+              ((symbol-function 'ai-git-commit--git-output)
+               (lambda (&rest _)
+                 " M target.el\n?? unrelated-secret.el"))
+              ((symbol-function 'ai-git-commit--git-output-for-paths)
+               (lambda (arguments _paths)
+                 (if (equal (car arguments) "status") " M target.el" "")))
+              ((symbol-function 'ai-git-commit--untracked-diff)
+               (lambda (&rest _)
+                 '(:text "" :files nil :truncated nil)))
+              ((symbol-function 'magit-git-success) (lambda (&rest _) t)))
+      (let ((data
+             (ai-git-commit-context "/repo/" t '("target.el"))))
+        (should (equal (plist-get data :status) " M target.el"))
+        (should (= (plist-get data :change-count) 1))
+        (should (= (plist-get data :excluded-change-count) 1))
+        (should-not
+         (string-match-p "unrelated-secret.el"
+                         (plist-get data :status)))))))
+
 (ert-deftest git-context-paths-exclude-unrelated-untracked-content ()
   (unless (require 'magit nil t)
     (ert-skip "Magit is unavailable in the pure -Q contract environment"))
@@ -1373,9 +1414,12 @@
                  (diff (plist-get data :diff)))
             (should (equal (plist-get data :diff-scope)
                            '("target.el" "new.el")))
+            (should (= (plist-get data :change-count) 2))
             (should (= (plist-get data :excluded-change-count) 1))
-            (should (string-match-p "unrelated-secret.el"
-                                    (plist-get data :status)))
+            (should (equal (plist-get data :status)
+                           (plist-get data :scoped-status)))
+            (should-not (string-match-p "unrelated-secret.el"
+                                        (plist-get data :status)))
             (should-not (string-match-p "UNRELATED-SECRET-CONTENT" diff))
             (should (string-match-p "changed target" diff))
             (should (string-match-p "new scoped content" diff))))

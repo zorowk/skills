@@ -31,6 +31,8 @@
                   (text maximum label))
 (declare-function skill-runtime-validate-request
                   "../../common/scripts/skill-runtime" (schemas request))
+(declare-function eglot-ensure "eglot" ())
+(declare-function eglot-managed-p "eglot" ())
 
 (defgroup emacs-code-navigator nil
   "Compact access to live Emacs code context."
@@ -766,15 +768,20 @@ uses `find-library-name', the noninteractive engine behind `find-library'."
     (list file line summary)))
 
 (defun emacs-code-navigator--semantic-xref-backend ()
-  "Return the current semantic xref backend, activating deferred hooks once.
+  "Return the current semantic xref backend, starting Eglot when needed.
 
-`eglot-ensure' deliberately connects from `post-command-hook'.  Navigator
-queries visit files noninteractively, so no editor command would otherwise run
-that hook.  Run it once before choosing a semantic backend, matching what Emacs
-would do after an interactive file visit."
-  (unless (and (fboundp 'eglot-managed-p) (eglot-managed-p))
-    (when (local-variable-p 'post-command-hook)
-      (run-hooks 'post-command-hook)))
+`eglot-ensure' defers its connection until the next interactive command.
+Navigator buffers are hidden, so run only the callbacks that `eglot-ensure'
+itself just added.  Never run unrelated existing `post-command-hook' entries."
+  (when (and buffer-file-name
+             (require 'eglot nil t)
+             (not (eglot-managed-p)))
+    (let ((existing-hooks (copy-sequence post-command-hook)))
+      (eglot-ensure)
+      (dolist (function post-command-hook)
+        (when (and (functionp function)
+                   (not (memq function existing-hooks)))
+          (funcall function)))))
   (xref-find-backend))
 
 (defun emacs-code-navigator--glob-list (glob)

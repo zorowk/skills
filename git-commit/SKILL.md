@@ -35,6 +35,9 @@ For `commit` or `amend`, pass `:paths` with the exact repository files authorize
 for the operation. The facade validates and stages those paths, commits only that
 path set, and verifies the resulting HEAD message. Omit `:paths` only when the user
 intentionally wants to commit the existing index as-is.
+Path-scoped context returns status and content only for that path set; use
+`:excluded-change-count` to detect unrelated repository changes without exposing
+their names.
 
 Prefer `:detail compact` for routine personal-repository work. Automatic detail
 also stays compact for up to four low-risk or three medium-risk changes; use

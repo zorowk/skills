@@ -138,7 +138,8 @@ project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。公
 Git adapter 在写文件的回合结束后提供当前 diff、提交信息请求和提交请求入口。它会按仓库
 拆分候选路径；真正审阅或提交时，`git-commit` 必须再次从 Git/Magit 获取状态和 diff，
 并传入明确的 `:paths`。不同仓库不会合并提交，agent-shell 事件不会替代 Git 事实，也不会
-触发自动提交。
+触发自动提交。限定路径的 context 只返回这些路径的状态和内容；无关变更只报告数量，不
+暴露文件名。
 
 GTD adapter 为成功回合提供英文 `Capture as GTD` action。点击后由同一个 Agent 从上一轮
 回答提取一至三个候选任务，先在对话中确认标题、优先级、标签、背景和资源链接；只有用户
