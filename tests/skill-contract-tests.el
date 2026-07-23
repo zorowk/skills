@@ -615,6 +615,48 @@
       (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
       (delete-directory root t))))
 
+(ert-deftest gtd-mutations-structure-missing-and-ambiguous-targets ()
+  (let* ((root (make-temp-file "gtd-target-failures-" t))
+         (file (expand-file-name "gtd.org" root))
+         (emacs-gtd-directory root)
+         (emacs-gtd-file "gtd.org")
+         (org-id-locations-file (expand-file-name "org-id-locations" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* Personal\n"
+                    "** TODO Duplicate task\n"
+                    "** TODO Duplicate task\n"))
+          (with-temp-file org-id-locations-file (insert "()\n"))
+          (let* ((missing-id
+                  (emacs-gtd-execute
+                   '(:operation set-state :id "missing-id" :state "DONE")))
+                 (missing-title
+                  (emacs-gtd-execute
+                   '(:operation set-state :query "Absent task"
+                     :state "DONE")))
+                 (ambiguous
+                  (emacs-gtd-execute
+                   '(:operation set-state :query "Duplicate task"
+                     :state "DONE"))))
+            (skill-contract-tests-assert-failure
+             missing-id 'needs-input 'not-found)
+            (should
+             (eq (plist-get (plist-get missing-id :error) :target-type)
+                 'gtd-id))
+            (skill-contract-tests-assert-failure
+             missing-title 'needs-input 'not-found)
+            (should (= (plist-get missing-title :count) 0))
+            (skill-contract-tests-assert-failure
+             ambiguous 'needs-input 'ambiguous)
+            (should (= (plist-get ambiguous :count) 2))
+            (should
+             (= (length
+                 (plist-get (plist-get ambiguous :data) :matches))
+                2))))
+      (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
+      (delete-directory root t))))
+
 (ert-deftest gtd-conversation-capture-requires-confirmation-and-writes-structure ()
   (let* ((root (make-temp-file "gtd-capture-" t))
          (file (expand-file-name "gtd.org" root))
@@ -1067,10 +1109,18 @@
       (delete-directory root t))))
 
 (ert-deftest navigator-disk-source-rejects-live-semantic-queries ()
-  (should-error
-   (emacs-code-navigator-query
-    '(:operation workspace-symbol :file "/tmp/sample.el"
-      :pattern "sample" :source disk))))
+  (let* ((result
+          (emacs-code-navigator-query
+           '(:operation workspace-symbol :file "/tmp/sample.el"
+             :pattern "sample" :source disk)))
+         (error-data (plist-get result :error)))
+    (skill-contract-tests-assert-failure
+     result 'blocked 'unavailable)
+    (should (equal (plist-get error-data :capability)
+                   "Workspace-symbol queries"))
+    (should (eq (plist-get error-data :actual-source) 'disk))
+    (should (equal (plist-get error-data :required-source)
+                   '(auto live)))))
 
 (ert-deftest navigator-search-honors-global-limit-and-glob ()
   (let ((matches

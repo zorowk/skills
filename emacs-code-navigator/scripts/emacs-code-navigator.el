@@ -27,6 +27,8 @@
                   (request function))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-signal "../../common/scripts/skill-runtime"
+                  (condition message &rest properties))
 (declare-function skill-runtime-truncate "../../common/scripts/skill-runtime"
                   (text maximum label))
 (declare-function skill-runtime-validate-request
@@ -221,10 +223,21 @@ creates live semantic buffers and therefore uses text search fallbacks."
 (defun emacs-code-navigator--require-live-semantic (capability)
   "Require live Emacs state for semantic CAPABILITY."
   (when (eq emacs-code-navigator--requested-source 'disk)
-    (error "%s requires :source live or auto; disk state has no live semantic provider"
-           capability))
+    (skill-runtime-signal
+     'skill-runtime-unavailable
+     (format
+      "%s requires :source live or auto; disk state has no live semantic provider"
+      capability)
+     :capability capability
+     :required-source '(auto live)
+     :actual-source 'disk))
   (when noninteractive
-    (error "%s requires a running interactive Emacs session" capability)))
+    (skill-runtime-signal
+     'skill-runtime-unavailable
+     (format "%s requires a running interactive Emacs session" capability)
+     :capability capability
+     :required-session 'interactive
+     :actual-session 'batch)))
 
 (defun emacs-code-navigator--buffer-hash (buffer)
   "Return a SHA-256 hash for widened BUFFER contents."

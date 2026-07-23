@@ -23,6 +23,8 @@
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects))
+(declare-function skill-runtime-signal "../../common/scripts/skill-runtime"
+                  (condition message &rest properties))
 (declare-function skill-runtime-validate-request
                   "../../common/scripts/skill-runtime" (schemas request))
 
@@ -416,7 +418,11 @@ Create an ID only when CREATE-ID is non-nil."
   (widen)
   (let ((position (org-find-property "ID" id)))
     (unless position
-      (error "No GTD item with ID: %s" id))
+      (skill-runtime-signal
+       'skill-runtime-not-found
+       (format "No GTD item with ID: %s" id)
+       :target-type 'gtd-id
+       :target id))
     (goto-char position)
     (org-back-to-heading t)))
 
@@ -667,16 +673,36 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
                    (plist-get resolution :matches))))))
 
 (defun emacs-gtd--request-id (request)
-  "Return REQUEST ID string or a compact unresolved result plist."
+  "Return REQUEST ID string or signal a structured resolution failure."
   (or (plist-get request :id)
       (let* ((query (or (plist-get request :query)
                         (error "Mutation requires :id or :query")))
              (resolution
               (emacs-gtd-resolve-title
-               query (plist-get request :include-done))))
-        (if (eq (plist-get resolution :status) 'resolved)
-            (cdr (assq 'id (plist-get resolution :item)))
-          (emacs-gtd--compact-resolution resolution)))))
+               query (plist-get request :include-done)))
+             (status (plist-get resolution :status))
+             (compact (emacs-gtd--compact-resolution resolution)))
+        (pcase status
+          ('resolved
+           (cdr (assq 'id (plist-get resolution :item))))
+          ('not-found
+           (skill-runtime-signal
+            'skill-runtime-not-found
+            (format "No GTD item matches title query: %s" query)
+            :target-type 'gtd-title
+            :target query
+            :data compact
+            :count 0))
+          ('ambiguous
+           (skill-runtime-signal
+            'skill-runtime-ambiguous
+            (format "GTD title query matches multiple items: %s" query)
+            :target-type 'gtd-title
+            :target query
+            :data compact
+            :count (length (plist-get resolution :matches))))
+          (_
+           (error "Unknown GTD title resolution status: %S" status))))))
 
 ;;;###autoload
 (defun emacs-gtd--execute (request)
@@ -722,22 +748,20 @@ Use :operation `describe' to request operation schemas only when needed."
        (when (memq operation '(delete archive))
          (skill-runtime-require-authorization request operation))
        (let ((id (emacs-gtd--request-id request)))
-         (if (not (stringp id))
-             (skill-runtime-result operation id 1 'needs-input)
-           (let ((value
-                  (pcase operation
-                    ('set-state
-                     (emacs-gtd-set-state id (plist-get request :state)))
-                    ('reschedule
-                     (emacs-gtd-reschedule id (plist-get request :timestamp)))
-                    ('set-deadline
-                     (emacs-gtd-set-deadline id (plist-get request :timestamp)))
-                    ('delete (emacs-gtd-delete id))
-                    ('archive (emacs-gtd-archive id)))))
-             (skill-runtime-result
-              operation
-              (if (stringp value) value (emacs-gtd--compact-item value))
-              1 nil nil (list :mutated t))))))
+         (let ((value
+                (pcase operation
+                  ('set-state
+                   (emacs-gtd-set-state id (plist-get request :state)))
+                  ('reschedule
+                   (emacs-gtd-reschedule id (plist-get request :timestamp)))
+                  ('set-deadline
+                   (emacs-gtd-set-deadline id (plist-get request :timestamp)))
+                  ('delete (emacs-gtd-delete id))
+                  ('archive (emacs-gtd-archive id)))))
+           (skill-runtime-result
+            operation
+            (if (stringp value) value (emacs-gtd--compact-item value))
+            1 nil nil (list :mutated t)))))
       (_ (error "Unknown GTD operation %S; expected %S"
                 operation (mapcar #'car emacs-gtd--schemas))))))
 
