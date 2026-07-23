@@ -14,6 +14,98 @@
    "org-blog-exporter/scripts/org-blog-exporter.el"
    "git-commit/scripts/ai-git-commit.el"))
 
+(defvar denote-scribe-notes-directory)
+(defvar denote-scribe-hywiki-directory)
+(defvar denote-scribe-git-directory)
+(defvar hywiki-directory)
+(defvar emacs-gtd-directory)
+(defvar emacs-gtd-file)
+(defvar org-id-locations-file)
+
+(defconst skill-contract-test-facades
+  '((:name navigator
+     :call emacs-code-navigator-query
+     :required-operations
+     (symbols region imenu file-state workspace-symbol xref locate locate-many
+              diagnostics))
+    (:name gtd
+     :call emacs-gtd-execute
+     :required-operations (preflight)
+     :paged-operations (list))
+    (:name denote
+     :call denote-scribe-run
+     :required-operations (preflight)
+     :paged-operations (review list))
+    (:name blog
+     :call org-blog-exporter-run
+     :paged-operations (export publish))
+    (:name git
+     :call ai-git-commit-run
+     :required-operations (commit amend)))
+  "Facade entry points and cross-facade contract expectations.")
+
+(defconst skill-contract-test-destructive-requests
+  '((:facade gtd :operation delete
+     :request (:operation delete :id "sample"))
+    (:facade denote :operation commit
+     :request (:operation commit :title "Review note" :paths ("note.org")))
+    (:facade blog :operation publish
+     :request (:operation publish))
+    (:facade git :operation commit
+     :request (:operation commit)))
+  "Representative destructive requests that must fail before effects.")
+
+(defconst skill-contract-test-metric-fields
+  '(:metrics-version :elapsed-ms :request-characters :request-field-count
+    :payload-characters :base-response-characters :result-count :truncated
+    :degraded :resolved-source)
+  "Required fields in every facade metrics plist.")
+
+(defun skill-contract-test-facade (name)
+  "Return the registered facade named NAME."
+  (or (seq-find
+       (lambda (facade) (eq (plist-get facade :name) name))
+       skill-contract-test-facades)
+      (error "Unknown test facade: %s" name)))
+
+(defun skill-contract-test-call (facade request)
+  "Call FACADE with REQUEST."
+  (funcall (plist-get facade :call) request))
+
+(defun skill-contract-test-schema (facade operation)
+  "Return FACADE schema for OPERATION."
+  (plist-get
+   (plist-get
+    (skill-contract-test-call
+     facade (list :operation 'describe :target operation))
+    :data)
+   :schema))
+
+(defun skill-contract-test-proper-plist-p (value)
+  "Return non-nil when VALUE is a proper keyword plist."
+  (and (proper-list-p value)
+       (zerop (% (length value) 2))
+       (cl-loop for (key _) on value by #'cddr always (keywordp key))))
+
+(defun skill-contract-test-assert-success-envelope (result operation)
+  "Assert RESULT is a standard successful envelope for OPERATION."
+  (should (= (plist-get result :protocol-version) 2))
+  (should (eq (plist-get result :status) 'ok))
+  (should (eq (plist-get result :operation) operation))
+  (should (natnump (plist-get result :count)))
+  (should (plist-member result :data))
+  (let ((metrics (plist-get result :metrics)))
+    (should (skill-contract-test-proper-plist-p metrics))
+    (dolist (field skill-contract-test-metric-fields)
+      (should (plist-member metrics field)))))
+
+(defun skill-contract-test-destructive-request (entry)
+  "Return the complete unauthorized request for destructive ENTRY."
+  (let ((request (copy-tree (plist-get entry :request))))
+    (if (eq (plist-get entry :facade) 'git)
+        (append request skill-contract-tests-message-spec)
+      request)))
+
 (ert-deftest facade-schemas-expose-high-value-value-constraints ()
   (let* ((navigator
           (plist-get
@@ -48,41 +140,29 @@
     (should (plist-get publish :verification))))
 
 (ert-deftest skill-facades-describe-with-standard-envelope ()
-  (dolist (call (list #'emacs-code-navigator-query
-                      #'emacs-gtd-execute
-                      #'denote-scribe-run
-                      #'org-blog-exporter-run
-                      #'ai-git-commit-run))
-    (let ((result (funcall call '(:operation describe))))
-      (should (eq (plist-get result :status) 'ok))
-      (should (eq (plist-get result :operation) 'describe))
-      (should (plist-member result :data))
-      (should (plist-member result :metrics))
-      (should (natnump
-               (plist-get (plist-get result :metrics) :elapsed-ms)))
+  (dolist (facade skill-contract-test-facades)
+    (let ((result
+           (skill-contract-test-call facade '(:operation describe))))
+      (skill-contract-test-assert-success-envelope result 'describe)
       (should (plist-get (plist-get result :data) :operations)))))
 
 (ert-deftest skill-facades-return-structured-invalid-requests ()
-  (dolist (call (list #'emacs-code-navigator-query
-                      #'emacs-gtd-execute
-                      #'denote-scribe-run
-                      #'org-blog-exporter-run
-                      #'ai-git-commit-run))
-    (let ((result (funcall call '(:operation unknown))))
+  (dolist (facade skill-contract-test-facades)
+    (let* ((result
+            (skill-contract-test-call facade '(:operation unknown)))
+           (error-data (plist-get result :error)))
       (skill-contract-tests-assert-failure
        result 'needs-input 'invalid-request)
-      (should (equal
-               (plist-get (plist-get result :error) :field-path)
-               '(:operation))))))
+      (dolist (field '(:code :message :retry :required-action))
+        (should (plist-member error-data field)))
+      (should (equal (plist-get error-data :field-path) '(:operation))))))
 
 (ert-deftest facade-operation-schemas-carry-elisp-owned-guidance ()
-  (dolist (call (list #'emacs-code-navigator-query
-                      #'emacs-gtd-execute
-                      #'denote-scribe-run
-                      #'org-blog-exporter-run
-                      #'ai-git-commit-run))
+  (dolist (facade skill-contract-test-facades)
     (let* ((description
-            (plist-get (funcall call '(:operation describe)) :data))
+            (plist-get
+             (skill-contract-test-call facade '(:operation describe))
+             :data))
            (operations (plist-get description :operations))
            (catalog (plist-get description :catalog)))
       (should (equal operations (mapcar (lambda (item)
@@ -92,47 +172,74 @@
                (lambda (item) (stringp (plist-get item :summary)))
                catalog))
       (dolist (operation operations)
-        (let* ((result
-                (funcall call
-                         (list :operation 'describe :target operation)))
-               (schema
-                (plist-get (plist-get result :data) :schema)))
+        (let ((schema (skill-contract-test-schema facade operation)))
           (should (stringp (plist-get schema :summary))))))))
 
 (ert-deftest facade-schemas-expose-migrated-core-operations ()
-  (let ((navigator
-         (plist-get
-          (plist-get
-           (emacs-code-navigator-query '(:operation describe)) :data)
-          :operations))
-        (denote
-         (plist-get
-          (plist-get (denote-scribe-run '(:operation describe)) :data)
-          :operations))
-        (gtd
-         (plist-get
-          (plist-get (emacs-gtd-execute '(:operation describe)) :data)
-          :operations))
-        (git-commit
-         (plist-get
-          (plist-get (ai-git-commit-run '(:operation describe)) :data)
-          :operations)))
-    (dolist (operation
-             '(symbols region imenu file-state workspace-symbol xref locate locate-many
-                       diagnostics))
-      (should (memq operation navigator)))
-    (should (memq 'preflight denote))
-    (should (memq 'preflight gtd))
-    (should (memq 'commit git-commit))
-    (should (memq 'amend git-commit))))
+  (dolist (facade skill-contract-test-facades)
+    (let ((operations
+           (plist-get
+            (plist-get
+             (skill-contract-test-call facade '(:operation describe))
+             :data)
+            :operations)))
+      (dolist (operation (plist-get facade :required-operations))
+        (should (memq operation operations))))))
+
+(ert-deftest facade-paginated-operations-declare-continuation-inputs ()
+  (dolist (facade skill-contract-test-facades)
+    (dolist (operation (plist-get facade :paged-operations))
+      (let ((optional
+             (plist-get
+              (skill-contract-test-schema facade operation)
+              :optional)))
+        (should (memq :offset optional))
+        (should (memq :limit optional))))))
+
+(ert-deftest facade-effect-declarations-use-one-uniform-shape ()
+  (dolist (facade skill-contract-test-facades)
+    (let ((operations
+           (plist-get
+            (plist-get
+             (skill-contract-test-call facade '(:operation describe))
+             :data)
+            :operations)))
+      (dolist (operation operations)
+        (when-let* ((effects
+                    (plist-get
+                     (skill-contract-test-schema facade operation)
+                     :effects)))
+          (should (proper-list-p effects))
+          (should (seq-every-p #'symbolp effects))
+          (should (= (length effects)
+                     (length (delete-dups (copy-sequence effects))))))))))
 
 (ert-deftest preflight-operations-return-standard-envelopes ()
-  (dolist (result
-           (list (denote-scribe-run '(:operation preflight))
-                 (emacs-gtd-execute '(:operation preflight))))
-    (should (memq (plist-get result :status) '(ok blocked)))
-    (should (eq (plist-get result :operation) 'preflight))
-    (should (plist-member result :data))))
+  (let* ((root (make-temp-file "skill-preflight-" t))
+         (notes (expand-file-name "notes" root))
+         (hywiki (expand-file-name "hywiki" root))
+         (gtd (expand-file-name "gtd" root))
+         (emacs-gtd-directory gtd)
+         (emacs-gtd-file "gtd.org")
+         (org-id-locations-file (expand-file-name "org-id-locations" root))
+         (denote-scribe-notes-directory notes)
+         (denote-scribe-hywiki-directory hywiki)
+         (denote-scribe-git-directory root)
+         (hywiki-directory hywiki))
+    (unwind-protect
+        (progn
+          (dolist (directory (list notes hywiki gtd))
+            (make-directory directory))
+          (with-temp-file (expand-file-name emacs-gtd-file gtd)
+            (insert "* Tasks\n"))
+          (with-temp-file org-id-locations-file (insert "()\n"))
+          (dolist (result
+                   (list (denote-scribe-run '(:operation preflight))
+                         (emacs-gtd-execute '(:operation preflight))))
+            (should (memq (plist-get result :status) '(ok blocked)))
+            (should (eq (plist-get result :operation) 'preflight))
+            (should (plist-member result :data))))
+      (delete-directory root t))))
 
 (ert-deftest removed-compatibility-symbols-stay-absent ()
   (dolist (symbol '(treeland-commit-context treeland-commit-format
@@ -148,18 +255,22 @@
   (should-not (featurep 'treeland-commit)))
 
 (ert-deftest destructive-facades-require-authorization-before-effects ()
-  (dolist
-      (result
-       (list
-        (emacs-gtd-execute '(:operation delete :id "sample"))
-        (denote-scribe-run
-         '(:operation commit :title "Review note" :paths ("note.org")))
-        (org-blog-exporter-run '(:operation publish))
-        (ai-git-commit-run
-         (append '(:operation commit) skill-contract-tests-message-spec))))
-    (skill-contract-tests-assert-failure
-     result 'needs-input 'authorization-required)
-    (should-not (plist-get result :effects))))
+  (dolist (entry skill-contract-test-destructive-requests)
+    (let* ((facade
+            (skill-contract-test-facade (plist-get entry :facade)))
+           (operation (plist-get entry :operation))
+           (schema (skill-contract-test-schema facade operation))
+           (authorization
+            (assq :authorization (plist-get schema :choices)))
+           (result
+            (skill-contract-test-call
+             facade (skill-contract-test-destructive-request entry))))
+      (should (memq :authorization (plist-get schema :required)))
+      (should (equal authorization '(:authorization explicit)))
+      (should (plist-get schema :effects))
+      (skill-contract-tests-assert-failure
+       result 'needs-input 'authorization-required)
+      (should-not (plist-get result :effects)))))
 
 (provide 'contract-conformance-tests)
 

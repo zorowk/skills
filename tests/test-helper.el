@@ -8,9 +8,17 @@
 (require 'subr-x)
 (require 'xref)
 
+(defvar hywiki-directory)
+
 (defconst skill-tests-directory
   (file-name-directory (or load-file-name buffer-file-name))
   "Directory containing the skill test suites.")
+
+(defconst skill-tests-hywiki-directory
+  (expand-file-name "codex-skills-hywiki/" temporary-file-directory)
+  "Temporary HyWiki directory used by isolated test processes.")
+
+(setq-default hywiki-directory skill-tests-hywiki-directory)
 
 (defconst skill-contract-tests-root
   (file-name-directory (directory-file-name skill-tests-directory))
