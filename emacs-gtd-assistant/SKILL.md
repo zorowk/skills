@@ -1,9 +1,9 @@
 ---
 name: emacs-gtd-assistant
-description: >-
-  Query or manage Org GTD tasks through the running Emacs, including capturing confirmed follow-up
-  work from agent-shell conversations with priorities, tags, context, properties, and resource
-  links; also list, add, reschedule, set deadlines or states, delete, or archive tasks.
+description: >
+  Manage persistent Org GTD tasks through Emacs. For conversation capture,
+  propose candidates and wait for explicit confirmation; do not capture
+  merely mentioned next steps.
 ---
 
 # Emacs GTD Assistant
