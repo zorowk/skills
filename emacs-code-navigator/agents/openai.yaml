@@ -1,4 +1,4 @@
 interface:
   display_name: "Emacs Code Navigator"
-  short_description: "Inspect code with explicit live and disk provenance"
-  default_prompt: "Use $emacs-code-navigator to inspect code from the intended live or disk source and report any buffer divergence."
+  short_description: "Navigate live Emacs code across projects"
+  default_prompt: "Use $emacs-code-navigator to trace this symbol from my current Emacs cursor across the project directories I name."

@@ -13,6 +13,7 @@
 (require 'subr-x)
 (require 'thingatpt)
 (require 'flymake nil t)
+(require 'which-func nil t)
 
 (unless (featurep 'skill-runtime)
   (load (expand-file-name "../../common/scripts/skill-runtime.el"
@@ -44,6 +45,25 @@
   "Maximum number of symbols accepted by one batch query."
   :type 'positive-integer
   :group 'emacs-code-navigator)
+
+(defcustom emacs-code-navigator-semantic-buffer-policy 'open-on-demand
+  "How multi-project semantic queries obtain an anchor buffer.
+
+`existing-only' uses visited buffers only.  `open-on-demand' visits at most one
+candidate file per requested project without displaying it.  `disk-only' never
+creates live semantic buffers and therefore uses text search fallbacks."
+  :type '(choice (const existing-only)
+                 (const open-on-demand)
+                 (const disk-only))
+  :group 'emacs-code-navigator)
+
+(defcustom emacs-code-navigator-semantic-buffer-limit 5
+  "Maximum live anchor buffers retained after navigator opens them."
+  :type 'natnum
+  :group 'emacs-code-navigator)
+
+(defvar emacs-code-navigator--semantic-buffers nil
+  "Live anchor buffers opened and retained by multi-project navigation.")
 
 (defconst emacs-code-navigator-ignored-directories
   '(".git" "node_modules" "target" "build" "dist" ".cache" ".venv" "vendor" "__pycache__")
@@ -92,15 +112,22 @@
      :optional (:line :kind :limit :glob :regexp :source)
      :choices ((:kind auto text symbol definitions references)
                (:source auto live disk)))
+    (locate-many
+     :summary "Locate one query across bounded project roots with isolated results."
+     :required (:query :directories)
+     :optional (:kind :limit-per-directory :glob :regexp :source)
+     :types ((:query non-empty-string) (:directories non-empty-string-list))
+     :choices ((:kind auto text symbol) (:source auto live disk)))
     (diagnostics
      :summary "Read Flymake/Eglot diagnostics only when explicitly requested."
      :required-one-of (:file :directory)
      :optional (:line :radius :limit :file-limit :source)
      :choices ((:source auto live disk)))
     (context
-     :summary "Return cheap bounded live context; semantic facets are opt-in."
+     :summary "Return bounded live context at an exact position; semantic facets are opt-in."
      :required (:file :line)
-     :optional (:radius :defun :eldoc :diagnostics :diagnostic-radius :source)
+     :optional (:column :radius :defun :eldoc :definitions :definition-limit
+                        :semantic-timeout-ms :diagnostics :diagnostic-radius :source)
      :choices ((:source auto live disk)))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
@@ -187,6 +214,95 @@
             (with-current-buffer buffer
               (equal buffer-file-name expanded))))
      (buffer-list))))
+
+(defun emacs-code-navigator--buffers-in-directory (directory)
+  "Return live programming buffers visiting files under DIRECTORY."
+  (let ((root (file-name-as-directory (expand-file-name directory))))
+    (seq-filter
+     (lambda (buffer)
+       (with-current-buffer buffer
+         (and buffer-file-name
+              (derived-mode-p 'prog-mode)
+              (not (memq buffer emacs-code-navigator--temporary-buffers))
+              (file-in-directory-p (expand-file-name buffer-file-name) root))))
+     (buffer-list))))
+
+(defun emacs-code-navigator--preferred-project-buffer (directory)
+  "Return the best existing semantic anchor buffer under DIRECTORY."
+  (let ((buffers (emacs-code-navigator--buffers-in-directory directory)))
+    (or (seq-find
+         (lambda (buffer)
+           (with-current-buffer buffer
+             (and (fboundp 'eglot-managed-p) (eglot-managed-p))))
+         buffers)
+        (car buffers))))
+
+(defun emacs-code-navigator--semantic-buffer-count ()
+  "Return the number of live navigator-owned semantic buffers."
+  (setq emacs-code-navigator--semantic-buffers
+        (seq-filter #'buffer-live-p emacs-code-navigator--semantic-buffers))
+  (length emacs-code-navigator--semantic-buffers))
+
+(defun emacs-code-navigator--semantic-anchor-candidate (directory query)
+  "Return one candidate file under DIRECTORY for semantic QUERY."
+  (or (car-safe
+       (car
+        (ignore-errors
+          (emacs-code-navigator-search directory query 1 nil t))))
+      (let* ((root (emacs-code-navigator-project-root directory))
+             (relative
+              (seq-find
+               (lambda (file)
+                 (string-match-p
+                  "\\.\\(?:c\\|cc\\|cpp\\|cxx\\|h\\|hh\\|hpp\\|hxx\\|el\\|py\\|rs\\|js\\|ts\\)\\'"
+                  file))
+               (emacs-code-navigator-project-files directory 200))))
+        (and relative (expand-file-name relative root)))))
+
+(defun emacs-code-navigator--semantic-anchor (directory query)
+  "Return an anchor plist for QUERY in DIRECTORY according to buffer policy."
+  (let* ((root (emacs-code-navigator-project-root directory))
+         (existing (emacs-code-navigator--preferred-project-buffer root)))
+    (cond
+     (existing
+      (list :buffer existing :file (buffer-file-name existing)
+            :origin 'existing :project-root root))
+     ((or (eq emacs-code-navigator-semantic-buffer-policy 'existing-only)
+          (eq emacs-code-navigator-semantic-buffer-policy 'disk-only))
+      (list :origin 'none :project-root root))
+     ((>= (emacs-code-navigator--semantic-buffer-count)
+          emacs-code-navigator-semantic-buffer-limit)
+      (list :origin 'limit :project-root root))
+     (t
+      (when-let* ((file (emacs-code-navigator--semantic-anchor-candidate
+                         root query))
+                  (buffer (find-file-noselect file)))
+        (cl-pushnew buffer emacs-code-navigator--semantic-buffers)
+        (list :buffer buffer :file file :origin 'navigator-opened
+              :project-root root))))))
+
+;;;###autoload
+(defun emacs-code-navigator-close-semantic-buffers ()
+  "Close safe navigator-owned semantic buffers and return the closed count.
+
+Never close a modified or displayed buffer."
+  (interactive)
+  (let ((closed 0)
+        (retained nil))
+    (dolist (buffer emacs-code-navigator--semantic-buffers)
+      (if (and (buffer-live-p buffer)
+               (not (buffer-modified-p buffer))
+               (not (get-buffer-window buffer t)))
+          (progn
+            (kill-buffer buffer)
+            (setq closed (1+ closed)))
+        (when (buffer-live-p buffer)
+          (push buffer retained))))
+    (setq emacs-code-navigator--semantic-buffers (nreverse retained))
+    (when (called-interactively-p 'interactive)
+      (message "Closed %d navigator semantic buffer%s"
+               closed (if (= closed 1) "" "s")))
+    closed))
 
 (defun emacs-code-navigator-file-state (file)
   "Return live-buffer and disk comparison metadata for FILE."
@@ -905,18 +1021,27 @@ first symbol found at or after indentation on LINE."
   (emacs-code-navigator--xref-at-line
    file line identifier #'xref-backend-references))
 
-(defun emacs-code-navigator-symbol-at-line (file line)
-  "Return context data for the symbol at LINE in FILE.
+(defun emacs-code-navigator--goto-position (line &optional column)
+  "Move to LINE and optional zero-based COLUMN in the current buffer."
+  (goto-char (point-min))
+  (forward-line (1- (max 1 line)))
+  (if column
+      (move-to-column (max 0 column))
+    (back-to-indentation)))
+
+(defun emacs-code-navigator-symbol-at-line (file line &optional column)
+  "Return context data for the symbol at LINE and optional COLUMN in FILE.
 
 The result is (symbol bounds major-mode eglot-managed defun-line)."
   (with-current-buffer (emacs-code-navigator--file-buffer file)
     (save-excursion
-      (goto-char (point-min))
-      (forward-line (1- line))
-      (back-to-indentation)
+      (emacs-code-navigator--goto-position line column)
       (unless (thing-at-point 'symbol t)
-        (when (re-search-forward "\\(\\sw\\|\\s_\\)+" (line-end-position) t)
-          (goto-char (match-beginning 0))))
+        (if column
+            (when (re-search-forward "\\(\\sw\\|\\s_\\)+" (line-end-position) t)
+              (goto-char (match-beginning 0)))
+          (when (re-search-forward "\\(\\sw\\|\\s_\\)+" (line-end-position) t)
+            (goto-char (match-beginning 0)))))
       (let* ((line-end (line-end-position))
              (line-symbols nil)
              (scan-start (line-beginning-position)))
@@ -928,7 +1053,8 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
                         (match-end 0))
                   line-symbols)))
         (setq line-symbols (nreverse line-symbols))
-        (when (and (member (caar line-symbols)
+        (when (and (null column)
+                   (member (caar line-symbols)
                            '("defun" "cl-defun" "defmacro" "defvar" "defconst" "defcustom"))
                    (cadr line-symbols))
           (goto-char (cadr (cadr line-symbols))))
@@ -951,6 +1077,18 @@ The result is (symbol bounds major-mode eglot-managed defun-line)."
               major-mode
               eglot-managed
               defun-line))))))
+
+(defun emacs-code-navigator-scope-at-line (file line &optional column)
+  "Return the Imenu/Which Function scope at FILE LINE and optional COLUMN."
+  (with-current-buffer (emacs-code-navigator--file-buffer file)
+    (save-excursion
+      (emacs-code-navigator--goto-position line column)
+      (when (fboundp 'which-function)
+        (let ((scope (ignore-errors (which-function))))
+          (cond
+           ((stringp scope) (substring-no-properties scope))
+           ((listp scope) (mapconcat #'identity scope "."))
+           (t nil)))))))
 
 (defun emacs-code-navigator-defun-at-line (file line)
   "Return the top-level form around LINE in FILE with line numbers."
@@ -1048,17 +1186,15 @@ currently knows after visiting the files."
               (throw 'done nil))))))
     (nreverse results)))
 
-(defun emacs-code-navigator-eldoc-at-line (file line)
-  "Return Eldoc documentation strings at LINE in FILE.
+(defun emacs-code-navigator-eldoc-at-line (file line &optional column)
+  "Return Eldoc documentation strings at LINE and optional COLUMN in FILE.
 
 This calls buffer-local `eldoc-documentation-functions' and collects
 plain strings delivered synchronously through their callbacks."
   (emacs-code-navigator--require-live-semantic "Eldoc queries")
   (with-current-buffer (emacs-code-navigator--file-buffer file)
     (save-excursion
-      (goto-char (point-min))
-      (forward-line (1- line))
-      (back-to-indentation)
+      (emacs-code-navigator--goto-position line column)
       (let ((docs nil))
         (dolist (fn eldoc-documentation-functions)
           (condition-case nil
@@ -1073,19 +1209,90 @@ plain strings delivered synchronously through their callbacks."
             (error nil)))
         (delete-dups (nreverse (seq-remove #'string-empty-p docs)))))))
 
+(defun emacs-code-navigator-semantic-at-position
+    (file line column include-definitions definition-limit include-eldoc
+          timeout-ms)
+  "Return bounded semantic context for FILE at LINE and COLUMN.
+
+INCLUDE-DEFINITIONS and INCLUDE-ELDOC select facets.  DEFINITION-LIMIT and
+TIMEOUT-MS bound the result and total semantic wait."
+  (emacs-code-navigator--require-live-semantic "Semantic context")
+  (let ((maximum (or definition-limit 2))
+        (milliseconds (or timeout-ms 200))
+        (timed-out nil)
+        result)
+    (unless (and (integerp maximum) (> maximum 0))
+      (error "DEFINITION-LIMIT must be positive: %S" definition-limit))
+    (unless (and (integerp milliseconds) (> milliseconds 0))
+      (error "SEMANTIC-TIMEOUT-MS must be positive: %S" timeout-ms))
+    (setq
+     result
+     (with-timeout
+         ((/ milliseconds 1000.0)
+          (setq timed-out t)
+          nil)
+       (condition-case error-data
+           (with-current-buffer (emacs-code-navigator--file-buffer file)
+             (save-excursion
+               (emacs-code-navigator--goto-position line column)
+               (let* ((identifier (thing-at-point 'symbol t))
+                      (backend
+                       (and include-definitions identifier
+                            (emacs-code-navigator--semantic-xref-backend)))
+                      (provider
+                       (cond
+                        ((and (fboundp 'eglot-managed-p) (eglot-managed-p))
+                         'eglot)
+                        (backend (format "%S" backend))
+                        (include-eldoc 'eldoc)))
+                      (definitions
+                       (when (and include-definitions backend identifier)
+                         (mapcar
+                          #'emacs-code-navigator--xref-location-data
+                          (seq-take
+                           (xref-backend-definitions backend identifier)
+                           maximum))))
+                      (eldoc
+                       (and include-eldoc
+                            (emacs-code-navigator-eldoc-at-line
+                             file line column))))
+                 (list :status
+                       (if (or (not include-definitions) backend) 'ok 'unavailable)
+                       :provider provider
+                       :identifier identifier
+                       :definitions definitions
+                       :eldoc eldoc))))
+         (error
+          (list :status 'error :error (error-message-string error-data))))))
+    (if timed-out
+        (list :status 'timeout :timeout-ms milliseconds)
+      result)))
+
 (defun emacs-code-navigator-context-at-line
     (file line &optional radius include-defun include-eldoc
-          include-diagnostics diagnostic-radius)
-  "Return bounded live-buffer context for FILE at LINE.
+          include-diagnostics diagnostic-radius column include-definitions
+          definition-limit semantic-timeout-ms)
+  "Return bounded live-buffer context for FILE at LINE and optional COLUMN.
 
 RADIUS defaults to 5 source lines on each side.  INCLUDE-DEFUN,
 INCLUDE-ELDOC, and INCLUDE-DIAGNOSTICS opt into progressively more expensive
-data.  In particular, Flymake is never started by the default context query."
+data.  DIAGNOSTIC-RADIUS bounds nearby diagnostics.  INCLUDE-DEFINITIONS uses
+DEFINITION-LIMIT and SEMANTIC-TIMEOUT-MS to bound xref work.  In particular,
+Flymake is never started by the default context query."
   (let* ((distance (or radius 5))
          (_ (unless (and (integerp distance) (>= distance 0))
               (error "RADIUS must be a non-negative integer: %S" radius)))
+         (semantic
+          (and (or include-definitions include-eldoc)
+               (emacs-code-navigator-semantic-at-position
+                file line column include-definitions definition-limit
+                include-eldoc semantic-timeout-ms)))
          (result
-          (list :symbol (emacs-code-navigator-symbol-at-line file line)
+          (list :project-root
+                (emacs-code-navigator-project-root
+                 (file-name-directory (expand-file-name file)))
+                :scope (emacs-code-navigator-scope-at-line file line column)
+                :symbol (emacs-code-navigator-symbol-at-line file line column)
                 :region
                 (emacs-code-navigator-read-region
                  file (max 1 (- line distance)) (+ line distance)))))
@@ -1094,11 +1301,15 @@ data.  In particular, Flymake is never started by the default context query."
             (append result
                     (list :defun
                           (emacs-code-navigator-defun-at-line file line)))))
-    (when include-eldoc
+    (when semantic
       (setq result
             (append result
-                    (list :eldoc
-                          (emacs-code-navigator-eldoc-at-line file line)))))
+                    (list :semantic semantic)
+                    (and include-definitions
+                         (list :definitions
+                               (plist-get semantic :definitions)))
+                    (and include-eldoc
+                         (list :eldoc (plist-get semantic :eldoc))))))
     (when include-diagnostics
       (setq result
             (append result
@@ -1211,6 +1422,78 @@ data.  In particular, Flymake is never started by the default context query."
        (emacs-code-navigator-search
         directory query limit glob (not regexp)))))))
 
+(defun emacs-code-navigator--locate-many-project
+    (directory query kind limit glob regexp source)
+  "Locate QUERY in one DIRECTORY and return an isolated project result."
+  (let* ((expanded (file-name-as-directory (expand-file-name directory)))
+         (semantic-allowed
+          (and (not (eq kind 'text))
+               (not (eq source 'disk))
+               (not (eq emacs-code-navigator-semantic-buffer-policy
+                        'disk-only))))
+         (anchor
+          (and semantic-allowed
+               (emacs-code-navigator--semantic-anchor expanded query)))
+         (file (plist-get anchor :file))
+         (root (or (plist-get anchor :project-root)
+                   (emacs-code-navigator-project-root expanded)))
+         (request
+          (if file
+              (list :query query :file file :kind kind :limit limit
+                    :glob glob :regexp regexp)
+            (list :query query :directory root :kind 'text :limit limit
+                  :glob glob :regexp regexp)))
+         (located (emacs-code-navigator--locate-request request))
+         (strategy (plist-get located :strategy))
+         (resolved-source
+          (if (memq strategy '(imenu workspace-symbol symbol definitions references))
+              'live
+            'disk))
+         (buffer (plist-get anchor :buffer)))
+    (push resolved-source emacs-code-navigator--resolved-sources)
+    (list :directory expanded
+          :project-root root
+          :anchor file
+          :buffer-origin (or (plist-get anchor :origin) 'none)
+          :eglot-managed
+          (and buffer (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (and (fboundp 'eglot-managed-p) (eglot-managed-p) t)))
+          :source resolved-source
+          :strategy strategy
+          :matches (plist-get located :matches))))
+
+(defun emacs-code-navigator--locate-many-request (request)
+  "Locate one query across the project directories in REQUEST."
+  (let* ((query (plist-get request :query))
+         (directories (plist-get request :directories))
+         (kind (or (plist-get request :kind) 'auto))
+         (limit (or (plist-get request :limit-per-directory) 3))
+         (glob (plist-get request :glob))
+         (regexp (plist-get request :regexp))
+         (source (or (plist-get request :source) 'auto)))
+    (unless (and (listp directories) directories
+                 (seq-every-p
+                  (lambda (directory)
+                    (and (stringp directory) (not (string-empty-p directory))))
+                  directories))
+      (error "LOCATE-MANY DIRECTORIES must be a non-empty string list"))
+    (when (> (length directories) 5)
+      (error "LOCATE-MANY accepts at most 5 project directories"))
+    (unless (and (integerp limit) (> limit 0) (<= limit 10))
+      (error "LIMIT-PER-DIRECTORY must be between 1 and 10: %S" limit))
+    (mapcar
+     (lambda (directory)
+       (condition-case error-data
+           (emacs-code-navigator--locate-many-project
+            directory query kind limit glob regexp source)
+         (error
+          (list :directory (expand-file-name directory)
+                :status 'error
+                :error (error-message-string error-data)
+                :matches nil))))
+     directories)))
+
 (defun emacs-code-navigator--diagnostics-request (request)
   "Return file or project diagnostics selected by compact REQUEST."
   (let ((file (plist-get request :file))
@@ -1297,6 +1580,8 @@ Use :operation `describe' to request operation schemas only when needed."
                     (plist-get request :limit)))
                   ('xref (emacs-code-navigator--xref-request request))
                   ('locate (emacs-code-navigator--locate-request request))
+                  ('locate-many
+                   (emacs-code-navigator--locate-many-request request))
                   ('diagnostics
                    (emacs-code-navigator--diagnostics-request request))
                   ('context
@@ -1307,7 +1592,11 @@ Use :operation `describe' to request operation schemas only when needed."
                     (plist-get request :defun)
                     (plist-get request :eldoc)
                     (plist-get request :diagnostics)
-                    (plist-get request :diagnostic-radius)))
+                    (plist-get request :diagnostic-radius)
+                    (plist-get request :column)
+                    (plist-get request :definitions)
+                    (plist-get request :definition-limit)
+                    (plist-get request :semantic-timeout-ms)))
                   ('describe
                    (skill-runtime-describe
                     emacs-code-navigator--schemas
@@ -1321,7 +1610,7 @@ Use :operation `describe' to request operation schemas only when needed."
                    (length (plist-get result :matches)))
                   ((memq operation
                          '(symbols search files imenu workspace-symbol xref
-                                   diagnostics))
+                                   locate-many diagnostics))
                    (length result))
                   (t 1)))))
           (append envelope

@@ -10,6 +10,18 @@
 
 (defvar emacs-code-navigator-documentation-maximum-characters)
 (defvar emacs-code-navigator-symbol-batch-limit)
+(defvar emacs-code-navigator-agent-shell-context-enabled)
+(defvar emacs-code-navigator-agent-shell-context-maximum-characters)
+(defvar emacs-code-navigator-agent-shell-context-radius)
+(defvar emacs-code-navigator-agent-shell-diagnostic-limit)
+(defvar emacs-code-navigator-agent-shell-last-context-metrics)
+(defvar emacs-code-navigator-agent-shell-semantic-level)
+(defvar emacs-code-navigator-agent-shell-definition-limit)
+(defvar emacs-code-navigator-agent-shell-semantic-timeout-ms)
+(defvar emacs-code-navigator-semantic-buffer-policy)
+(defvar emacs-code-navigator-semantic-buffer-limit)
+(defvar emacs-code-navigator--semantic-buffers)
+(defvar agent-shell-context-sources)
 (defvar emacs-gtd-directory)
 (defvar emacs-gtd-file)
 (defvar ai-git-commit-untracked-file-maximum-characters)
@@ -51,7 +63,18 @@
 (declare-function emacs-code-navigator-context-at-line
                   "../emacs-code-navigator/scripts/emacs-code-navigator"
                   (file line &optional radius include-defun include-eldoc
-                        include-diagnostics diagnostic-radius))
+                        include-diagnostics diagnostic-radius column
+                        include-definitions definition-limit semantic-timeout-ms))
+(declare-function emacs-code-navigator-semantic-at-position
+                  "../emacs-code-navigator/scripts/emacs-code-navigator"
+                  (file line column include-definitions definition-limit
+                        include-eldoc timeout-ms))
+(declare-function emacs-code-navigator-close-semantic-buffers
+                  "../emacs-code-navigator/scripts/emacs-code-navigator" ())
+(declare-function emacs-code-navigator-agent-shell-context
+                  "../emacs-code-navigator/scripts/agent-shell-code-context" ())
+(declare-function emacs-code-navigator-agent-shell-enable
+                  "../emacs-code-navigator/scripts/agent-shell-code-context" ())
 (declare-function emacs-gtd-execute
                   "../emacs-gtd-assistant/scripts/emacs-gtd-assistant"
                   (request))
@@ -95,6 +118,7 @@
          '("common/scripts/skill-runtime.el"
            "common/scripts/skill-git.el"
            "emacs-code-navigator/scripts/emacs-code-navigator.el"
+           "emacs-code-navigator/scripts/agent-shell-code-context.el"
            "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
            "denote-scribe/scripts/denote-scribe.el"
            "org-blog-exporter/scripts/org-blog-exporter.el"
@@ -503,7 +527,7 @@
           (plist-get (ai-git-commit-run '(:operation describe)) :data)
           :operations)))
     (dolist (operation
-             '(symbols region imenu file-state workspace-symbol xref locate
+             '(symbols region imenu file-state workspace-symbol xref locate locate-many
                        diagnostics))
       (should (memq operation navigator)))
     (should (memq 'preflight denote))
@@ -598,6 +622,231 @@
         (should-not (plist-member context :defun))
         (should-not (plist-member context :eldoc))
         (should-not (plist-member context :diagnostics))))))
+
+(ert-deftest navigator-agent-shell-context-is-live-bounded-and-cheap ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq buffer-file-name "/tmp/navigator-agent-shell.el")
+    (insert "(message sample-symbol)\n")
+    (goto-char (point-min))
+    (search-forward "sample-symbol")
+    (backward-char 1)
+    (let ((emacs-code-navigator-agent-shell-context-maximum-characters 180)
+          (emacs-code-navigator-agent-shell-context-radius 2)
+          (emacs-code-navigator-agent-shell-diagnostic-limit 0)
+          (emacs-code-navigator-agent-shell-semantic-level 'definitions)
+          request)
+      (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil))
+                ((symbol-function 'emacs-code-navigator-query)
+                 (lambda (value)
+                   (setq request value)
+                   '(:status ok :operation context :count 1
+                     :data (:symbol ("message" (1 2 1 9) emacs-lisp-mode nil 1)
+                            :region "1:(message sample-symbol)")
+                     :provenance (:session live :resolved-source live
+                                  :buffer-modified t :disk-diverged t)))))
+        (let ((context (emacs-code-navigator-agent-shell-context)))
+          (should (string-match-p "\\[live-emacs-code-context\\]" context))
+          (should (string-match-p "symbol: sample-symbol" context))
+          (should (<= (length context) 180))
+          (should (= (plist-get
+                      emacs-code-navigator-agent-shell-last-context-metrics
+                      :characters)
+                     (length context)))
+          (should-not
+           (plist-member emacs-code-navigator-agent-shell-last-context-metrics
+                         :context))
+          (should (eq (plist-get request :operation) 'context))
+          (should (eq (plist-get request :source) 'live))
+          (should (eq (plist-get request :definitions) t))
+          (should (= (plist-get request :column) 21))
+          (should (= (plist-get request :radius) 2)))))))
+
+(ert-deftest navigator-agent-shell-context-formats-bounded-semantics ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq buffer-file-name "/tmp/navigator-agent-shell.el")
+    (insert "sample-symbol\n")
+    (goto-char (point-min))
+    (let ((emacs-code-navigator-agent-shell-context-maximum-characters 1200)
+          (emacs-code-navigator-agent-shell-diagnostic-limit 0)
+          (emacs-code-navigator-agent-shell-semantic-level 'definitions))
+      (cl-letf (((symbol-function 'emacs-code-navigator-query)
+                 (lambda (&rest _)
+                   '(:status ok :operation context :count 1
+                     :data (:project-root "/tmp/"
+                            :scope "Sample::method"
+                            :symbol ("sample-symbol" nil emacs-lisp-mode t nil)
+                            :region "1:sample-symbol"
+                            :semantic
+                            (:status ok :provider eglot
+                             :definitions
+                             (("/tmp/definition.el" 7 "sample definition"))
+                             :eldoc ("sample-signature")))
+                     :provenance (:session live :resolved-source live))))
+                ((symbol-function 'flymake-diagnostics) (lambda (&rest _) nil)))
+        (let ((context (emacs-code-navigator-agent-shell-context)))
+          (should (string-match-p "scope: Sample::method" context))
+          (should (string-match-p "provider=eglot" context))
+          (should (string-match-p "definition.el:7" context))
+          (should (string-match-p "signature: sample-signature" context)))))))
+
+(ert-deftest navigator-agent-shell-context-falls-through-when-inapplicable ()
+  (with-temp-buffer
+    (should-not (emacs-code-navigator-agent-shell-context)))
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq buffer-file-name "/tmp/navigator-agent-shell.el")
+    (cl-letf (((symbol-function 'emacs-code-navigator-query)
+               (lambda (&rest _) (error "unavailable"))))
+      (should-not (emacs-code-navigator-agent-shell-context)))))
+
+(ert-deftest navigator-agent-shell-context-honors-tiny-hard-budget ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq buffer-file-name "/tmp/navigator-agent-shell.el")
+    (insert "sample")
+    (let ((emacs-code-navigator-agent-shell-context-maximum-characters 8)
+          (emacs-code-navigator-agent-shell-diagnostic-limit 0))
+      (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil))
+                ((symbol-function 'emacs-code-navigator-query)
+                 (lambda (&rest _)
+                   '(:status ok :operation context :count 1
+                     :data (:symbol ("sample" nil emacs-lisp-mode nil nil)
+                            :region "1:sample")
+                     :provenance (:session live :resolved-source live)))))
+        (should (= (length (emacs-code-navigator-agent-shell-context)) 8))))))
+
+(ert-deftest navigator-agent-shell-context-reads-existing-diagnostics-only ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq buffer-file-name "/tmp/navigator-agent-shell.el")
+    (insert "sample\n")
+    (let ((flymake-mode t)
+          (emacs-code-navigator-agent-shell-context-maximum-characters 1200)
+          (emacs-code-navigator-agent-shell-diagnostic-limit 1))
+      (cl-letf (((symbol-function 'project-current) (lambda (&rest _) nil))
+                ((symbol-function 'emacs-code-navigator-query)
+                 (lambda (&rest _)
+                   '(:status ok :operation context :count 1
+                     :data (:symbol ("sample" nil emacs-lisp-mode nil nil)
+                            :region "1:sample")
+                     :provenance (:session live :resolved-source live))))
+                ((symbol-function 'flymake-diagnostics)
+                 (lambda (&rest _) '(first second)))
+                ((symbol-function 'flymake-diagnostic-beg)
+                 (lambda (&rest _) (point-min)))
+                ((symbol-function 'flymake-diagnostic-end)
+                 (lambda (&rest _) (point-max)))
+                ((symbol-function 'flymake-diagnostic-type)
+                 (lambda (&rest _) 'warning))
+                ((symbol-function 'flymake-diagnostic-text)
+                 (lambda (diagnostic) (format "%s diagnostic" diagnostic)))
+                ((symbol-function 'flymake-start)
+                 (lambda (&rest _) (ert-fail "Flymake must not be started"))))
+        (let ((context (emacs-code-navigator-agent-shell-context)))
+          (should (string-match-p "first diagnostic" context))
+          (should-not (string-match-p "second diagnostic" context)))))))
+
+(ert-deftest navigator-agent-shell-enable-preserves-explicit-priority ()
+  (let ((agent-shell-context-sources '(files region error line custom-source)))
+    (emacs-code-navigator-agent-shell-enable)
+    (should
+     (equal agent-shell-context-sources
+            '(region error emacs-code-navigator-agent-shell-context
+                     files line custom-source)))))
+
+(ert-deftest navigator-semantic-context-uses-the-exact-column-and-limit ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (setq buffer-file-name "/tmp/navigator-semantic.el")
+    (insert "alpha beta\n")
+    (let (seen-identifier)
+      (cl-letf (((symbol-function 'emacs-code-navigator--require-live-semantic)
+                 (lambda (&rest _) t))
+                ((symbol-function 'emacs-code-navigator--file-buffer)
+                 (lambda (&rest _) (current-buffer)))
+                ((symbol-function 'emacs-code-navigator--semantic-xref-backend)
+                 (lambda () 'test-backend))
+                ((symbol-function 'xref-backend-definitions)
+                 (lambda (_backend identifier)
+                   (setq seen-identifier identifier)
+                   '(first second third)))
+                ((symbol-function 'emacs-code-navigator--xref-location-data)
+                 (lambda (item) (list "/tmp/definition.el" 1 (format "%s" item))))
+                ((symbol-function 'emacs-code-navigator-eldoc-at-line)
+                 (lambda (&rest _) '("beta-signature"))))
+        (let ((semantic
+               (emacs-code-navigator-semantic-at-position
+                buffer-file-name 1 7 t 2 t 200)))
+          (should (equal seen-identifier "beta"))
+          (should (eq (plist-get semantic :status) 'ok))
+          (should (= (length (plist-get semantic :definitions)) 2))
+          (should (equal (plist-get semantic :eldoc) '("beta-signature"))))))))
+
+(ert-deftest navigator-semantic-buffer-policy-opens-and-safely-cleans-anchor ()
+  (let* ((root (make-temp-file "navigator-semantic-root-" t))
+         (file (expand-file-name "anchor.cpp" root))
+         (emacs-code-navigator-semantic-buffer-policy 'open-on-demand)
+         (emacs-code-navigator-semantic-buffer-limit 1)
+         (emacs-code-navigator--semantic-buffers nil))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "void sample();\n"))
+          (cl-letf (((symbol-function 'emacs-code-navigator-project-root)
+                     (lambda (&rest _) root))
+                    ((symbol-function 'emacs-code-navigator-search)
+                     (lambda (&rest _) (list (list file 1 "sample")))))
+            (let* ((anchor
+                    (emacs-code-navigator--semantic-anchor root "sample"))
+                   (buffer (plist-get anchor :buffer)))
+              (should (eq (plist-get anchor :origin) 'navigator-opened))
+              (should (buffer-live-p buffer))
+              (with-current-buffer buffer (set-buffer-modified-p t))
+              (should (= (emacs-code-navigator-close-semantic-buffers) 0))
+              (should (buffer-live-p buffer))
+              (with-current-buffer buffer (set-buffer-modified-p nil))
+              (should (= (emacs-code-navigator-close-semantic-buffers) 1))
+              (should-not (buffer-live-p buffer)))))
+      (dolist (buffer emacs-code-navigator--semantic-buffers)
+        (when (buffer-live-p buffer) (kill-buffer buffer)))
+      (delete-directory root t))))
+
+(ert-deftest navigator-locate-many-preserves-order-and-isolates-errors ()
+  (cl-letf (((symbol-function 'emacs-code-navigator--locate-many-project)
+             (lambda (directory &rest _)
+               (if (string-match-p "broken" directory)
+                   (error "broken project")
+                 (list :directory directory :strategy 'text
+                       :matches (list directory))))))
+    (let* ((result
+            (emacs-code-navigator-query
+             '(:operation locate-many :query "drag"
+               :directories ("/tmp/one" "/tmp/broken" "/tmp/three"))))
+           (projects (plist-get result :data)))
+      (should (equal (mapcar (lambda (item) (plist-get item :directory)) projects)
+                     '("/tmp/one" "/tmp/broken" "/tmp/three")))
+      (should (eq (plist-get (nth 1 projects) :status) 'error))
+      (should (equal (plist-get (nth 2 projects) :matches)
+                     '("/tmp/three"))))))
+
+(ert-deftest navigator-locate-many-falls-back-to-bounded-disk-search ()
+  (let ((emacs-code-navigator-semantic-buffer-policy 'existing-only))
+    (cl-letf (((symbol-function 'emacs-code-navigator-project-root)
+               (lambda (directory) (file-name-as-directory directory)))
+              ((symbol-function 'emacs-code-navigator--semantic-anchor)
+               (lambda (directory _query)
+                 (list :origin 'none :project-root directory)))
+              ((symbol-function 'emacs-code-navigator--locate-request)
+               (lambda (request)
+                 (should (eq (plist-get request :kind) 'text))
+                 (list :strategy 'text :matches '(("drag.cpp" 4 "drag"))))))
+      (let ((project
+             (emacs-code-navigator--locate-many-project
+              "/tmp/project" "drag" 'auto 3 nil nil 'auto)))
+        (should (eq (plist-get project :source) 'disk))
+        (should (eq (plist-get project :strategy) 'text))
+        (should (= (length (plist-get project :matches)) 1))))))
 
 (ert-deftest navigator-semantic-backend-activates-deferred-buffer-hooks ()
   (with-temp-buffer
