@@ -159,9 +159,16 @@
      :optional (:notes-dir)
      :choices ((:authorization explicit))
      :effects (:mutated))
-    (review :summary "Return one bounded review page with continuation metadata."
-            :required (:file :review-state)
-            :optional (:notes-dir :offset :limit :section-maximum))
+    (review
+     :summary "Return one bounded review page with pending assessment evidence."
+     :required (:file :review-state)
+     :optional (:notes-dir :offset :limit :section-maximum)
+     :verification
+     (:artifact (:review-files :summaries-returned :truncated-files)
+      :workflow
+      (:review-due :page-offset :page-limit :items-returned :item-total
+                   :next-offset :all-pages-returned :completion)
+      :knowledge-assessment (:outcome)))
     (summarize :summary "Extract bounded critical sections from one note."
                :required (:file) :optional (:section-maximum))
     (list :summary "Return a filtered page of Denote notes."
@@ -171,16 +178,146 @@
             :optional (:replace :authorization :hywiki-dir)
             :choices ((:authorization explicit))
             :effects (:mutated))
-    (commit :summary "Commit only supplied run files after explicit authorization."
-            :required (:title :paths :authorization)
-            :optional (:review-completed :kind :git-dir)
-            :types ((:title non-empty-string)
-                    (:paths non-empty-string-list))
-            :choices ((:authorization explicit) (:kind feat fix))
-            :effects (:committed))
+    (commit
+     :summary "Commit run files; mark review complete only from structured evidence."
+     :required (:title :paths :authorization)
+     :optional (:review-verification :kind :git-dir)
+     :closed t
+     :types
+     ((:title non-empty-string)
+      (:paths non-empty-string-list)
+      (:review-verification
+       (plist
+        :required (:artifact :workflow :knowledge-assessment)
+        :closed t
+        :types
+        ((:artifact
+          (plist
+           :required
+           (:review-files :templates-valid :provenance-valid)
+           :optional (:hywiki-files)
+           :closed t
+           :types
+           ((:review-files (list-of existing-file :min-items 1))
+            (:hywiki-files (list-of existing-file)))
+           :choices
+           ((:templates-valid valid)
+            (:provenance-valid valid))))
+         (:workflow
+          (plist
+           :required
+           (:pages-reviewed :page-total :items-reviewed :item-total
+                            :completion)
+           :optional (:review-marker-commit)
+           :closed t
+           :types
+           ((:pages-reviewed (integer :min 1))
+            (:page-total (integer :min 1))
+            (:items-reviewed (integer :min 1))
+            (:item-total (integer :min 1))
+            (:review-marker-commit string))
+           :choices ((:completion complete))))
+         (:knowledge-assessment
+          (plist
+           :required (:outcome :criteria :rationale)
+           :optional
+           (:supporting-notes :promoted-pages :evidence-basis)
+           :closed t
+           :types
+           ((:rationale non-empty-string)
+            (:supporting-notes (list-of existing-file))
+            (:promoted-pages (list-of existing-file))
+            (:criteria
+             (plist
+              :required
+              (:explainable-model :traceable-support :reuse-value
+                                  :clear-boundary :deep-stable)
+              :closed t
+              :choices
+              ((:explainable-model passed not-passed)
+               (:traceable-support passed not-passed)
+               (:reuse-value passed not-passed)
+               (:clear-boundary passed not-passed)
+               (:deep-stable passed not-passed not-applicable)))))
+           :choices
+           ((:outcome promoted no-promotion)
+            (:evidence-basis independent-notes deep-stable))))))))
+     :validators
+     ((:review-verification
+       denote-scribe--valid-review-verification-p
+       "Review verification must prove complete pagination and a valid knowledge outcome."))
+     :choices ((:authorization explicit) (:kind feat fix))
+     :effects (:committed)
+     :verification
+     (:artifact
+      (:review-files :hywiki-files :templates-valid :provenance-valid
+                     :committed-paths)
+      :workflow
+      (:pages-reviewed :page-total :items-reviewed :item-total
+                       :completion :review-completed)
+      :knowledge-assessment
+      (:outcome :criteria :supporting-notes :promoted-pages
+                :evidence-basis :rationale)))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `denote-scribe-run'.")
+
+(defun denote-scribe--valid-review-verification-p (verification)
+  "Return non-nil when VERIFICATION proves a complete review outcome."
+  (let* ((artifact (plist-get verification :artifact))
+         (workflow (plist-get verification :workflow))
+         (assessment (plist-get verification :knowledge-assessment))
+         (review-files (plist-get artifact :review-files))
+         (pages-reviewed (plist-get workflow :pages-reviewed))
+         (page-total (plist-get workflow :page-total))
+         (items-reviewed (plist-get workflow :items-reviewed))
+         (item-total (plist-get workflow :item-total))
+         (outcome (plist-get assessment :outcome))
+         (criteria (plist-get assessment :criteria))
+         (supporting-notes (plist-get assessment :supporting-notes))
+         (promoted-pages (plist-get assessment :promoted-pages))
+         (evidence-basis (plist-get assessment :evidence-basis))
+         (reviewed-paths
+          (delete-dups (mapcar #'file-truename review-files)))
+         (supporting-paths
+          (delete-dups (mapcar #'file-truename supporting-notes))))
+    (unless (and (eq (plist-get workflow :completion) 'complete)
+                 (= pages-reviewed page-total)
+                 (= items-reviewed item-total)
+                 (= item-total (length review-files))
+                 (= (length reviewed-paths) (length review-files)))
+      (error "Review pagination or item coverage is incomplete"))
+    (dolist (note supporting-notes)
+      (unless (member (file-truename note) reviewed-paths)
+        (error "Supporting note was not part of the completed review: %s"
+               note)))
+    (pcase outcome
+      ('no-promotion
+       (when promoted-pages
+         (error "No-promotion assessment cannot include promoted pages")))
+      ('promoted
+       (unless
+           (seq-every-p
+            (lambda (criterion)
+              (eq (plist-get criteria criterion) 'passed))
+            '(:explainable-model :traceable-support
+              :reuse-value :clear-boundary))
+         (error "Promotion requires every core knowledge criterion to pass"))
+       (unless promoted-pages
+         (error "Promotion requires at least one promoted HyWiki page"))
+       (pcase evidence-basis
+         ('independent-notes
+          (unless (>= (length supporting-paths) 2)
+            (error "Independent-note promotion requires two supporting notes")))
+         ('deep-stable
+          (unless (and supporting-notes
+                       (eq (plist-get criteria :deep-stable) 'passed))
+            (error "Deep-stable promotion requires one supporting note and stable depth")))
+         (_
+          (error "Promotion requires an explicit evidence basis"))))
+      (_
+       (error "Unknown knowledge assessment outcome: %S" outcome)))
+    t))
 
 ;;;###autoload
 (defun denote-scribe-template-file (kind &optional language)
@@ -566,6 +703,40 @@ when a returned section is truncated or requires deeper evidence checking."
      (denote-scribe--review-files new-note state notes-dir)
      offset limit section-maximum)))
 
+(defun denote-scribe--pending-review-verification (review state)
+  "Return honest pending verification for delivered REVIEW under STATE."
+  (let* ((summaries (plist-get review :summaries))
+         (truncated-files
+          (delq
+           nil
+           (mapcar
+            (lambda (summary)
+              (and
+               (seq-some
+                (lambda (section)
+                  (plist-get section :truncated))
+                (plist-get summary :sections))
+               (plist-get summary :file)))
+            summaries))))
+    (list
+     :artifact
+     (list :review-files
+           (mapcar (lambda (summary) (plist-get summary :file))
+                   summaries)
+           :summaries-returned (length summaries)
+           :truncated-files truncated-files)
+     :workflow
+     (list :review-due (and (plist-get state :review-due) t)
+           :page-offset (plist-get review :offset)
+           :page-limit (plist-get review :limit)
+           :items-returned (length summaries)
+           :item-total (plist-get review :count)
+           :next-offset (plist-get review :next-offset)
+           :all-pages-returned
+           (not (plist-get review :truncated))
+           :completion 'pending-assessment)
+     :knowledge-assessment (list :outcome 'pending))))
+
 ;;;###autoload
 (defun denote-scribe-create-with-review-context
     (title body-file &optional keywords notes-dir signature date git-dir)
@@ -591,13 +762,13 @@ review plus the newly created report."
 
 ;;;###autoload
 (defun denote-scribe-git-commit
-    (title paths review-completed &optional kind git-dir)
+    (title paths review-verification &optional kind git-dir)
   "Commit explicit PATHS with TITLE through noninteractive Magit APIs.
 
-REVIEW-COMPLETED non-nil inserts `denote-scribe-review-commit-marker' in the
-subject.  It means an AI review completed, whether or not it promoted a HyWiki
-page.  KIND defaults to \"feat\" and may be \"feat\" or \"fix\".  Return a
-plist containing the new commit hash, subject, and committed relative paths."
+REVIEW-VERIFICATION non-nil must prove complete pagination and either a valid
+promotion or no-promotion outcome.  It inserts
+`denote-scribe-review-commit-marker' in the subject.  KIND defaults to \"feat\"
+and may be \"feat\" or \"fix\".  Return the commit and separated verification."
   (unless (and (stringp title) (not (string-empty-p title))
                (not (string-match-p "[\n\r]" title)))
     (error "TITLE must be non-empty and contain no newline"))
@@ -606,7 +777,10 @@ plist containing the new commit hash, subject, and committed relative paths."
     (error "KIND must be feat or fix: %S" kind))
   (unless (and (listp paths) paths)
     (error "PATHS must be a non-empty list"))
+  (when review-verification
+    (denote-scribe--valid-review-verification-p review-verification))
   (let* ((root (denote-scribe--git-root git-dir))
+         (review-completed (and review-verification t))
          (summary
           (concat (if review-completed
                       (concat denote-scribe-review-commit-marker " ")
@@ -633,6 +807,23 @@ plist containing the new commit hash, subject, and committed relative paths."
             "Validated the explicit files and restricted the commit to notes/*.org or hywiki/*.org."
             :boundary
             "No unrelated repository paths are staged and this workflow never pushes.")))
+         (_
+          (when review-verification
+            (let* ((promoted-pages
+                    (plist-get
+                     (plist-get
+                      review-verification :knowledge-assessment)
+                     :promoted-pages))
+                   (committed
+                    (mapcar
+                     (lambda (path)
+                       (file-truename (expand-file-name path root)))
+                     paths)))
+              (dolist (page promoted-pages)
+                (unless (member (file-truename page) committed)
+                  (error
+                   "Promoted HyWiki page is absent from commit paths: %s"
+                   page))))))
          (result
           (skill-git-commit-paths
            root message paths
@@ -640,7 +831,31 @@ plist containing the new commit hash, subject, and committed relative paths."
              (string-match-p
               "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative))
            "notes/*.org or hywiki/*.org")))
-    (append result (list :review-completed (and review-completed t)))))
+    (let ((verification
+           (if review-verification
+               (list
+                :artifact
+                (append
+                 (copy-tree
+                  (plist-get review-verification :artifact))
+                 (list :committed-paths (plist-get result :paths)))
+                :workflow
+                (append
+                 (copy-tree
+                  (plist-get review-verification :workflow))
+                 (list :review-completed t))
+                :knowledge-assessment
+                (copy-tree
+                 (plist-get review-verification
+                            :knowledge-assessment)))
+             (list
+              :artifact
+              (list :committed-paths (plist-get result :paths))
+              :workflow (list :review-completed nil)
+              :knowledge-assessment (list :outcome 'not-requested)))))
+      (append result
+              (list :review-completed review-completed
+                    :verification verification)))))
 
 (defun denote-scribe--date-id (date label)
   "Normalize DATE to YYYYMMDD or signal an error mentioning LABEL."
@@ -859,7 +1074,10 @@ Use :operation `describe' to request operation schemas only when needed."
                 :limit (plist-get review :limit)
                 :total (plist-get review :count)
                 :truncated (plist-get review :truncated)
-                :next-offset (plist-get review :next-offset)))))
+                :next-offset (plist-get review :next-offset))
+          nil nil
+          (denote-scribe--pending-review-verification
+           review (plist-get request :review-state)))))
       ('summarize
        (skill-runtime-result
         operation
@@ -893,15 +1111,16 @@ Use :operation `describe' to request operation schemas only when needed."
         1 nil nil (list :mutated t)))
       ('commit
        (skill-runtime-require-authorization request "Commit")
-       (skill-runtime-result
-        operation
-        (denote-scribe-git-commit
-         (plist-get request :title)
-         (plist-get request :paths)
-         (plist-get request :review-completed)
-         (plist-get request :kind)
-         (plist-get request :git-dir))
-        1 nil nil (list :committed t)))
+       (let ((committed
+              (denote-scribe-git-commit
+               (plist-get request :title)
+               (plist-get request :paths)
+               (plist-get request :review-verification)
+               (plist-get request :kind)
+               (plist-get request :git-dir))))
+         (skill-runtime-result
+          operation committed 1 nil nil (list :committed t) nil
+          (plist-get committed :verification))))
       (_ (error "Unknown Denote Scribe operation %S; expected %S"
                 operation (mapcar #'car denote-scribe--schemas))))))
 

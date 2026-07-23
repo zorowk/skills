@@ -38,6 +38,19 @@ Commit only files from this run when explicitly requested; mark review complete 
 after every page is reviewed, including a valid no-promotion result. Do not push or
 create GTD tasks without explicit user intent.
 
+Treat review delivery and review completion as different states. Each `review`
+response exposes pending `:verification`: artifact identifies delivered and truncated
+summaries, workflow exposes continuation, and knowledge-assessment remains pending.
+Read every page and every truncated or disputed source before completion.
+
+To record a completed review, pass `:review-verification` to `commit`; never use a
+bare completion boolean. Artifact must identify reviewed files and valid templates
+and provenance. Workflow must prove complete page and item coverage. Knowledge
+assessment must choose `promoted` or `no-promotion`, record each promotion criterion
+and rationale, and include the supporting notes and promoted pages when applicable.
+Treat a complete no-promotion assessment as valid; do not equate it with an incomplete
+review. Require every promoted HyWiki page to be included in the same commit.
+
 For agent-shell capture, first present an editable note proposal and zero to three
 optional GTD candidates without mutation. After explicit confirmation, use
 `capture` with `:authorization explicit`; add each confirmed GTD task with the

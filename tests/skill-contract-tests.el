@@ -31,6 +31,7 @@
 (defvar agent-shell-denote-capture--suppress-count)
 (defvar agent-shell-skill-usage-review--suppress-count)
 (defvar emacs-gtd-capture-task-limit)
+(defvar denote-scribe-review-commit-marker)
 (defvar ai-git-commit-include-validation-in-message)
 (defvar emacs-code-navigator-semantic-buffer-policy)
 (defvar emacs-code-navigator-semantic-buffer-limit)
@@ -103,6 +104,41 @@
   (should (plist-member result :effects))
   (should (plist-get result :metrics))
   result)
+
+(defun skill-contract-tests-review-verification
+    (review-files outcome &optional promoted-pages evidence-basis)
+  "Return completed Denote review evidence for tests."
+  (let ((promoted (eq outcome 'promoted)))
+    (list
+     :artifact
+     (list :review-files review-files
+           :hywiki-files promoted-pages
+           :templates-valid 'valid
+           :provenance-valid 'valid)
+     :workflow
+     (list :pages-reviewed 1 :page-total 1
+           :items-reviewed (length review-files)
+           :item-total (length review-files)
+           :completion 'complete)
+     :knowledge-assessment
+     (append
+      (list
+       :outcome outcome
+       :criteria
+       (list :explainable-model (if promoted 'passed 'not-passed)
+             :traceable-support (if promoted 'passed 'not-passed)
+             :reuse-value (if promoted 'passed 'not-passed)
+             :clear-boundary (if promoted 'passed 'not-passed)
+             :deep-stable
+             (if (eq evidence-basis 'deep-stable)
+                 'passed 'not-applicable))
+       :supporting-notes review-files
+       :promoted-pages promoted-pages
+       :rationale
+       (if promoted
+           "The bounded concept satisfies every promotion criterion."
+         "No reviewed concept currently satisfies every promotion criterion."))
+      (and evidence-basis (list :evidence-basis evidence-basis))))))
 (declare-function emacs-code-navigator-agent-shell-context
                   "../emacs-code-navigator/scripts/agent-shell-code-context" ())
 (declare-function emacs-code-navigator-agent-shell-enable
@@ -143,7 +179,7 @@
                   (title body-file &optional keywords notes-dir signature date))
 (declare-function denote-scribe-git-commit
                   "../denote-scribe/scripts/denote-scribe"
-                  (title paths review-completed &optional kind git-dir))
+                  (title paths review-verification &optional kind git-dir))
 (declare-function denote-scribe-link-gtd
                   "../denote-scribe/scripts/denote-scribe"
                   (file tasks &optional notes-dir))
@@ -1073,6 +1109,148 @@
         (should (equal (plist-get (plist-get result :data) :file)
                        "/tmp/created.org"))
         (should (equal (plist-get result :effects) '(:created t)))))))
+
+(ert-deftest denote-review-separates-delivery-from-knowledge-assessment ()
+  (let ((summary
+         '(:file "/tmp/reviewed.org"
+           :title "Reviewed"
+           :sections
+           ((:heading "Evidence" :text "bounded" :truncated t)))))
+    (cl-letf (((symbol-function 'denote-scribe-review-context)
+               (lambda (&rest _)
+                 (list :count 2 :offset 0 :limit 1
+                       :truncated t :next-offset 1
+                       :summaries (list summary)))))
+      (let* ((result
+              (denote-scribe-run
+               '(:operation review
+                 :file "/tmp/new.org"
+                 :review-state (:review-due t))))
+             (verification (plist-get result :verification))
+             (artifact (plist-get verification :artifact))
+             (workflow (plist-get verification :workflow))
+             (assessment
+              (plist-get verification :knowledge-assessment)))
+        (should (equal (plist-get artifact :review-files)
+                       '("/tmp/reviewed.org")))
+        (should (equal (plist-get artifact :truncated-files)
+                       '("/tmp/reviewed.org")))
+        (should (= (plist-get workflow :item-total) 2))
+        (should (= (plist-get workflow :next-offset) 1))
+        (should-not (plist-get workflow :all-pages-returned))
+        (should (eq (plist-get workflow :completion)
+                    'pending-assessment))
+        (should (eq (plist-get assessment :outcome) 'pending))))))
+
+(ert-deftest denote-commit-rejects-bare-or-incomplete-review-completion ()
+  (skill-contract-tests-assert-failure
+   (denote-scribe-run
+    '(:operation commit :title "Review"
+      :paths ("/tmp/note.org")
+      :authorization explicit
+      :review-completed t))
+   'needs-input 'invalid-request)
+  (let* ((root (make-temp-file "denote-review-invalid-" t))
+         (note (expand-file-name "note.org" root))
+         (verification
+          (skill-contract-tests-review-verification
+           (list note) 'no-promotion)))
+    (unwind-protect
+        (progn
+          (with-temp-file note (insert "#+title: Note\n"))
+          (setf (plist-get
+                 (plist-get verification :workflow)
+                 :item-total)
+                2)
+          (skill-contract-tests-assert-failure
+           (denote-scribe-run
+            (list :operation 'commit :title "Review"
+                  :paths (list note)
+                  :authorization 'explicit
+                  :review-verification verification))
+           'needs-input 'invalid-request))
+      (delete-directory root t))))
+
+(ert-deftest denote-review-completion-distinguishes-valid-outcomes ()
+  (let* ((root (make-temp-file "denote-review-outcomes-" t))
+         (notes (expand-file-name "notes" root))
+         (hywiki (expand-file-name "hywiki" root))
+         (note-one (expand-file-name "one.org" notes))
+         (note-two (expand-file-name "two.org" notes))
+         (page (expand-file-name "Concept.org" hywiki))
+         messages)
+    (unwind-protect
+        (progn
+          (make-directory notes)
+          (make-directory hywiki)
+          (dolist (file (list note-one note-two page))
+            (with-temp-file file (insert "#+title: Test\n")))
+          (cl-letf
+              (((symbol-function 'denote-scribe--git-root)
+                (lambda (&optional _) root))
+               ((symbol-function 'skill-git-commit-paths)
+                (lambda (_root message paths &rest _)
+                  (push message messages)
+                  (list
+                   :commit "abc123"
+                   :paths
+                   (mapcar
+                    (lambda (path)
+                      (file-relative-name path root))
+                    paths)))))
+            (let* ((no-promotion
+                    (skill-contract-tests-review-verification
+                     (list note-one) 'no-promotion))
+                   (no-promotion-result
+                    (denote-scribe-run
+                     (list :operation 'commit
+                           :title "Complete review"
+                           :paths (list note-one)
+                           :authorization 'explicit
+                           :review-verification no-promotion)))
+                   (promotion
+                    (skill-contract-tests-review-verification
+                     (list note-one note-two) 'promoted
+                     (list page) 'independent-notes))
+                   (promotion-result
+                    (denote-scribe-run
+                     (list :operation 'commit
+                           :title "Promote concept"
+                           :paths (list note-one note-two page)
+                           :authorization 'explicit
+                           :review-verification promotion))))
+              (should
+               (eq
+                (plist-get
+                 (plist-get
+                  (plist-get no-promotion-result :verification)
+                  :knowledge-assessment)
+                 :outcome)
+                'no-promotion))
+              (should
+               (eq
+                (plist-get
+                 (plist-get
+                  (plist-get promotion-result :verification)
+                  :knowledge-assessment)
+                 :outcome)
+                'promoted))
+              (dolist (result (list no-promotion-result promotion-result))
+                (should
+                 (eq
+                  (plist-get
+                   (plist-get
+                    (plist-get result :verification) :workflow)
+                   :review-completed)
+                  t)))
+              (should
+               (seq-every-p
+                (lambda (message)
+                  (string-match-p
+                   (regexp-quote denote-scribe-review-commit-marker)
+                   message))
+                messages)))))
+      (delete-directory root t))))
 
 (ert-deftest denote-gtd-backlinks-preserve-critical-top-level-structure ()
   (let* ((root (make-temp-file "denote-gtd-link-" t))
