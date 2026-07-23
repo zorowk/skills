@@ -50,7 +50,8 @@
 (defvar skill-runtime-metrics-version)
 
 (declare-function skill-runtime-result "../common/scripts/skill-runtime"
-                  (operation data &optional count status page effects error))
+                  (operation data &optional count status page effects error
+                             verification))
 (declare-function skill-runtime-measure "../common/scripts/skill-runtime"
                   (request function))
 (declare-function skill-runtime-signal "../common/scripts/skill-runtime"
@@ -222,10 +223,13 @@
 
 (ert-deftest skill-runtime-standard-envelope ()
   (should
-   (equal (skill-runtime-result 'list '(a b) 2 'ok '(:truncated nil))
+   (equal (skill-runtime-result
+           'list '(a b) 2 'ok '(:truncated nil) nil nil
+           '(:artifact (:checked t)))
           '(:protocol-version 2
             :status ok :operation list :count 2 :data (a b)
-            :page (:truncated nil)))))
+            :page (:truncated nil)
+            :verification (:artifact (:checked t))))))
 
 (ert-deftest skill-runtime-measures-calls-without-retaining-content ()
   (let ((times '(10.0 10.042)))
@@ -259,7 +263,8 @@
              (skill-runtime-signal
               'skill-runtime-authorization-required
               "Commit requires explicit authorization."
-              :field-path '(:authorization)))))
+              :field-path '(:authorization)
+              :verification '(:workflow (:authorization-checked t))))))
          (error-data (plist-get result :error)))
     (should (= (plist-get result :protocol-version) 2))
     (should (eq (plist-get result :status) 'needs-input))
@@ -271,6 +276,9 @@
     (should (eq (plist-get error-data :code) 'authorization-required))
     (should (eq (plist-get error-data :retry) 'after-input))
     (should (equal (plist-get error-data :field-path) '(:authorization)))
+    (should
+     (equal (plist-get result :verification)
+            '(:workflow (:authorization-checked t))))
     (should (plist-get result :metrics))))
 
 (ert-deftest skill-runtime-preserves-unexpected-lisp-errors ()

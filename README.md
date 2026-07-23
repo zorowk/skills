@@ -162,7 +162,8 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 `:code`、可读 `:message`、`:retry` 和 `:required-action`，并可附带字段路径、目标、
 候选项或分页后的失败原因。部分成功保留已完成的 `:data` 与真实 `:effects`，同时用
 `partial-failure` 指示选择性重试；未知 Lisp 错误继续抛出，避免把实现缺陷伪装成可恢复
-业务状态。
+业务状态。可选的顶层 `:verification` 按 artifact、workflow、repository 或领域判断分组
+返回已完成检查及其证据；`:effects` 仍只描述实际发生的副作用。
 
 每次成功或结构化失败调用都返回不保留原文的 `:metrics`，包括耗时、请求字符数、请求
 字段数、payload 字符数、基础响应字符数、结果数、截断、降级和来源，并用版本号保护

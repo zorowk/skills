@@ -22,7 +22,8 @@
 (declare-function skill-runtime-require-authorization
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
-                  (operation data &optional count status page effects))
+                  (operation data &optional count status page effects error
+                             verification))
 (declare-function skill-runtime-signal "../../common/scripts/skill-runtime"
                   (condition message &rest properties))
 (declare-function skill-runtime-validate-request

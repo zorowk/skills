@@ -107,14 +107,16 @@
     result))
 
 (defun skill-runtime-failure-result
-    (operation status error &optional data count effects)
+    (operation status error &optional data count effects verification)
   "Return a versioned failure envelope for OPERATION.
 
 STATUS is one of the public lifecycle states.  ERROR is a structured plist.
-DATA, COUNT, and EFFECTS describe partial evidence and actual side effects."
+DATA, COUNT, EFFECTS, and VERIFICATION describe partial evidence, actual side
+effects, and completed checks."
   (let ((result
          (skill-runtime-result
-          (or operation 'unknown) data (or count 0) status nil effects error)))
+          (or operation 'unknown) data (or count 0) status nil effects error
+          verification)))
     (if effects result (append result '(:effects nil)))))
 
 (defun skill-runtime--public-error-result (request error-data)
@@ -130,15 +132,16 @@ DATA, COUNT, and EFFECTS describe partial evidence and actual side effects."
          (data (plist-get combined :data))
          (count (plist-get combined :count))
          (effects (plist-get combined :effects))
+         (verification (plist-get combined :verification))
          (error
           (skill-runtime--plist-without
-           combined '(:status :data :count :effects)))
+           combined '(:status :data :count :effects :verification)))
          (operation
           (condition-case nil
               (and (listp request) (plist-get request :operation))
             (error nil))))
     (skill-runtime-failure-result
-     operation status error data count effects)))
+     operation status error data count effects verification)))
 
 (defun skill-runtime--request-field-count (request)
   "Return REQUEST plist field count, or zero for malformed input."
@@ -187,11 +190,12 @@ unexpected Lisp errors.  Avoid retaining request or result content."
       (append result (list :metrics metrics)))))
 
 (defun skill-runtime-result
-    (operation data &optional count status page effects error)
+    (operation data &optional count status page effects error verification)
   "Return a compact standard envelope for OPERATION and DATA.
 
 COUNT defaults to zero for nil DATA and one otherwise.
-STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
+STATUS defaults to `ok'.  Include PAGE, EFFECTS, ERROR, and VERIFICATION when
+non-nil."
   (let ((result
          (list :protocol-version skill-runtime-envelope-version
                :status (or status 'ok)
@@ -204,6 +208,8 @@ STATUS defaults to `ok'.  Include PAGE, EFFECTS, and ERROR when non-nil."
       (setq result (append result (list :effects effects))))
     (when error
       (setq result (append result (list :error error))))
+    (when verification
+      (setq result (append result (list :verification verification))))
     result))
 
 (defun skill-runtime-page-metadata (offset limit total returned)
