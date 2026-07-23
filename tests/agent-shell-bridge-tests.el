@@ -64,6 +64,25 @@
                        (prin1-to-string
                         skill-agent-shell-last-context-metrics))))))
 
+(ert-deftest agent-shell-bridge-replaces-registrations-by-id ()
+  (let ((skill-agent-shell-context-providers nil)
+        (skill-agent-shell-turn-actions nil))
+    (skill-agent-shell-register-context-provider
+     'sample :function (lambda () "first") :priority 1)
+    (skill-agent-shell-register-context-provider
+     'sample :function (lambda () "second") :priority 2)
+    (skill-agent-shell-register-turn-action
+     'sample :command #'ignore :label "First" :priority 1)
+    (skill-agent-shell-register-turn-action
+     'sample :command #'ignore :label "Second" :priority 2)
+    (should (= (length skill-agent-shell-context-providers) 1))
+    (should (= (plist-get (car skill-agent-shell-context-providers)
+                          :priority)
+               2))
+    (should (= (length skill-agent-shell-turn-actions) 1))
+    (should (equal (plist-get (car skill-agent-shell-turn-actions) :label)
+                   "Second"))))
+
 (ert-deftest agent-shell-bridge-tracks-structured-turn-paths ()
   (with-temp-buffer
     (let ((skill-agent-shell-turn-actions nil)

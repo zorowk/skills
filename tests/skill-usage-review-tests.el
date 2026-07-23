@@ -79,13 +79,20 @@
               ((symbol-function 'agent-shell-insert)
                (lambda (&rest arguments) (setq inserted arguments))))
       (agent-shell-skill-usage-review-enable)
+      (agent-shell-skill-usage-review-enable)
       (let ((action
              (seq-find
               (lambda (entry)
                 (eq (plist-get entry :id) 'skill-usage-review))
               skill-agent-shell-turn-actions)))
         (should (equal (plist-get action :label) "Review skill usage"))
-        (should (= (plist-get action :priority) 10)))
+        (should (= (plist-get action :priority) 10))
+        (should
+         (= (seq-count
+             (lambda (entry)
+               (eq (plist-get entry :id) 'skill-usage-review))
+             skill-agent-shell-turn-actions)
+            1)))
       (with-temp-buffer
         (agent-shell-skill-usage-review (current-buffer))
         (should (eq (plist-get inserted :submit) t))

@@ -83,6 +83,37 @@
       (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
       (delete-directory root t))))
 
+(ert-deftest blog-copying-the-same-resource-twice-is-idempotent ()
+  (let* ((root (make-temp-file "blog-copy-idempotent-" t))
+         (source (expand-file-name "source/sample.png" root))
+         (target (expand-file-name "output/image/sample.png" root))
+         (plan (list (list :source source :target target)))
+         (copy-count 0))
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory source) t)
+          (with-temp-file source (insert "same image"))
+          (cl-letf
+              (((symbol-function 'org-publish-attachment)
+                (lambda (_plist asset directory)
+                  (setq copy-count (1+ copy-count))
+                  (copy-file
+                   asset
+                   (expand-file-name
+                    (file-name-nondirectory asset) directory)
+                   t))))
+            (should (equal (org-blog-exporter--copy-assets plan)
+                           (list target)))
+            (should (equal (org-blog-exporter--copy-assets plan)
+                           (list target)))
+            (should (= copy-count 1))
+            (should (equal
+                     (with-temp-buffer
+                       (insert-file-contents target)
+                       (buffer-string))
+                     "same image"))))
+      (delete-directory root t))))
+
 (ert-deftest blog-partial-results-expose-retryable-failure-details ()
   (let ((partial
          '(:scope all
@@ -262,6 +293,53 @@
     (should (string-prefix-p "chore(blog): publish page" captured))
     (should (string-match-p "\n\n" captured))
     (should-not (string-match-p skill-git--body-label-regexp captured))))
+
+(ert-deftest blog-repeated-clean-publish-does-not-commit-or-push-twice ()
+  (let ((statuses '(" M page.html" ""))
+        (commit-count 0)
+        (push-count 0))
+    (cl-letf
+        (((symbol-function 'skill-git-relative-path)
+          (lambda (_root path &rest _) path))
+         ((symbol-function 'skill-git-status)
+          (lambda (&rest _) (pop statuses)))
+         ((symbol-function 'skill-git-commit-paths)
+          (lambda (_root _message paths &rest _)
+            (setq commit-count (1+ commit-count))
+            (list :commit "abc123" :paths paths)))
+         ((symbol-function 'skill-git-assert-clean) (lambda (_) t))
+         ((symbol-function 'skill-git-push)
+          (lambda (_)
+            (setq push-count (1+ push-count))
+            '(:commit "abc123000"
+              :upstream-commit "abc123000"
+              :branch "main"
+              :upstream "origin/main"
+              :verified t))))
+      (let ((first
+             (org-blog-exporter--finish-publish
+              '(:git-root "/tmp/repository/")
+              '("page.html") "publish page"))
+            (retry
+             (org-blog-exporter--finish-publish
+              '(:git-root "/tmp/repository/")
+              '("page.html") "publish page")))
+        (should (eq (plist-get first :changed) t))
+        (should-not (plist-get retry :changed))
+        (should (= commit-count 1))
+        (should (= push-count 1))
+        (should
+         (eq
+          (plist-get
+           (plist-get retry :repository-verification)
+           :generated-files-committed)
+          'already-clean))
+        (should
+         (eq
+          (plist-get
+           (plist-get retry :repository-verification)
+           :push-succeeded)
+          'not-needed))))))
 
 (ert-deftest blog-effects-report-export-and-publish-mutations ()
   (should
