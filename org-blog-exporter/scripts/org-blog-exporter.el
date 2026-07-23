@@ -8,6 +8,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'url-util)
 (require 'xml)
 
 (unless (featurep 'skill-git)
@@ -40,6 +41,8 @@
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
                   (operation data &optional count status page effects error
                              verification))
+(declare-function skill-runtime-signal "../../common/scripts/skill-runtime"
+                  (condition message &rest properties))
 (declare-function skill-runtime-validate-request
                   "../../common/scripts/skill-runtime" (schemas request))
 
@@ -128,17 +131,30 @@ instead."
 (defconst org-blog-exporter--schemas
   '((preflight :summary "Validate configured notes, output, and setup files."
                :optional (:notes-dir :output-dir :setupfile))
-    (export :summary "Export selected or public notes; compact paged output is default."
+    (export :summary "Export public Org notes and verify every source-to-output artifact."
             :optional (:files :notes-dir :output-dir :setupfile
                               :offset :limit :full)
-            :effects (:exported-count))
+            :effects (:exported-count)
+            :verification
+            (:artifact
+             (:source-output-map :outputs-exist :public-policy-passed
+                                 :asset-links-verified)))
     (publish
-     :summary "Export, commit, and push selected or all public notes after authorization."
+     :summary "Export, verify, commit, and confirm the configured upstream push."
      :required (:authorization)
      :optional (:files :title :notes-dir :repository-dir :setupfile
                        :offset :limit :full)
      :choices ((:authorization explicit))
-     :effects (:exported-count :changed :commit :push))
+     :effects (:exported-count :changed :commit :push)
+     :verification
+     (:artifact
+      (:source-output-map :outputs-exist :public-policy-passed
+                          :asset-links-verified)
+      :workflow (:index-updated :assets-planned :assets-copied)
+      :repository
+      (:generated-files-committed :commit-exists :committed-paths
+                                  :push-succeeded :branch :upstream
+                                  :commit :upstream-commit)))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `org-blog-exporter-run'.")
@@ -420,8 +436,10 @@ into the configured assets directory, so conflicting basenames are rejected."
             (cons (plist-get entry :source) (plist-get entry :target)))
           plan))
 
-(defun org-blog-exporter--copy-assets (plan)
-  "Copy resources in PLAN and return all target paths."
+(defun org-blog-exporter--copy-assets (plan &optional on-copy)
+  "Copy resources in PLAN and return all target paths.
+
+Call ON-COPY with each verified target immediately after it exists."
   (let (targets)
     (dolist (entry plan)
       (let ((source (plist-get entry :source))
@@ -430,6 +448,11 @@ into the configured assets directory, so conflicting basenames are rejected."
         (unless (and (file-regular-p target)
                      (org-blog-exporter--same-file-contents-p source target))
           (org-publish-attachment nil source (file-name-directory target)))
+        (unless (file-regular-p target)
+          (signal 'file-error
+                  (list "Blog resource copy did not create target" target)))
+        (when on-copy
+          (funcall on-copy target))
         (push target targets)))
     (nreverse targets)))
 
@@ -449,18 +472,35 @@ export buffer is changed."
             (let* ((absolute (org-blog-exporter--asset-path path source))
                    (published (cdr (assoc absolute asset-targets))))
               (when published
-                (push (list (org-element-property :begin link)
-                            (org-element-property :end link)
-                            raw
-                            (concat "file:"
-                                    (file-relative-name
-                                     published (file-name-directory target))))
+                (push (list :begin (org-element-property :begin link)
+                            :end (org-element-property :end link)
+                            :raw raw
+                            :source absolute
+                            :target published
+                            :rewritten
+                            (concat
+                             "file:"
+                             (file-relative-name
+                              published (file-name-directory target))))
                       replacements)))))))
-    (dolist (replacement (sort replacements (lambda (a b) (> (car a) (car b)))))
-      (goto-char (nth 0 replacement))
-      (unless (search-forward (nth 2 replacement) (nth 1 replacement) t)
-        (error "Could not rewrite local resource link: %s" (nth 2 replacement)))
-      (replace-match (nth 3 replacement) t t))))
+    (dolist (replacement
+             (sort replacements
+                   (lambda (left right)
+                     (> (plist-get left :begin)
+                        (plist-get right :begin)))))
+      (goto-char (plist-get replacement :begin))
+      (unless (search-forward
+               (plist-get replacement :raw)
+               (plist-get replacement :end) t)
+        (error "Could not rewrite local resource link: %s"
+               (plist-get replacement :raw)))
+      (replace-match (plist-get replacement :rewritten) t t))
+    (mapcar
+     (lambda (replacement)
+       (list :source (plist-get replacement :source)
+             :target (plist-get replacement :target)
+             :html-link (plist-get replacement :rewritten)))
+     (nreverse replacements))))
 
 (defun org-blog-exporter--target-file (org-file &optional output-dir notes-dir setupfile)
   "Return the HTML target path for ORG-FILE."
@@ -534,9 +574,9 @@ Use Chinese labels when CHINESE is non-nil."
                     (org-blog-exporter--assessment-summary-html items chinese)
                     "\n#+end_export\n\n")))))))
 
-(defun org-blog-exporter-export-file
+(defun org-blog-exporter--export-file-artifact
     (org-file &optional output-dir setupfile asset-targets notes-dir)
-  "Export ORG-FILE to HTML and return the exported path."
+  "Export ORG-FILE and return its verified artifact description."
   (let* ((source (car (org-blog-exporter--validated-files
                        (list org-file) notes-dir)))
          (setup (org-blog-exporter--setupfile setupfile))
@@ -552,41 +592,86 @@ Use Chinese labels when CHINESE is non-nil."
       (insert-file-contents source)
       (setq buffer-file-name source)
       (delay-mode-hooks (org-mode))
-      (when asset-targets
-        (org-blog-exporter--rewrite-asset-links source target asset-targets))
-      (org-blog-exporter--insert-assessment-summaries)
-      (org-blog-exporter--insert-setupfile-if-missing setup)
-      (let ((exported (org-export-to-file 'html target nil nil nil nil nil)))
-        (unless (and exported (file-exists-p exported))
-          (error "Export did not create HTML for %s" source))
-        exported))))
+      (let ((rewritten
+             (and asset-targets
+                  (org-blog-exporter--rewrite-asset-links
+                   source target asset-targets))))
+        (org-blog-exporter--insert-assessment-summaries)
+        (org-blog-exporter--insert-setupfile-if-missing setup)
+        (let* ((exported
+                (org-export-to-file 'html target nil nil nil nil nil))
+               (html
+                (and exported
+                     (file-regular-p exported)
+                     (with-temp-buffer
+                       (insert-file-contents exported)
+                       (buffer-string)))))
+          (unless (and exported (file-regular-p exported))
+            (error "Export did not create HTML for %s" source))
+          (list :source source
+                :output exported
+                :output-exists t
+                :public-policy-passed t
+                :rewritten-assets rewritten
+                :asset-links-verified
+                (seq-every-p
+                 (lambda (entry)
+                   (let ((href
+                          (substring
+                           (plist-get entry :html-link) 5)))
+                     (or (string-match-p (regexp-quote href) html)
+                         (string-match-p
+                          (regexp-quote (url-encode-url href))
+                          html))))
+                 rewritten)))))))
+
+(defun org-blog-exporter-export-file
+    (org-file &optional output-dir setupfile asset-targets notes-dir)
+  "Export ORG-FILE to HTML and return the exported path."
+  (plist-get
+   (org-blog-exporter--export-file-artifact
+    org-file output-dir setupfile asset-targets notes-dir)
+   :output))
+
+(defun org-blog-exporter--export-file-artifacts
+    (org-files &optional output-dir setupfile asset-targets notes-dir)
+  "Export ORG-FILES and return verified artifact descriptions."
+  (mapcar
+   (lambda (file)
+     (org-blog-exporter--export-file-artifact
+      file output-dir setupfile asset-targets notes-dir))
+   org-files))
 
 (defun org-blog-exporter-export-files
     (org-files &optional output-dir setupfile asset-targets notes-dir)
   "Export ORG-FILES and return exported HTML paths."
-  (mapcar (lambda (file)
-            (org-blog-exporter-export-file
-             file output-dir setupfile asset-targets notes-dir))
-          org-files))
+  (mapcar
+   (lambda (artifact) (plist-get artifact :output))
+   (org-blog-exporter--export-file-artifacts
+    org-files output-dir setupfile asset-targets notes-dir)))
 
 (defun org-blog-exporter-export-all
     (&optional notes-dir output-dir setupfile asset-targets)
   "Export all candidate Org files under NOTES-DIR and return a plist summary."
   (let* ((root (org-blog-exporter--notes-directory notes-dir))
          (files (org-blog-exporter-list-candidates root))
+         (artifacts nil)
          (exported nil)
          (errors nil))
     (dolist (file files)
       (condition-case err
-          (push (org-blog-exporter-export-file
-                 file output-dir setupfile asset-targets root)
-                exported)
+          (let ((artifact
+                 (org-blog-exporter--export-file-artifact
+                  file output-dir setupfile asset-targets root)))
+            (push artifact artifacts)
+            (push (plist-get artifact :output) exported))
         (error
          (push (list file (error-message-string err)) errors))))
     (list :notes-directory root
           :output-directory (org-blog-exporter--output-directory output-dir setupfile)
           :candidate-count (length files)
           :candidates files
+          :artifacts (nreverse artifacts)
           :exported-count (length exported)
           :exported (nreverse exported)
           :error-count (length errors)
@@ -602,14 +687,20 @@ and error counts.  Selected-file export validates the complete selection before
 starting; all-file export preserves per-file error reporting."
   (if org-files
       (let* ((files (org-blog-exporter--validated-files org-files notes-dir))
-             (exported (org-blog-exporter-export-files
-                        files output-dir setupfile nil notes-dir)))
+             (artifacts
+              (org-blog-exporter--export-file-artifacts
+               files output-dir setupfile nil notes-dir))
+             (exported
+              (mapcar (lambda (artifact)
+                        (plist-get artifact :output))
+                      artifacts)))
         (list :scope 'files
               :notes-directory (org-blog-exporter--notes-directory notes-dir)
               :output-directory
               (org-blog-exporter--output-directory output-dir setupfile)
               :candidate-count (length files)
               :candidates files
+              :artifacts artifacts
               :exported-count (length exported)
               :exported exported
               :error-count 0
@@ -751,6 +842,81 @@ starting; all-file export preserves per-file error reporting."
                (regexp-quote org-blog-exporter-assets-directory-name))
        relative)))
 
+(defun org-blog-exporter--artifact-verification (artifacts)
+  "Return deterministic verification facts for export ARTIFACTS."
+  (list
+   :source-output-map
+   (mapcar
+    (lambda (artifact)
+      (list :source (plist-get artifact :source)
+            :output (plist-get artifact :output)))
+    artifacts)
+   :outputs-exist
+   (seq-every-p
+    (lambda (artifact)
+      (and (plist-get artifact :output-exists)
+           (file-regular-p (plist-get artifact :output))))
+    artifacts)
+   :public-policy-passed
+   (seq-every-p
+    (lambda (artifact)
+      (plist-get artifact :public-policy-passed))
+    artifacts)
+   :asset-links-verified
+   (seq-every-p
+    (lambda (artifact)
+      (plist-get artifact :asset-links-verified))
+    artifacts)))
+
+(defun org-blog-exporter--verification (operation result &optional artifacts)
+  "Return completed verification evidence for OPERATION and RESULT."
+  (let* ((checked-artifacts (or artifacts (plist-get result :artifacts)))
+         (verification
+          (list :artifact
+                (org-blog-exporter--artifact-verification
+                 checked-artifacts))))
+    (when (eq operation 'publish)
+      (setq verification
+            (append
+             verification
+             (list
+              :workflow
+              (list
+               :index-updated
+               (and (plist-get result :index)
+                    (file-regular-p (plist-get result :index)))
+               :assets-planned
+               (or (plist-get result :asset-plan-count) 0)
+               :assets-copied
+               (length (plist-get result :assets))
+               :asset-targets-exist
+               (seq-every-p #'file-regular-p
+                            (plist-get result :assets)))
+              :repository
+              (or (plist-get result :repository-verification)
+                  (list :generated-files-committed nil
+                        :commit-exists nil
+                        :push-succeeded nil))))))
+    verification))
+
+(defun org-blog-exporter--signal-partial-publish (stage error-data result)
+  "Signal a structured partial publish at STAGE with ERROR-DATA and RESULT."
+  (let* ((message (error-message-string error-data))
+         (failed
+          (append result
+                  (list :changed nil :commit nil :push nil
+                        :error-count 1
+                        :errors (list (list stage message))))))
+    (skill-runtime-signal
+     'skill-runtime-partial-failure
+     (format "Blog publish stopped during %s: %s" stage message)
+     :stage stage
+     :cause message
+     :data failed
+     :count (or (plist-get failed :exported-count) 0)
+     :effects (org-blog-exporter--effects 'publish failed)
+     :verification (org-blog-exporter--verification 'publish failed))))
+
 (defun org-blog-exporter--finish-publish (repository exported title)
   "Commit EXPORTED files in REPOSITORY with structured TITLE evidence, then push."
   (let* ((root (plist-get repository :git-root))
@@ -763,7 +929,13 @@ starting; all-file export preserves per-file error reporting."
          (status (skill-git-status root relative-paths)))
     (if (string-empty-p status)
         (append repository
-                (list :changed nil :exported exported :commit nil :push nil))
+                (list
+                 :changed nil :exported exported :commit nil :push nil
+                 :repository-verification
+                 (list :generated-files-committed 'already-clean
+                       :commit-exists 'not-created
+                       :committed-paths relative-paths
+                       :push-succeeded 'not-needed)))
       (let* ((message
               (skill-git-format-message
                (list
@@ -787,16 +959,41 @@ starting; all-file export preserves per-file error reporting."
                 (concat "Source Org notes and unrelated repository paths are not committed by "
                         "this publish step."))))
              (commit
-             (skill-git-commit-paths
-              root message exported
-              #'org-blog-exporter--published-relative-path-p
-              "published blog files")))
+              (skill-git-commit-paths
+               root message exported
+               #'org-blog-exporter--published-relative-path-p
+               "published blog files")))
         (skill-git-assert-clean root)
-        (append repository
-                (list :changed t
-                      :exported exported
-                      :commit commit
-                      :push (skill-git-push root)))))))
+        (let* ((push (skill-git-push root))
+               (commit-id (plist-get commit :commit))
+               (pushed-id (plist-get push :commit))
+               (committed-paths (plist-get commit :paths))
+               (paths-match
+                (equal (sort (copy-sequence relative-paths) #'string<)
+                       (sort (copy-sequence committed-paths) #'string<)))
+               (commit-matches
+                (and commit-id pushed-id
+                     (string-prefix-p commit-id pushed-id))))
+          (unless (and paths-match commit-matches
+                       (plist-get push :verified))
+            (error "Published commit verification failed in %s" root))
+          (append
+           repository
+           (list
+            :changed t
+            :exported exported
+            :commit commit
+            :push push
+            :repository-verification
+            (list :generated-files-committed paths-match
+                  :commit-exists commit-matches
+                  :committed-paths committed-paths
+                  :push-succeeded (plist-get push :verified)
+                  :branch (plist-get push :branch)
+                  :upstream (plist-get push :upstream)
+                  :commit pushed-id
+                  :upstream-commit
+                  (plist-get push :upstream-commit)))))))))
 
 ;;;###autoload
 (defun org-blog-exporter-publish-files
@@ -816,15 +1013,52 @@ commit only generated paths, and push."
          (root (plist-get repository :git-root))
          (asset-plan (org-blog-exporter--asset-plan org-files root))
          (asset-targets (org-blog-exporter--asset-targets asset-plan))
-         (exported (org-blog-exporter-export-files
-                    org-files root setupfile asset-targets notes-dir))
-         (index-file
-          (org-blog-exporter-update-index
-           org-files root setupfile notes-dir))
-         (assets (org-blog-exporter--copy-assets asset-plan)))
-    (append (org-blog-exporter--finish-publish
-             repository (append exported (list index-file) assets) title)
-            (list :index index-file :assets assets))))
+         (artifacts
+          (org-blog-exporter--export-file-artifacts
+           org-files root setupfile asset-targets notes-dir))
+         (exported
+          (mapcar (lambda (artifact) (plist-get artifact :output))
+                  artifacts))
+         (progress
+          (list :scope 'files
+                :candidate-count (length org-files)
+                :candidates org-files
+                :artifacts artifacts
+                :exported-count (length exported)
+                :exported exported
+                :output-directory root
+                :asset-plan-count (length asset-plan)
+                :assets nil
+                :index nil))
+         index-file
+         assets)
+    (setq
+     index-file
+     (condition-case error-data
+         (org-blog-exporter-update-index
+          org-files root setupfile notes-dir)
+       (file-error
+        (org-blog-exporter--signal-partial-publish
+         'index error-data progress))))
+    (setq progress (plist-put progress :index index-file))
+    (condition-case error-data
+        (setq
+         assets
+         (org-blog-exporter--copy-assets
+          asset-plan
+          (lambda (target)
+            (setq progress
+                  (plist-put progress :assets
+                             (append (plist-get progress :assets)
+                                     (list target)))))))
+      (file-error
+       (org-blog-exporter--signal-partial-publish
+        'assets error-data progress)))
+    (setq progress (plist-put progress :assets assets))
+    (append
+     progress
+     (org-blog-exporter--finish-publish
+      repository (append exported (list index-file) assets) title))))
 
 ;;;###autoload
 (defun org-blog-exporter-publish-all
@@ -845,18 +1079,48 @@ commit only generated paths, and push."
          (summary (org-blog-exporter-export-all
                    notes-dir root setupfile asset-targets)))
     (unless (zerop (plist-get summary :error-count))
-      (error "Blog export failed: %S" (plist-get summary :errors)))
-    (let ((index-file
+      (org-blog-exporter--signal-partial-publish
+       'export
+       (list 'error
+             (format "Blog export failed: %S"
+                     (plist-get summary :errors)))
+       (append summary
+               (list :asset-plan-count (length asset-plan)
+                     :assets nil :index nil))))
+    (setq summary
+          (append summary
+                  (list :asset-plan-count (length asset-plan)
+                        :assets nil :index nil)))
+    (let (index-file assets)
+      (setq
+       index-file
+       (condition-case error-data
            (org-blog-exporter-update-index
-            (plist-get summary :candidates) root setupfile notes-dir))
-          (assets (org-blog-exporter--copy-assets asset-plan)))
+            (plist-get summary :candidates) root setupfile notes-dir)
+         (file-error
+          (org-blog-exporter--signal-partial-publish
+           'index error-data summary))))
+      (setq summary (plist-put summary :index index-file))
+      (condition-case error-data
+          (setq
+           assets
+           (org-blog-exporter--copy-assets
+            asset-plan
+            (lambda (target)
+              (setq summary
+                    (plist-put summary :assets
+                               (append (plist-get summary :assets)
+                                       (list target)))))))
+        (file-error
+         (org-blog-exporter--signal-partial-publish
+          'assets error-data summary)))
+      (setq summary (plist-put summary :assets assets))
       (append
        summary
        (org-blog-exporter--finish-publish
         repository
         (append (plist-get summary :exported) (list index-file) assets)
-        title)
-       (list :index index-file :assets assets)))))
+        title)))))
 
 ;;;###autoload
 (defun org-blog-exporter-publish
@@ -880,12 +1144,15 @@ publishing authorization before invoking it."
   (let* ((start (or offset 0))
          (maximum (or limit org-blog-exporter-result-limit))
          (exported (plist-get result :exported))
+         (artifacts (plist-get result :artifacts))
          (assets (plist-get result :assets))
          (errors (plist-get result :errors))
          (error-count (or (plist-get result :error-count) 0))
          (total (max (length exported) (length assets) (length errors)))
          (exported-page (skill-runtime-page exported start maximum
                                             (length exported)))
+         (artifacts-page (skill-runtime-page artifacts start maximum
+                                             (length artifacts)))
          (assets-page (skill-runtime-page assets start maximum (length assets)))
          (errors-page (skill-runtime-page errors start maximum (length errors)))
          (page (skill-runtime-page-metadata
@@ -908,7 +1175,9 @@ publishing authorization before invoking it."
      page
      (org-blog-exporter--effects operation result)
      (org-blog-exporter--partial-error
-      result (plist-get errors-page :items)))))
+      result (plist-get errors-page :items))
+     (org-blog-exporter--verification
+      operation result (plist-get artifacts-page :items)))))
 
 (defun org-blog-exporter--partial-error (result &optional causes)
   "Return a structured partial-failure error for RESULT, or nil.
@@ -982,7 +1251,8 @@ Use :operation `describe' to request operation schemas only when needed."
        (if (zerop (or (plist-get result :error-count) 0)) 'ok 'partial)
        nil
        (org-blog-exporter--effects operation result)
-       (org-blog-exporter--partial-error result)))
+       (org-blog-exporter--partial-error result)
+       (org-blog-exporter--verification operation result)))
      ((eq operation 'preflight)
      (skill-runtime-result
        operation result 1

@@ -23,3 +23,13 @@ fails.
 
 Resolve ambiguous files before acting. Treat publish as authorized only when the
 user explicitly requested it. Never bypass a facade safety error manually.
+
+Treat `:verification`, not a successful tool call alone, as completion evidence.
+For export, require every requested source to map to an existing output and require
+the public-note policy and rewritten asset links to pass. For publish, additionally
+require the index and planned assets, an existing path-scoped commit when changes
+occurred, and a verified upstream commit equal to the pushed commit.
+
+Index generation is a hard gate: never commit or push after it fails. A resource or
+index failure after HTML generation is partial success; report completed outputs and
+effects, leave commit and push unset, and do not retry the whole publish blindly.

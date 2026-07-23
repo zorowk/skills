@@ -321,12 +321,31 @@ it out of the rendered message while still validating that it was supplied."
           :paths relative-paths)))
 
 (defun skill-git-push (root)
-  "Push ROOT's current branch to its configured upstream."
-  (let ((default-directory (skill-git-root root)))
+  "Push ROOT's current branch and verify its configured upstream."
+  (let* ((default-directory (skill-git-root root))
+         (branch (magit-git-string "branch" "--show-current"))
+         (upstream
+          (magit-git-string
+           "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{upstream}")))
+    (unless (and branch (not (string-empty-p branch))
+                 upstream (not (string-empty-p upstream)))
+      (error "Current branch has no usable Git upstream in %s"
+             default-directory))
     (unless (zerop (magit-call-git "push" "--porcelain"))
       (error "Git push failed in %s" default-directory))
-    (list :git-root default-directory
-          :commit (magit-git-string "rev-parse" "--short" "HEAD"))))
+    (let ((commit (magit-git-string "rev-parse" "HEAD"))
+          (upstream-commit
+           (magit-git-string "rev-parse" "@{upstream}")))
+      (unless (and commit upstream-commit
+                   (string= commit upstream-commit))
+        (error "Git upstream does not match HEAD after push in %s"
+               default-directory))
+      (list :git-root default-directory
+            :branch branch
+            :upstream upstream
+            :commit commit
+            :upstream-commit upstream-commit
+            :verified t))))
 
 (provide 'skill-git)
 
