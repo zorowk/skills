@@ -14,6 +14,7 @@
     "org-blog-exporter-tests.el"
     "git-commit-tests.el"
     "skill-usage-review-tests.el"
+    "routing-review-tests.el"
     "contract-conformance-tests.el")
   "Test suites loaded when no explicit suite arguments are supplied.")
 

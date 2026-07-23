@@ -277,6 +277,9 @@ emacs -Q --batch -l tests/run-tests.el emacs-gtd-assistant-tests.el
 便于隔离定位失败。测试入口会初始化已安装的 Emacs packages；需要 Magit 或 Git 的 suite
 会显式检查依赖，使真实的路径限定 context 测试不会在 `-Q` 环境中静默跳过。
 
+`tests/routing-cases.el` 保存 skill 路由的正反案例，供人工评审或另行固定模型版本的评测
+使用。常规 ERT 只校验案例结构、skill 名称和边界完整性，不用关键词匹配冒充模型路由结果。
+
 在 Emacs 配置中启用公共代码上下文和 Git 回合审阅：
 
 ```elisp
