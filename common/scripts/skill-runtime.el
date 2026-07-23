@@ -111,43 +111,247 @@ STATUS defaults to `ok'.  Include PAGE and EFFECTS only when non-nil."
     (error "%s requires :authorization `explicit'" action))
   t)
 
-(defun skill-runtime--validate-field-types (operation schema request)
-  "Validate present REQUEST fields declared by SCHEMA for OPERATION."
+(defun skill-runtime--well-formed-plist-p (value)
+  "Return non-nil when VALUE is an even plist with keyword keys."
+  (and
+   (listp value)
+   (condition-case nil
+       (and
+        (zerop (% (length value) 2))
+        (let ((tail value)
+              (valid t))
+          (while tail
+            (unless (keywordp (car tail))
+              (setq valid nil
+                    tail nil))
+            (when tail
+              (setq tail (cddr tail))))
+          valid))
+     (error nil))))
+
+(defun skill-runtime--field-active-p (value field)
+  "Return non-nil when FIELD is present and non-nil in plist VALUE."
+  (and (plist-member value field) (plist-get value field)))
+
+(defun skill-runtime--constraint-groups (value label)
+  "Return normalized field groups from VALUE for constraint LABEL."
+  (cond
+   ((null value) nil)
+   ((and (listp value) (keywordp (car value)))
+    (list value))
+   ((and (listp value)
+         (seq-every-p
+          (lambda (group)
+            (and (listp group) group (seq-every-p #'keywordp group)))
+          value))
+    value)
+   (t (error "%s must contain keyword field groups: %S" label value))))
+
+(defun skill-runtime--validate-cardinality (operation schema value path)
+  "Validate cross-field cardinality in VALUE against SCHEMA at PATH."
+  (dolist (group
+           (skill-runtime--constraint-groups
+            (plist-get schema :exactly-one-of) ":exactly-one-of"))
+    (let ((count
+           (length
+            (seq-filter
+             (lambda (field) (skill-runtime--field-active-p value field))
+             group))))
+      (unless (= count 1)
+        (error "%S %s requires exactly one of %S" operation path group))))
+  (dolist (group
+           (skill-runtime--constraint-groups
+            (plist-get schema :mutually-exclusive) ":mutually-exclusive"))
+    (let ((count
+           (length
+            (seq-filter
+             (lambda (field) (skill-runtime--field-active-p value field))
+             group))))
+      (when (> count 1)
+        (error "%S %s fields are mutually exclusive: %S"
+               operation path group)))))
+
+(defun skill-runtime--validate-dependencies (operation schema value path)
+  "Validate dependent fields in VALUE against SCHEMA at PATH."
+  (dolist (spec (plist-get schema :requires))
+    (unless (and (listp spec) (> (length spec) 1)
+                 (seq-every-p #'keywordp spec))
+      (error ":requires entries must contain a trigger and dependent fields: %S"
+             spec))
+    (when (skill-runtime--field-active-p value (car spec))
+      (dolist (dependent (cdr spec))
+        (unless (skill-runtime--field-active-p value dependent)
+          (error "%S %s %S requires non-nil %S"
+                 operation path (car spec) dependent))))))
+
+(defun skill-runtime--validate-custom (operation path value validator)
+  "Validate VALUE with named VALIDATOR for OPERATION at PATH."
+  (unless (and (symbolp validator) (fboundp validator))
+    (error "Unknown schema validator: %S" validator))
+  (condition-case error-data
+      (unless (funcall validator value)
+        (error "validator returned nil"))
+    (error
+     (error "%S %s failed validator %S: %s"
+            operation path validator (error-message-string error-data)))))
+
+(defun skill-runtime--validate-type (operation path value type)
+  "Validate VALUE as TYPE for OPERATION at PATH."
+  (cond
+   ((symbolp type)
+    (unless
+        (pcase type
+          ('string (stringp value))
+          ('non-empty-string
+           (and (stringp value) (not (string-empty-p value))))
+          ('non-empty-string-list
+           (and (listp value)
+                value
+                (seq-every-p
+                 (lambda (item)
+                   (and (stringp item) (not (string-empty-p item))))
+                 value)))
+          ('integer (integerp value))
+          ('boolean (or (null value) (eq value t)))
+          ('symbol (symbolp value))
+          ('path
+           (and (stringp value) (not (string-empty-p value))))
+          ('absolute-path
+           (and (stringp value) (not (string-empty-p value))
+                (file-name-absolute-p value)))
+          ('existing-file
+           (and (stringp value) (not (string-empty-p value))
+                (file-regular-p (expand-file-name value))))
+          ('plist (skill-runtime--well-formed-plist-p value))
+          ('list-of-plists
+           (and (listp value)
+                (seq-every-p #'skill-runtime--well-formed-plist-p value)))
+          (_ (error "Unknown schema field type: %S" type)))
+      (error "%S %s must be %S" operation path type)))
+   ((and (listp type) (eq (car type) 'integer))
+    (let ((options (cdr type)))
+      (unless (and (integerp value)
+                   (or (not (plist-member options :min))
+                       (>= value (plist-get options :min)))
+                   (or (not (plist-member options :max))
+                       (<= value (plist-get options :max))))
+        (error "%S %s must satisfy %S" operation path type))))
+   ((and (listp type) (eq (car type) 'string))
+    (let ((options (cdr type)))
+      (unless
+          (and
+           (stringp value)
+           (or (not (plist-member options :length))
+               (= (length value) (plist-get options :length)))
+           (or (not (plist-member options :min-length))
+               (>= (length value) (plist-get options :min-length)))
+           (or (not (plist-member options :max-length))
+               (<= (length value) (plist-get options :max-length))))
+        (error "%S %s must satisfy %S" operation path type))))
+   ((and (listp type) (eq (car type) 'list-of))
+    (let ((item-type (cadr type))
+          (options (cddr type)))
+      (unless (listp value)
+        (error "%S %s must satisfy %S" operation path type))
+      (when (and (plist-member options :min-items)
+                 (< (length value) (plist-get options :min-items)))
+        (error "%S %s must satisfy %S" operation path type))
+      (when (and (plist-member options :max-items)
+                 (> (length value) (plist-get options :max-items)))
+        (error "%S %s must satisfy %S" operation path type))
+      (let ((index 0))
+        (dolist (item value)
+          (skill-runtime--validate-type
+           operation (format "%s[%d]" path index) item item-type)
+          (setq index (1+ index))))))
+   ((and (listp type) (eq (car type) 'plist))
+    (unless (skill-runtime--well-formed-plist-p value)
+      (error "%S %s must be a well-formed plist" operation path))
+    (skill-runtime--validate-plist-schema operation (cdr type) value path))
+   ((and (listp type) (eq (car type) 'custom))
+    (skill-runtime--validate-custom operation path value (cadr type)))
+   (t (error "Unknown schema field type: %S" type))))
+
+(defun skill-runtime--validate-field-types (operation schema value path)
+  "Validate present fields in VALUE declared by SCHEMA for OPERATION at PATH."
   (dolist (spec (plist-get schema :types))
     (let ((field (car spec))
           (type (cadr spec)))
-      (when (and (plist-member request field) (plist-get request field))
-        (unless
-            (pcase type
-              ('non-empty-string
-               (and (stringp (plist-get request field))
-                    (not (string-empty-p (plist-get request field)))))
-              ('non-empty-string-list
-               (and (listp (plist-get request field))
-                    (plist-get request field)
-                    (seq-every-p
-                     (lambda (value)
-                       (and (stringp value) (not (string-empty-p value))))
-                     (plist-get request field))))
-              (_ (error "Unknown schema field type: %S" type)))
-          (error "%S %S must be %S" operation field type))))))
+      (when (skill-runtime--field-active-p value field)
+        (skill-runtime--validate-type
+         operation (format "%s.%s" path field)
+         (plist-get value field) type)))))
 
-(defun skill-runtime--validate-field-choices (operation schema request)
-  "Validate present REQUEST fields with enumerated SCHEMA choices."
+(defun skill-runtime--validate-field-choices (operation schema value path)
+  "Validate present VALUE fields with enumerated SCHEMA choices at PATH."
   (dolist (spec (plist-get schema :choices))
     (let ((field (car spec))
           (choices (cdr spec)))
-      (when (and (plist-member request field) (plist-get request field)
-                 (not (memq (plist-get request field) choices)))
-        (error "%S %S must be one of %S: %S"
-               operation field choices (plist-get request field))))))
+      (when (and (skill-runtime--field-active-p value field)
+                 (not (member (plist-get value field) choices)))
+        (error "%S %s.%s must be one of %S: %S"
+               operation path field choices (plist-get value field))))))
+
+(defun skill-runtime--validate-field-validators (operation schema value path)
+  "Run named field validators declared by SCHEMA against VALUE at PATH."
+  (dolist (spec (plist-get schema :validators))
+    (let ((field (car spec))
+          (validator (cadr spec)))
+      (when (skill-runtime--field-active-p value field)
+        (skill-runtime--validate-custom
+         operation (format "%s.%s" path field)
+         (plist-get value field) validator)))))
+
+(defun skill-runtime--declared-fields (schema)
+  "Return fields declared anywhere in SCHEMA."
+  (delete-dups
+   (append
+    '(:operation)
+    (plist-get schema :required)
+    (plist-get schema :optional)
+    (plist-get schema :required-one-of)
+    (apply #'append
+           (skill-runtime--constraint-groups
+            (plist-get schema :exactly-one-of) ":exactly-one-of"))
+    (apply #'append
+           (skill-runtime--constraint-groups
+            (plist-get schema :mutually-exclusive) ":mutually-exclusive"))
+    (apply #'append (plist-get schema :requires))
+    (mapcar #'car (plist-get schema :types))
+    (mapcar #'car (plist-get schema :choices))
+    (mapcar #'car (plist-get schema :validators)))))
+
+(defun skill-runtime--validate-plist-schema (operation schema value path)
+  "Validate plist VALUE against SCHEMA for OPERATION at PATH."
+  (dolist (field (plist-get schema :required))
+    (unless (skill-runtime--field-active-p value field)
+      (error "%S %s requires non-nil %S" operation path field)))
+  (when-let* ((fields (plist-get schema :required-one-of)))
+    (unless (seq-some
+             (lambda (field) (skill-runtime--field-active-p value field))
+             fields)
+      (error "%S %s requires one of %S" operation path fields)))
+  (skill-runtime--validate-cardinality operation schema value path)
+  (skill-runtime--validate-dependencies operation schema value path)
+  (skill-runtime--validate-field-types operation schema value path)
+  (skill-runtime--validate-field-choices operation schema value path)
+  (skill-runtime--validate-field-validators operation schema value path)
+  (when (plist-get schema :closed)
+    (let ((allowed (skill-runtime--declared-fields schema))
+          (tail value))
+      (while tail
+        (unless (memq (car tail) allowed)
+          (error "%S %s does not allow field %S" operation path (car tail)))
+        (setq tail (cddr tail)))))
+  value)
 
 (defun skill-runtime-validate-request (schemas request)
   "Validate REQUEST against operation SCHEMAS and return REQUEST.
 
-Require a known :operation, every field named by :required, and at least one
-non-nil field named by :required-one-of.  Validate declared :types and :choices;
-other operation-specific validation remains the facade's responsibility."
+Require a known :operation and validate the selected declarative contract.
+Schemas may declare required fields, structural types, choices, cross-field
+cardinality, dependencies, closed plists, and named custom validators.  Other
+operation-specific validation remains the facade's responsibility."
   (unless (and (listp request)
                (condition-case nil
                    (zerop (% (length request) 2))
@@ -158,18 +362,8 @@ other operation-specific validation remains the facade's responsibility."
     (unless schema
       (error "Unknown operation %S; expected %S"
              operation (mapcar #'car schemas)))
-    (dolist (field (plist-get schema :required))
-      (unless (and (plist-member request field) (plist-get request field))
-        (error "%S requires non-nil %S" operation field)))
-    (when-let* ((fields (plist-get schema :required-one-of)))
-      (unless (seq-some (lambda (field)
-                          (and (plist-member request field)
-                               (plist-get request field)))
-                        fields)
-        (error "%S requires one of %S" operation fields)))
-    (skill-runtime--validate-field-types operation schema request)
-    (skill-runtime--validate-field-choices operation schema request)
-    request))
+    (skill-runtime--validate-plist-schema
+     operation schema request (symbol-name operation))))
 
 (defun skill-runtime--catalog-entry (entry)
   "Return compact discovery metadata for schema ENTRY."

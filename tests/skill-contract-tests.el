@@ -86,6 +86,10 @@
                         include-eldoc timeout-ms))
 (declare-function emacs-code-navigator-close-semantic-buffers
                   "../emacs-code-navigator/scripts/emacs-code-navigator" ())
+
+(defun skill-contract-test-even-integer-p (value)
+  "Return non-nil when VALUE is an even integer."
+  (and (integerp value) (zerop (% value 2))))
 (declare-function emacs-code-navigator-agent-shell-context
                   "../emacs-code-navigator/scripts/agent-shell-code-context" ())
 (declare-function emacs-code-navigator-agent-shell-enable
@@ -289,6 +293,97 @@
      (skill-runtime-validate-request
       schemas '(:operation sample :name "item" :items ("one")
                           :mode verbose)))))
+
+(ert-deftest skill-runtime-validates-parameterized-and-path-types ()
+  (let* ((file (make-temp-file "skill-runtime-contract-"))
+         (schemas
+          '((sample
+             :summary "Validate richer primitive types."
+             :required (:count :enabled :kind :root :file)
+             :types
+             ((:count (integer :min 1 :max 3))
+              (:enabled boolean)
+              (:kind symbol)
+              (:root absolute-path)
+              (:file existing-file))))))
+    (unwind-protect
+        (progn
+          (should
+           (equal
+            (skill-runtime-validate-request
+             schemas
+             `(:operation sample :count 2 :enabled t :kind compact
+                          :root ,temporary-file-directory :file ,file))
+            `(:operation sample :count 2 :enabled t :kind compact
+                         :root ,temporary-file-directory :file ,file)))
+          (should-error
+           (skill-runtime-validate-request
+            schemas
+            `(:operation sample :count 4 :enabled t :kind compact
+                         :root ,temporary-file-directory :file ,file)))
+          (should-error
+           (skill-runtime-validate-request
+            schemas
+            `(:operation sample :count 2 :enabled yes :kind compact
+                         :root ,temporary-file-directory :file ,file))))
+      (delete-file file))))
+
+(ert-deftest skill-runtime-validates-nested-and-relational-contracts ()
+  (let ((schemas
+         '((sample
+            :summary "Validate nested and dependent fields."
+            :required (:tasks :count)
+            :optional (:file :directory :left :right :replace :authorization)
+            :exactly-one-of (:file :directory)
+            :mutually-exclusive (:left :right)
+            :requires ((:replace :authorization))
+            :types
+            ((:count integer)
+             (:tasks
+              (list-of
+               (plist
+                :required (:title)
+                :optional (:priority)
+                :types ((:title non-empty-string)
+                        (:priority (string :length 1)))
+                :closed t)
+               :min-items 1 :max-items 2)))
+            :validators
+            ((:count skill-contract-test-even-integer-p
+                     "Count must be even."))))))
+    (should
+     (equal
+      (skill-runtime-validate-request
+       schemas
+       '(:operation sample :file "/tmp/input" :count 2
+                    :tasks ((:title "One" :priority "A"))))
+      '(:operation sample :file "/tmp/input" :count 2
+                   :tasks ((:title "One" :priority "A")))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas
+      '(:operation sample :file "/tmp/input" :directory "/tmp"
+                   :count 2 :tasks ((:title "One")))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas
+      '(:operation sample :file "/tmp/input" :left t :right t
+                   :count 2 :tasks ((:title "One")))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas
+      '(:operation sample :file "/tmp/input" :replace t
+                   :count 2 :tasks ((:title "One")))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas
+      '(:operation sample :file "/tmp/input" :count 3
+                   :tasks ((:title "One")))))
+    (should-error
+     (skill-runtime-validate-request
+      schemas
+      '(:operation sample :file "/tmp/input" :count 2
+                   :tasks ((:title "One" :unknown t)))))))
 
 (ert-deftest facade-schemas-expose-high-value-value-constraints ()
   (let* ((navigator
