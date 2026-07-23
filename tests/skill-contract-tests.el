@@ -410,6 +410,29 @@
     (should (assq :validation (plist-get commit :types)))
     (should (assq :language (plist-get template :choices)))))
 
+(ert-deftest navigator-schema-validates-numeric-boolean-and-exclusive-fields ()
+  (let* ((description
+          (emacs-code-navigator-query
+           '(:operation describe :target context)))
+         (schema (plist-get (plist-get description :data) :schema))
+         (types (plist-get schema :types)))
+    (should (equal (cadr (assq :line types)) '(integer :min 1)))
+    (should (eq (cadr (assq :definitions types)) 'boolean)))
+  (should-error
+   (emacs-code-navigator-query
+    '(:operation context :file "/tmp/example.el" :line "1")))
+  (should-error
+   (emacs-code-navigator-query
+    '(:operation context :file "/tmp/example.el" :line 1
+                 :definitions yes)))
+  (should-error
+   (emacs-code-navigator-query
+    '(:operation locate-many :query "value"
+                 :directories ("/a" "/b" "/c" "/d" "/e" "/f"))))
+  (should-error
+   (emacs-code-navigator-query
+    '(:operation diagnostics :file "/tmp/example.el" :directory "/tmp"))))
+
 (ert-deftest skill-facades-describe-with-standard-envelope ()
   (dolist (call (list #'emacs-code-navigator-query
                       #'emacs-gtd-execute
