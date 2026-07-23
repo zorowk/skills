@@ -790,6 +790,33 @@
       (when-let* ((buffer (get-file-buffer source))) (kill-buffer buffer))
       (delete-directory root t))))
 
+(ert-deftest blog-partial-results-expose-retryable-failure-details ()
+  (let ((partial
+         '(:scope all
+           :candidate-count 2
+           :exported-count 1
+           :exported ("/tmp/one.html")
+           :error-count 1
+           :errors (("/tmp/two.org" "Export failed"))
+           :output-directory "/tmp/output")))
+    (cl-letf (((symbol-function 'org-blog-exporter-export)
+               (lambda (&rest _) partial)))
+      (dolist (request
+               '((:operation export)
+                 (:operation export :full t)))
+        (let* ((result (org-blog-exporter-run request))
+               (error-data (plist-get result :error)))
+          (skill-contract-tests-assert-failure
+           result 'partial 'partial-failure)
+          (should (= (plist-get error-data :failure-count) 1))
+          (should (equal (plist-get error-data :causes)
+                         '(("/tmp/two.org" "Export failed"))))
+          (should (equal (plist-get result :effects)
+                         '(:exported-count 1)))
+          (should (equal (plist-get
+                          (plist-get result :data) :exported)
+                         '("/tmp/one.html"))))))))
+
 (ert-deftest denote-create-writes-only-to-the-selected-notes-directory ()
   (let* ((root (make-temp-file "denote-create-" t))
          (notes (expand-file-name "notes" root))

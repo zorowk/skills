@@ -156,12 +156,18 @@ Denote adapter 提供英文 `Capture as Denote` action，先生成符合 critica
 默认不把测试命令、通过数量等 validation 内容写入 commit body，而是在操作完成后向用户
 报告。commit body 默认聚焦修改内容、原因和必要边界。
 
-主入口统一返回 `:status`、`:operation`、`:count` 和 `:data`；分页结果增加 `:page`，副作用
-增加 `:effects`。每次成功调用还返回不保留原文的 `:metrics`，包括耗时、请求字符数、
-请求字段数、payload 字符数、基础响应字符数、结果数、截断、降级和来源，并用版本号
-保护历史比较。字符数是可重复的本地代理，不冒充模型服务的精确 Token usage。截断和
-下一页位置均为机器可读字段。仅在调用参数不明确时请求 `describe` schema，无需读取
-实现源码。
+v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation`、`:count` 和
+`:data`；分页结果增加 `:page`，副作用增加 `:effects`。状态使用 `ok`、`partial`、
+`needs-input`、`blocked` 或 `failed`。可预期的公共失败还返回 `:error`，至少包含稳定
+`:code`、可读 `:message`、`:retry` 和 `:required-action`，并可附带字段路径、目标、
+候选项或分页后的失败原因。部分成功保留已完成的 `:data` 与真实 `:effects`，同时用
+`partial-failure` 指示选择性重试；未知 Lisp 错误继续抛出，避免把实现缺陷伪装成可恢复
+业务状态。
+
+每次成功或结构化失败调用都返回不保留原文的 `:metrics`，包括耗时、请求字符数、请求
+字段数、payload 字符数、基础响应字符数、结果数、截断、降级和来源，并用版本号保护
+历史比较。字符数是可重复的本地代理，不冒充模型服务的精确 Token usage。截断和下一页
+位置均为机器可读字段。仅在调用参数不明确时请求 `describe` schema，无需读取实现源码。
 
 任务完成后可要求“评价本轮 skills 使用情况”。`skill-usage-review` 会以正确完成为门槛，
 结合当前对话中的失败重试和各调用的 `:metrics`，区分必要信息、安全信息与冗余信息；

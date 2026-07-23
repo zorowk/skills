@@ -38,7 +38,7 @@
 (declare-function skill-runtime-require-authorization
                   "../../common/scripts/skill-runtime" (request action))
 (declare-function skill-runtime-result "../../common/scripts/skill-runtime"
-                  (operation data &optional count status page effects))
+                  (operation data &optional count status page effects error))
 (declare-function skill-runtime-validate-request
                   "../../common/scripts/skill-runtime" (schemas request))
 
@@ -905,7 +905,22 @@ publishing authorization before invoking it."
      (or (plist-get result :exported-count) (length exported))
      (if (zerop error-count) 'ok 'partial)
      page
-     (org-blog-exporter--effects operation result))))
+     (org-blog-exporter--effects operation result)
+     (org-blog-exporter--partial-error
+      result (plist-get errors-page :items)))))
+
+(defun org-blog-exporter--partial-error (result &optional causes)
+  "Return a structured partial-failure error for RESULT, or nil.
+
+CAUSES may provide the bounded error page exposed by a compact response."
+  (let ((error-count (or (plist-get result :error-count) 0)))
+    (unless (zerop error-count)
+      (list :code 'partial-failure
+            :message (format "%d blog item(s) failed" error-count)
+            :retry 'selective
+            :required-action 'inspect-failures
+            :failure-count error-count
+            :causes (or causes (plist-get result :errors))))))
 
 (defun org-blog-exporter--effects (operation result)
   "Return machine-readable effects for blog OPERATION and RESULT."
@@ -965,7 +980,8 @@ Use :operation `describe' to request operation schemas only when needed."
        (or (plist-get result :exported-count) 1)
        (if (zerop (or (plist-get result :error-count) 0)) 'ok 'partial)
        nil
-       (org-blog-exporter--effects operation result)))
+       (org-blog-exporter--effects operation result)
+       (org-blog-exporter--partial-error result)))
      ((eq operation 'preflight)
      (skill-runtime-result
        operation result 1
