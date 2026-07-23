@@ -26,6 +26,7 @@
 (defvar skill-agent-shell--last-completed-turn)
 (defvar skill-agent-shell--available-actions)
 (defvar agent-shell-gtd-capture--suppress-count)
+(defvar agent-shell-denote-capture--suppress-count)
 (defvar emacs-gtd-capture-task-limit)
 (defvar ai-git-commit-include-validation-in-message)
 (defvar emacs-code-navigator-semantic-buffer-policy)
@@ -118,6 +119,14 @@
 (declare-function denote-scribe-git-commit
                   "../denote-scribe/scripts/denote-scribe"
                   (title paths review-completed &optional kind git-dir))
+(declare-function denote-scribe-link-gtd
+                  "../denote-scribe/scripts/denote-scribe"
+                  (file tasks &optional notes-dir))
+(declare-function agent-shell-denote-capture--prompt
+                  "../denote-scribe/scripts/agent-shell-denote-capture" ())
+(declare-function agent-shell-denote-capture--applicable-p
+                  "../denote-scribe/scripts/agent-shell-denote-capture"
+                  (shell-buffer state))
 (declare-function org-blog-exporter-run
                   "../org-blog-exporter/scripts/org-blog-exporter" (request))
 (declare-function org-blog-exporter--finish-publish
@@ -155,6 +164,7 @@
            "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
            "emacs-gtd-assistant/scripts/agent-shell-gtd-capture.el"
            "denote-scribe/scripts/denote-scribe.el"
+           "denote-scribe/scripts/agent-shell-denote-capture.el"
            "org-blog-exporter/scripts/org-blog-exporter.el"
            "git-commit/scripts/ai-git-commit.el"
            "git-commit/scripts/agent-shell-git-review.el"))
@@ -554,6 +564,83 @@
             "unchanged")))
       (when-let* ((buffer (get-file-buffer created))) (kill-buffer buffer))
       (delete-directory root t))))
+
+(ert-deftest denote-conversation-capture-requires-explicit-authorization ()
+  (let ((request
+         '(:operation capture :title "Research note"
+           :body-file "/tmp/body.org")))
+    (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)
+               (lambda (&rest _)
+                 '(:file "/tmp/created.org" :review-state (:review-due nil)))))
+      (should-error (denote-scribe-run request))
+      (let ((result
+             (denote-scribe-run
+              (append request '(:authorization explicit)))))
+        (should (equal (plist-get (plist-get result :data) :file)
+                       "/tmp/created.org"))
+        (should (equal (plist-get result :effects) '(:created t)))))))
+
+(ert-deftest denote-gtd-backlinks-preserve-critical-top-level-structure ()
+  (let* ((root (make-temp-file "denote-gtd-link-" t))
+         (notes (expand-file-name "notes" root))
+         (note (expand-file-name
+                "20260723T120000--linked-research.org" notes))
+         (template (expand-file-name
+                    "denote-scribe/assets/critical-note-template.org"
+                    skill-contract-tests-root))
+         (tasks
+          '((:id "task-one" :title "Trace action mapping")
+            (:id "task-two" :title "Build a minimal client"))))
+    (unwind-protect
+        (progn
+          (make-directory notes)
+          (with-temp-file note
+            (insert-file-contents template))
+          (should-error
+           (denote-scribe-run
+            (list :operation 'link-gtd :file note :tasks tasks
+                  :notes-dir notes)))
+          (denote-scribe-run
+           (list :operation 'link-gtd :file note :tasks tasks
+                 :notes-dir notes :authorization 'explicit))
+          (denote-scribe-run
+           (list :operation 'link-gtd :file note :tasks tasks
+                 :notes-dir notes :authorization 'explicit))
+          (with-temp-buffer
+            (insert-file-contents note)
+            (let ((text (buffer-string)))
+              (should (string-match-p
+                       "\\* Open Questions\\(?:.\\|\n\\)*\\*\\* Related GTD"
+                       text))
+              (should (= (how-many "id:task-one" (point-min) (point-max)) 1))
+              (should (= (how-many "id:task-two" (point-min) (point-max)) 1))))
+          (with-temp-buffer
+            (insert-file-contents note)
+            (delay-mode-hooks (org-mode))
+            (should
+             (equal
+              (denote-scribe--top-level-headings
+               (denote-scribe--org-tree))
+              denote-scribe-critical-headings))))
+      (when-let* ((buffer (get-file-buffer note))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest denote-capture-prompt-links-gtd-in-both-directions ()
+  (let ((prompt (agent-shell-denote-capture--prompt)))
+    (should (string-match-p "Do not create or modify any file yet" prompt))
+    (should (string-match-p ":operation capture" prompt))
+    (should (string-match-p ":operation add-many" prompt))
+    (should (string-match-p ":operation link-gtd" prompt))
+    (should (string-match-p "file:' resource link" prompt))
+    (should (string-match-p "id:' links" prompt)))
+  (with-temp-buffer
+    (setq agent-shell-denote-capture--suppress-count 1)
+    (should-not
+     (agent-shell-denote-capture--applicable-p
+      (current-buffer) '(:stop-reason "end_turn")))
+    (should
+     (agent-shell-denote-capture--applicable-p
+      (current-buffer) '(:stop-reason "end_turn")))))
 
 (ert-deftest denote-hywiki-create-and-replace-stay-in-the-selected-directory ()
   (let* ((root (make-temp-file "denote-hywiki-" t))

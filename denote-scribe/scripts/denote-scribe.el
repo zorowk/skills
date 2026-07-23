@@ -84,6 +84,11 @@
   :type 'positive-integer
   :group 'denote-scribe)
 
+(defcustom denote-scribe-linked-gtd-limit 3
+  "Maximum GTD backlinks added by one confirmed conversation capture."
+  :type 'positive-integer
+  :group 'denote-scribe)
+
 (defconst denote-scribe-review-commit-marker "🔒"
   "Literal commit-subject marker for a completed AI review.")
 
@@ -141,6 +146,18 @@
             :required (:title :body-file)
             :optional (:keywords :notes-dir :signature :date :git-dir)
             :effects (:created))
+    (capture
+     :summary "Create one confirmed conversation note with explicit authorization."
+     :required (:title :body-file :authorization)
+     :optional (:keywords :notes-dir :signature :date :git-dir)
+     :choices ((:authorization explicit))
+     :effects (:created))
+    (link-gtd
+     :summary "Add confirmed GTD id links below the note's open questions."
+     :required (:file :tasks :authorization)
+     :optional (:notes-dir)
+     :choices ((:authorization explicit))
+     :effects (:mutated))
     (review :summary "Return one bounded review page with continuation metadata."
             :required (:file :review-state)
             :optional (:notes-dir :offset :limit :section-maximum))
@@ -262,6 +279,98 @@ SCHEMAS is a list of accepted top-level heading lists for LABEL."
       (dolist (position (sort positions #'>))
         (goto-char position)
         (org-fill-paragraph)))))
+
+(defun denote-scribe--single-line (value label)
+  "Return non-empty single-line VALUE or signal an error naming LABEL."
+  (unless (and (stringp value)
+               (not (string-empty-p value))
+               (not (string-match-p "[\n\r]" value)))
+    (error "%s must be a non-empty single-line string" label))
+  value)
+
+(defun denote-scribe--note-file (file &optional notes-dir)
+  "Return validated Denote FILE below NOTES-DIR."
+  (unless (and (stringp file) (file-regular-p file) (file-writable-p file))
+    (error "Denote FILE must be a writable regular file: %S" file))
+  (let* ((root (file-name-as-directory
+                (file-truename
+                 (denote-scribe--directory
+                  notes-dir denote-scribe-notes-directory))))
+         (resolved (file-truename file)))
+    (unless (and (file-in-directory-p resolved root)
+                 (string-match-p
+                  "\\`[0-9]\\{8\\}T[0-9]\\{6\\}--.+\\.org\\'"
+                  (file-name-nondirectory resolved)))
+      (error "Refusing non-Denote note outside configured notes: %s" file))
+    resolved))
+
+(defun denote-scribe--validated-gtd-tasks (tasks)
+  "Return validated GTD TASKS for backlink insertion."
+  (unless (and (listp tasks) tasks)
+    (error "TASKS must be a non-empty list"))
+  (when (> (length tasks) denote-scribe-linked-gtd-limit)
+    (error "TASKS exceeds the configured limit of %d"
+           denote-scribe-linked-gtd-limit))
+  (mapcar
+   (lambda (task)
+     (unless (listp task)
+       (error "Each GTD task must be a plist"))
+     (let ((id (denote-scribe--single-line
+                (plist-get task :id) "GTD task ID"))
+           (title (denote-scribe--single-line
+                   (plist-get task :title) "GTD task title")))
+       (unless (string-match-p "\\`[[:alnum:]_-]+\\'" id)
+         (error "Unsafe GTD task ID: %S" id))
+       (list :id id :title title)))
+   tasks))
+
+;;;###autoload
+(defun denote-scribe-link-gtd (file tasks &optional notes-dir)
+  "Add bidirectional GTD TASK backlinks to Denote FILE.
+
+Insert links below a level-2 heading under Open Questions or 开放问题 without
+changing the critical template's required top-level headings."
+  (let* ((note (denote-scribe--note-file file notes-dir))
+         (validated (denote-scribe--validated-gtd-tasks tasks)))
+    (denote-scribe--validate-critical-body note)
+    (with-current-buffer (find-file-noselect note)
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       (unless (re-search-forward "^\\* \\(Open Questions\\|开放问题\\)[ \t]*$"
+                                  nil t)
+         (error "Denote note has no Open Questions heading"))
+       (beginning-of-line)
+       (let* ((chinese (string= (org-get-heading t t t t) "开放问题"))
+              (heading (if chinese "相关 GTD" "Related GTD"))
+              (subtree-end (save-excursion (org-end-of-subtree t t) (point)))
+              (section
+               (save-excursion
+                 (when (re-search-forward
+                        (format "^\\*\\* %s[ \t]*$" (regexp-quote heading))
+                        subtree-end t)
+                   (line-beginning-position)))))
+         (unless section
+           (goto-char subtree-end)
+           (unless (bolp) (insert "\n"))
+           (insert (format "** %s\n" heading))
+           (setq section (line-beginning-position 0)))
+         (goto-char section)
+         (org-end-of-subtree t t)
+         (dolist (task validated)
+           (let ((target (concat "id:" (plist-get task :id))))
+             (unless (save-excursion
+                       (goto-char section)
+                       (re-search-forward
+                        (regexp-quote target)
+                        (save-excursion (org-end-of-subtree t t) (point))
+                        t))
+               (unless (bolp) (insert "\n"))
+               (insert
+                (format "- %s\n"
+                        (org-link-make-string
+                         target (plist-get task :title)))))))
+         (save-buffer))))
+    (list :file note :tasks validated)))
 
 (defun denote-scribe-preflight (&optional notes-dir hywiki-dir git-dir)
   "Return a plist describing whether Denote, HyWiki, and Magit are available."
@@ -711,6 +820,28 @@ Use :operation `describe' to request operation schemas only when needed."
                 (plist-get request :git-dir))))
          (skill-runtime-result operation created 1 nil nil
                                (list :created t))))
+      ('capture
+       (skill-runtime-require-authorization request "Denote capture")
+       (let ((created
+              (denote-scribe-create-with-review-context
+               (plist-get request :title)
+               (plist-get request :body-file)
+               (plist-get request :keywords)
+               (plist-get request :notes-dir)
+               (plist-get request :signature)
+               (plist-get request :date)
+               (plist-get request :git-dir))))
+         (skill-runtime-result operation created 1 nil nil
+                               (list :created t))))
+      ('link-gtd
+       (skill-runtime-require-authorization request "GTD backlinks")
+       (skill-runtime-result
+        operation
+        (denote-scribe-link-gtd
+         (plist-get request :file)
+         (plist-get request :tasks)
+         (plist-get request :notes-dir))
+        1 nil nil (list :mutated t)))
       ('review
        (let ((review
               (denote-scribe-review-context

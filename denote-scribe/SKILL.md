@@ -1,8 +1,9 @@
 ---
 name: denote-scribe
 description: >-
-  Save completed technical or research conversations as Denote reasoning notes, review them,
-  promote mature HyWiki knowledge, and commit generated files through Emacs.
+  Save confirmed technical or research conversations as Denote reasoning notes, optionally link
+  follow-up Org GTD tasks in both directions, review notes, promote mature HyWiki knowledge, and
+  commit generated files through Emacs.
 ---
 
 # Denote Scribe
@@ -33,3 +34,17 @@ questions. Merge aliases, preserve provenance, deduplicate, and allow no-promoti
 Commit only files from this run when explicitly requested; mark review complete only
 after every page is reviewed, including a valid no-promotion result. Do not push or
 create GTD tasks without explicit user intent.
+
+For agent-shell capture, first present an editable note proposal and zero to three
+optional GTD candidates without mutation. After explicit confirmation, use
+`capture` with `:authorization explicit`; add each confirmed GTD task with the
+created Denote file as a structured `file:` resource, then use `link-gtd` with
+the returned task IDs and `:authorization explicit`. Backlinks belong below
+Open Questions or 开放问题 so required top-level headings remain unchanged.
+Report partial state if cross-file linking fails. Do not promote HyWiki, commit,
+push, or create unconfirmed tasks as part of capture.
+
+For the English agent-shell action, load
+`scripts/agent-shell-denote-capture.el` and call
+`agent-shell-denote-capture-enable`. It registers `Capture as Denote`, uses the
+same conversation context, and suppresses recursive capture suggestions.

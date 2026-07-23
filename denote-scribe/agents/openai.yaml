@@ -1,4 +1,4 @@
 interface:
   display_name: "Denote Scribe"
-  short_description: "Create critical notes and review mature knowledge"
-  default_prompt: "Use $denote-scribe to save this discussion, run any due review, and propose qualifying HyWiki changes without committing unless I explicitly ask."
+  short_description: "Capture linked reasoning notes and mature knowledge"
+  default_prompt: "Use $denote-scribe to capture this confirmed discussion as a critical note, link any confirmed GTD follow-up work in both directions, and avoid HyWiki or Git mutations unless explicitly requested."
