@@ -8,9 +8,7 @@
  '(
    "common/scripts/skill-runtime.el"
    "common/scripts/skill-git.el"
-   "common/scripts/agent-shell-bridge.el"
-   "git-commit/scripts/ai-git-commit.el"
-   "git-commit/scripts/agent-shell-git-review.el"))
+   "git-commit/scripts/ai-git-commit.el"))
 
 (defvar ai-git-commit-include-validation-in-message)
 (defvar ai-git-commit-untracked-file-maximum-characters)
@@ -52,19 +50,6 @@
       (ai-git-commit-format
        (plist-put (copy-sequence skill-contract-tests-message-spec)
                   :detail 'full))))))
-
-(ert-deftest agent-shell-git-request-preserves-advisory-boundary ()
-  (with-temp-buffer
-    (setq-local skill-agent-shell--last-completed-turn
-                '(:paths (("/tmp/repository/one.el" . file-write))))
-    (cl-letf (((symbol-function 'agent-shell-git-review--root)
-               (lambda (_path) "/tmp/repository/")))
-      (let ((text
-             (agent-shell-git-review--request-text
-              (current-buffer) 'commit)))
-        (should (string-match-p "re-read actual Git/Magit" text))
-        (should (string-match-p "/tmp/repository/one.el" text))
-        (should (string-match-p "omit test results" text))))))
 
 (ert-deftest git-message-auto-compacts-routine-medium-risk-work ()
   (let* ((spec (copy-sequence skill-contract-tests-message-spec))

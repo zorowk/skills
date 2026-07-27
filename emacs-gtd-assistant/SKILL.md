@@ -34,9 +34,3 @@ confirms the selected candidates, call `add-many` with `:authorization explicit`
 Store short research background in `:context-notes`, queryable metadata in
 `:properties`, and HTTP, documentation, or file references in structured
 `:links`; never save the full transcript or raw Org drawer text.
-
-For the English agent-shell action, load
-`scripts/agent-shell-gtd-capture.el` and call
-`agent-shell-gtd-capture-enable`. The action asks the same Agent to extract from
-its previous answer, suppresses follow-up capture loops, and never writes before
-confirmation.

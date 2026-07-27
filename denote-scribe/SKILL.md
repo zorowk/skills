@@ -60,7 +60,5 @@ Open Questions or 开放问题 so required top-level headings remain unchanged.
 Report partial state if cross-file linking fails. Do not promote HyWiki, commit,
 push, or create unconfirmed tasks as part of capture.
 
-For the English agent-shell action, load
-`scripts/agent-shell-denote-capture.el` and call
-`agent-shell-denote-capture-enable`. It registers `Capture as Denote`, uses the
-same conversation context, and suppresses recursive capture suggestions.
+When capturing the current conversation, propose GTD candidates only when the
+extracted evidence reveals valuable actionable follow-up.

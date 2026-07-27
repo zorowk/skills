@@ -45,9 +45,3 @@ their names.
 Prefer `:detail compact` for routine personal-repository work. Automatic detail
 also stays compact for up to four low-risk or three medium-risk changes; use
 `:detail full` when risk, boundaries, or independent change groups need visibility.
-
-For agent-shell turn review, load `scripts/agent-shell-git-review.el` and call
-`agent-shell-git-review-enable`. Event paths are advisory candidates only.
-Review and commit requests must re-read Git through `ai-git-commit-run`, use the
-same explicit path set, split different repositories, and require confirmation
-before submitting a commit request.

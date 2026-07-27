@@ -2,69 +2,26 @@
 
 ;;; Commentary:
 
-;; Offer an English-labeled agent-shell action that drafts a critical Denote
-;; note and optional follow-up GTD tasks.  All mutations wait for explicit user
-;; confirmation; the prompt links GTD resources to the note and GTD IDs back
-;; into the note.
+;; Provide an explicit command that drafts a critical Denote note and optional
+;; follow-up GTD tasks.  All mutations wait for explicit user confirmation; the
+;; prompt links GTD resources to the note and GTD IDs back into the note.
 
 ;;; Code:
 
-(require 'subr-x)
-
-(let ((root (file-name-directory (or load-file-name buffer-file-name))))
-  (unless (featurep 'denote-scribe)
-    (load (expand-file-name "denote-scribe.el" root) nil nil t))
-  (unless (featurep 'agent-shell-bridge)
-    (load (expand-file-name "../../common/scripts/agent-shell-bridge.el" root)
-          nil nil t)))
-
 (declare-function agent-shell-insert "agent-shell" (&rest arguments))
-(declare-function skill-agent-shell-bridge-enable
-                  "../../common/scripts/agent-shell-bridge" ())
-(declare-function skill-agent-shell-register-turn-action
-                  "../../common/scripts/agent-shell-bridge"
-                  (id &rest arguments))
-(declare-function skill-agent-shell-unregister-turn-action
-                  "../../common/scripts/agent-shell-bridge" (id))
 
 (defgroup agent-shell-denote-capture nil
   "Capture agent-shell research as linked Denote and GTD records."
-  :group 'denote-scribe)
-
-(defcustom agent-shell-denote-capture-suppressed-turns 3
-  "Turns hidden after starting capture to avoid recursive suggestions."
-  :type 'natnum
-  :group 'agent-shell-denote-capture)
-
-(defvar agent-shell-denote-capture-last-shell-buffer nil
-  "Most recent agent-shell buffer offering Denote capture.")
-
-(defvar-local agent-shell-denote-capture--suppress-count 0
-  "Number of upcoming completed turns that should hide Denote capture.")
+  :group 'tools)
 
 (defun agent-shell-denote-capture--shell-buffer (&optional shell-buffer)
-  "Return a live SHELL-BUFFER or the most recent capture shell."
+  "Return a live SHELL-BUFFER or the current agent-shell buffer."
   (let ((buffer (or shell-buffer
                     (and (derived-mode-p 'agent-shell-mode)
-                         (current-buffer))
-                    agent-shell-denote-capture-last-shell-buffer)))
+                         (current-buffer)))))
     (unless (buffer-live-p buffer)
       (user-error "No live agent-shell conversation is available"))
     buffer))
-
-(defun agent-shell-denote-capture--applicable-p (shell-buffer state)
-  "Return non-nil when SHELL-BUFFER and completed STATE can offer capture."
-  (with-current-buffer shell-buffer
-    (if (> agent-shell-denote-capture--suppress-count 0)
-        (progn
-          (setq agent-shell-denote-capture--suppress-count
-                (1- agent-shell-denote-capture--suppress-count))
-          nil)
-      (member (plist-get state :stop-reason) '(nil "end_turn")))))
-
-(defun agent-shell-denote-capture--turn-complete (shell-buffer _state)
-  "Remember SHELL-BUFFER as the latest Denote capture source."
-  (setq agent-shell-denote-capture-last-shell-buffer shell-buffer))
 
 (defun agent-shell-denote-capture--prompt ()
   "Return the confirmed bidirectional Denote/GTD capture request."
@@ -101,33 +58,10 @@
   "Ask the same agent to prepare a linked Denote and optional GTD capture."
   (interactive)
   (let ((shell (agent-shell-denote-capture--shell-buffer shell-buffer)))
-    (with-current-buffer shell
-      (setq agent-shell-denote-capture--suppress-count
-            agent-shell-denote-capture-suppressed-turns))
     (agent-shell-insert
      :text (agent-shell-denote-capture--prompt)
      :submit t
      :shell-buffer shell)))
-
-;;;###autoload
-(defun agent-shell-denote-capture-enable ()
-  "Enable the English `Capture as Denote' agent-shell turn action."
-  (interactive)
-  (skill-agent-shell-register-turn-action
-   'denote-capture
-   :function #'agent-shell-denote-capture--turn-complete
-   :command (lambda (shell-buffer _state)
-              (agent-shell-denote-capture shell-buffer))
-   :label "Capture as Denote"
-   :applicable-p #'agent-shell-denote-capture--applicable-p
-   :priority 30)
-  (skill-agent-shell-bridge-enable))
-
-;;;###autoload
-(defun agent-shell-denote-capture-disable ()
-  "Disable the agent-shell Denote capture action."
-  (interactive)
-  (skill-agent-shell-unregister-turn-action 'denote-capture))
 
 (provide 'agent-shell-denote-capture)
 

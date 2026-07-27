@@ -4,8 +4,7 @@ description: >-
   Evaluate skills used in the current conversation across correctness, evidence sufficiency,
   safety, and economy without combining those dimensions into one score. Diagnose observed
   recovery cost, latent recovery risk, context use, retries, and avoidable output. Use after a
-  tool-driven task when the user asks how well, efficiently, or economically the skills performed,
-  including from an agent-shell post-turn review action.
+  tool-driven task when the user asks how well, efficiently, or economically the skills performed.
 ---
 
 # Skill Usage Review
@@ -14,11 +13,6 @@ Review only the skill calls visible in the current conversation. Treat each faca
 as measurement evidence and its request, result, errors, and final task outcome as semantic
 evidence. Do not rerun the task, modify files, or create persistent telemetry unless requested.
 
-For the English agent-shell action, load
-`scripts/agent-shell-skill-usage-review.el` and call
-`agent-shell-skill-usage-review-enable`. It offers `Review skill usage` only
-after a successful turn containing tool calls, sends a read-only review request
-to the same conversation, and suppresses recursive review suggestions.
 Call documented script entry points directly. If a facade schema is unclear, use
 its `describe` operation. Do not inspect script implementations unless the
 documented entry point fails.

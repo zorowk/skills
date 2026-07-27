@@ -12,7 +12,6 @@
    "denote-scribe/scripts/denote-scribe.el"
    "denote-scribe/scripts/agent-shell-denote-capture.el"))
 
-(defvar agent-shell-denote-capture--suppress-count)
 (defvar denote-scribe-review-commit-marker)
 (defvar skill-git--body-label-regexp)
 
@@ -310,15 +309,8 @@
     (should (string-match-p ":operation add-many" prompt))
     (should (string-match-p ":operation link-gtd" prompt))
     (should (string-match-p "file:' resource link" prompt))
-    (should (string-match-p "id:' links" prompt)))
-  (with-temp-buffer
-    (setq agent-shell-denote-capture--suppress-count 1)
-    (should-not
-     (agent-shell-denote-capture--applicable-p
-      (current-buffer) '(:stop-reason "end_turn")))
-    (should
-     (agent-shell-denote-capture--applicable-p
-      (current-buffer) '(:stop-reason "end_turn")))))
+    (should (string-match-p "id:' links" prompt))
+    (should (string-match-p "important actionable follow-up" prompt))))
 
 (ert-deftest denote-hywiki-create-and-replace-stay-in-the-selected-directory ()
   (let* ((root (make-temp-file "denote-hywiki-" t))

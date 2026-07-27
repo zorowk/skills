@@ -36,7 +36,6 @@ flowchart LR
     subgraph EMACS["运行中的 Emacs"]
         AS["agent-shell"]
         SOURCES["agent-shell-context-sources"]
-        EVENTS["agent-shell 公开事件<br/>input / write / tool / complete"]
         BUFFER["live buffer<br/>光标与未保存内容"]
         CODEAPI["project / Imenu / xref<br/>Eldoc / Eglot / Flymake"]
         ORG["Org / Denote / HyWiki<br/>Org exporter"]
@@ -49,12 +48,8 @@ flowchart LR
         GITCORE["skill-git.el<br/>路径约束与 message formatter"]
     end
 
-    subgraph ADAPTERS["agent-shell adapters"]
+    subgraph ADAPTERS["自动上下文 adapter"]
         CODECTX["agent-shell-code-context.el<br/>代码上下文 provider"]
-        GITUI["agent-shell-git-review.el<br/>候选路径与审阅菜单"]
-        GTDUI["agent-shell-gtd-capture.el<br/>Capture as GTD"]
-        DENOTEUI["agent-shell-denote-capture.el<br/>Capture as Denote"]
-        USAGEUI["agent-shell-skill-usage-review.el<br/>Review skill usage"]
     end
 
     subgraph SKILLS["Skills 与 compact facades"]
@@ -80,26 +75,13 @@ flowchart LR
     BRIDGE -.-> SOURCES
     SOURCES -.-> AS
 
-    AS --> EVENTS
-    EVENTS -->|"仅作为候选信号"| BRIDGE
-    BRIDGE -->|"turn-complete + 候选路径"| GITUI
-    GITUI -->|"查看真实 diff"| COMMIT
-    GITUI -.->|"插入限定路径的生成或提交请求"| AS
-    BRIDGE -->|"成功回合"| GTDUI
-    GTDUI -.->|"提取 1–3 个候选，不写入"| AS
-    GTDUI -->|"用户确认后 add-many"| GTD
-    BRIDGE -->|"成功回合"| DENOTEUI
-    DENOTEUI -.->|"笔记 + 可选任务候选，不写入"| AS
-    DENOTEUI -->|"确认后 capture"| SCRIBE
-    DENOTEUI -->|"Denote file: 写入 RESOURCES"| GTD
+    AGENT -->|"用户要求管理或捕获任务"| GTD
+    AGENT -->|"用户要求记录当前讨论"| SCRIBE
+    AGENT -->|"用户要求审阅或提交"| COMMIT
+    SCRIBE -->|"Denote file: 写入 RESOURCES"| GTD
     GTD -.->|"GTD id: 回写开放问题"| SCRIBE
-    BRIDGE -->|"成功回合 + tool calls"| USAGEUI
-    USAGEUI -.->|"只读审阅请求，不复制 telemetry"| AS
 
     AGENT -->|"按 SKILL.md 触发"| NAV
-    AGENT --> COMMIT
-    AGENT --> GTD
-    AGENT --> SCRIBE
     AGENT --> BLOG
     CONSTITUTION -.->|"高影响任务约束"| AGENT
 
@@ -113,13 +95,13 @@ flowchart LR
     BLOG --> GITCORE
 
     GTD --> ORG
-    SCRIBE --> ORG
+    SCRIBE -->|"确认后 capture"| ORG
     BLOG --> ORG
     COMMIT --> MAGIT
     GITCORE --> MAGIT
 
     RUNTIME -.->|"privacy-safe metrics"| USAGE
-    AGENT -->|"任务完成后按需评价"| USAGE
+    AGENT -->|"用户要求评价 skill 使用"| USAGE
 ```
 
 `agent-shell-bridge.el` 是唯一直接编排 `agent-shell-context-sources` 的组件。它把自己放在
@@ -127,30 +109,27 @@ flowchart LR
 按优先级组合适用内容，并隔离单个 provider 的错误。新增 skill 应注册 provider，不应自行
 重排 agent-shell 的来源列表。桥接 metrics 只记录耗时、字符数和状态，不保留上下文原文。
 
-桥接层还通过 agent-shell 公开的 `input-submitted`、`file-write`、`tool-call-update`、
-`turn-complete` 和 `clean-up` 事件维护每个 shell buffer 独立的回合状态。事件中的文件路径
-只作为候选范围和 UI 触发信号，不能证明整个 Git diff 属于本轮 Agent。
-
 代码上下文 adapter 仍由 `emacs-code-navigator` 负责：读取 live buffer、光标、未保存状态、
 project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。公共 bridge 不理解代码
 语义，也不会为了收集上下文启动 Flymake。
 
-Git adapter 在写文件的回合结束后提供当前 diff、提交信息请求和提交请求入口。它会按仓库
-拆分候选路径；真正审阅或提交时，`git-commit` 必须再次从 Git/Magit 获取状态和 diff，
-并传入明确的 `:paths`。不同仓库不会合并提交，agent-shell 事件不会替代 Git 事实，也不会
-触发自动提交。限定路径的 context 只返回这些路径的状态和内容；无关变更只报告数量，不
-暴露文件名。
+用户在 agent-shell 对话中要求审阅、生成提交信息或提交时，Agent 直接触发 `git-commit`，
+从 Git/Magit 重新获取状态和 diff，并在已知文件范围时传入明确的 `:paths`。不同仓库不会
+合并提交，也不会因为修改过文件而自动触发审阅或提交。限定路径的 context 只返回这些路径
+的状态和内容；无关变更只报告数量，不暴露文件名。
 
-GTD adapter 为成功回合提供英文 `Capture as GTD` action。点击后由同一个 Agent 从上一轮
-回答提取一至三个候选任务，先在对话中确认标题、优先级、标签、背景和资源链接；只有用户
-明确确认后，才通过 `add-many` 写入 Org。可查询的来源和项目放入 properties，简短背景与
-HTTP、文档、源码链接分别放入可折叠 drawer，不保存整段对话。
+用户在 agent-shell 对话中要求管理或捕获 GTD 时，Agent 直接触发
+`emacs-gtd-assistant`。从对话捕获时先提取一至三个候选任务，在对话中确认标题、优先级、
+标签、背景和资源链接；只有用户明确确认后，才通过 `add-many` 写入 Org。可查询的来源和
+项目放入 properties，简短背景与 HTTP、文档、源码链接分别放入可折叠 drawer，不保存
+整段对话。
 
-Denote adapter 提供英文 `Capture as Denote` action，先生成符合 critical template 的笔记
-提案和零至三个可选 GTD 后续任务。确认后先创建 Denote，再把该文件作为 `file:` resource
-写入每个 GTD，最后把返回的 GTD `id:` 链接写回 Denote 的 `Related GTD / 相关 GTD`
-二级小节。跨文件操作不伪装成原子事务；后续步骤失败时必须报告已完成部分并提供修复。
-该流程不会自动创建 HyWiki、commit 或 push。
+用户在 agent-shell 对话中要求记录当前讨论时，Agent 直接触发 `denote-scribe`，先生成
+符合 critical template 的笔记提案，并从提取的问题中提出零至三个真正有价值、可执行的
+GTD 后续任务。确认后先创建 Denote，再把该文件作为 `file:` resource 写入每个 GTD，
+最后把返回的 GTD `id:` 链接写回 Denote 的 `Related GTD / 相关 GTD` 二级小节。跨文件
+操作不伪装成原子事务；后续步骤失败时必须报告已完成部分并提供修复。该流程不会自动创建
+HyWiki、commit 或 push。
 
 提交信息中的 `validation` 仍是 AI 必须提供的内部证据，用于判断声明是否可靠；`git-commit`
 默认不把测试命令、通过数量等 validation 内容写入 commit body，而是在操作完成后向用户
@@ -177,12 +156,10 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 失败、重试和修复成本，与因缺少证据或跳过验证而推断的潜在返工风险。它不会在 GitHub
 Actions 中调用 AI，也不会持久化调用内容。
 
-Skill usage adapter 在成功且包含 tool call 的回合后提供英文 `Review skill usage` action。
-点击后只向同一个 agent-shell 会话发送短提示，由 Agent 使用对话中已经可见的调用和
-metrics 进行四维独立评价和恢复成本诊断；它不重新运行任务、不把 tool 输出复制进 Emacs，
-也不增加自动上下文。
-完成一次评价后默认抑制两轮，避免审阅动作递归评价自身。评价得到的具体工作或长期经验，
-仍由用户分别选择 `Capture as GTD` 或 `Capture as Denote`，不会自动写入。
+用户在 agent-shell 对话中要求审阅本轮 skill 使用时，Agent 直接触发
+`skill-usage-review`，使用对话中已经可见的调用和 metrics 进行四维独立评价和恢复成本
+诊断；它不重新运行任务、不把 tool 输出复制进 Emacs，也不增加自动上下文。评价得到的
+具体工作或长期经验仍由用户显式选择 GTD 或 Denote 捕获，不会自动写入。
 
 ## 主要工作流
 
@@ -229,9 +206,9 @@ push 流程。
 - `emacs-gtd-assistant`：Org mode 和已有的 GTD 文件及目标 heading；
 - `org-blog-exporter`：Org HTML exporter；发布流程还需要 Magit、Git 仓库和远端权限；
 - `git-commit`：Magit（用于从任意当前仓库收集提交证据）；
-- agent-shell 自动上下文和回合审阅：agent-shell 0.63.3 或更高版本，并支持
-  `agent-shell-context-sources`、`agent-shell-subscribe-to` 与取消订阅 API；可运行
-  `M-x skill-agent-shell-diagnose` 检查当前 session；
+- agent-shell 自动上下文：agent-shell 0.63.3 或更高版本，并支持
+  `agent-shell-context-sources`；可运行 `M-x skill-agent-shell-diagnose` 检查当前
+  session；
 - `skill-usage-review`：无额外运行时依赖；
 - `ai-constitution`：无额外运行时依赖。
 
@@ -280,26 +257,12 @@ emacs -Q --batch -l tests/run-tests.el emacs-gtd-assistant-tests.el
 `tests/routing-cases.el` 保存 skill 路由的正反案例，供人工评审或另行固定模型版本的评测
 使用。常规 ERT 只校验案例结构、skill 名称和边界完整性，不用关键词匹配冒充模型路由结果。
 
-在 Emacs 配置中启用公共代码上下文和 Git 回合审阅：
+在 Emacs 配置中启用公共代码上下文：
 
 ```elisp
 (load "/path/to/skills/emacs-code-navigator/scripts/agent-shell-code-context.el")
 (emacs-code-navigator-agent-shell-enable)
-
-(load "/path/to/skills/git-commit/scripts/agent-shell-git-review.el")
-(agent-shell-git-review-enable)
-
-(load "/path/to/skills/emacs-gtd-assistant/scripts/agent-shell-gtd-capture.el")
-(agent-shell-gtd-capture-enable)
-
-(load "/path/to/skills/denote-scribe/scripts/agent-shell-denote-capture.el")
-(agent-shell-denote-capture-enable)
-
-(load "/path/to/skills/skill-usage-review/scripts/agent-shell-skill-usage-review.el")
-(agent-shell-skill-usage-review-enable)
 ```
 
-回合发生文件写入后运行 `M-x agent-shell-git-review-menu`，可以查看候选文件的当前 Git
-diff、插入提交信息请求，或在确认后向 Agent 提交限定路径的提交请求。运行
-`M-x skill-agent-shell-turn-action-menu` 可统一选择 `Review Git changes` 或
-`Capture as GTD`、`Capture as Denote`、`Review skill usage`。
+Git Review、Denote、独立 GTD 捕获和 skill 使用审阅都不注册回合动作；用户在 agent-shell
+对话中表达相应意图后，由 Agent 依据 skill 元数据直接触发并执行。

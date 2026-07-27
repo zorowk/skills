@@ -2,14 +2,12 @@
 
 ;;; Commentary:
 
-;; Register one bounded automatic-context source and one public event
-;; subscription per agent-shell buffer.  Skill adapters retain their domain
-;; logic; this bridge only coordinates budgets, lifecycle, and advisory paths.
+;; Register one bounded automatic-context source.  Skill adapters retain their
+;; domain logic; this bridge only coordinates context providers and budgets.
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'map)
 (require 'seq)
 (require 'subr-x)
 
@@ -22,43 +20,17 @@
   :type 'positive-integer
   :group 'skill-agent-shell-bridge)
 
-(defcustom skill-agent-shell-notify-turn-actions t
-  "Whether to mention available actions after a turn changed files."
-  :type 'boolean
-  :group 'skill-agent-shell-bridge)
-
 (defconst skill-agent-shell-minimum-version "0.63.3"
   "Minimum agent-shell version validated with the shared bridge.")
 
 (defvar skill-agent-shell-context-providers nil
   "Registered automatic context provider plists.")
 
-(defvar skill-agent-shell-turn-actions nil
-  "Registered turn-complete action plists.")
-
 (defvar skill-agent-shell-last-context-metrics nil
   "Privacy-safe metrics for the latest aggregate context attempt.")
 
 (defvar agent-shell-context-sources)
-(defvar agent-shell-mode-hook)
 (defvar agent-shell--version)
-
-(defvar-local skill-agent-shell--subscription nil
-  "agent-shell event subscription token for the current shell buffer.")
-
-(defvar-local skill-agent-shell--turn-state nil
-  "Advisory state collected for the current agent turn.")
-
-(defvar-local skill-agent-shell--last-completed-turn nil
-  "Frozen advisory state for the latest completed agent turn.")
-
-(defvar-local skill-agent-shell--available-actions nil
-  "Applicable action entries for the latest completed turn.")
-
-(declare-function agent-shell-subscribe-to "agent-shell"
-                  (&key shell-buffer event on-event))
-(declare-function agent-shell-unsubscribe "agent-shell"
-                  (&key subscription))
 
 (defun skill-agent-shell-compatibility ()
   "Return agent-shell bridge compatibility diagnostics as a plist."
@@ -77,13 +49,7 @@
            nil
            (list
             (unless (boundp 'agent-shell-context-sources)
-              'agent-shell-context-sources)
-            (unless (boundp 'agent-shell-mode-hook)
-              'agent-shell-mode-hook)
-            (unless (fboundp 'agent-shell-subscribe-to)
-              'agent-shell-subscribe-to)
-            (unless (fboundp 'agent-shell-unsubscribe)
-              'agent-shell-unsubscribe)))))
+              'agent-shell-context-sources)))))
     (list :compatible (and version-ok (null missing))
           :version version
           :minimum-version skill-agent-shell-minimum-version
@@ -235,202 +201,25 @@ MAXIMUM-CHARACTERS is a provider-local cap inside the shared hard budget."
     (setq agent-shell-context-sources
           (append priority (list function) fallbacks))))
 
-(defun skill-agent-shell--path (path shell-buffer)
-  "Return normalized local PATH relative to SHELL-BUFFER defaults."
-  (when (and (stringp path) (not (string-empty-p path)))
-    (with-current-buffer shell-buffer
-      (let ((expanded (expand-file-name path default-directory)))
-        (unless (file-remote-p expanded) expanded)))))
-
-(defun skill-agent-shell--record-path (path shell-buffer source)
-  "Record advisory PATH from SOURCE for SHELL-BUFFER."
-  (when-let* ((normalized (skill-agent-shell--path path shell-buffer)))
-    (with-current-buffer shell-buffer
-      (let ((paths (plist-get skill-agent-shell--turn-state :paths)))
-        (unless (assoc-string normalized paths)
-          (setq skill-agent-shell--turn-state
-                (plist-put skill-agent-shell--turn-state :paths
-                           (append paths (list (cons normalized source))))))))))
-
-(defun skill-agent-shell--record-tool-call (data shell-buffer)
-  "Record structured diff paths from tool-call event DATA."
-  (let* ((tool-call (map-elt data :tool-call))
-         (diffs (map-elt tool-call :diffs)))
-    (dolist (diff diffs)
-      (skill-agent-shell--record-path
-       (map-elt diff :file) shell-buffer 'tool-call-diff))))
-
-(cl-defun skill-agent-shell-register-turn-action
-    (id &key function command label applicable-p (priority 0))
-  "Register turn-complete action ID.
-
-FUNCTION, when non-nil, observes completion and receives SHELL-BUFFER and the
-frozen turn state.  COMMAND receives the same arguments when selected from the
-shared action menu.  LABEL is the English menu label.  APPLICABLE-P gates both."
-  (unless (symbolp id)
-    (error "Turn action ID must be a symbol"))
-  (when (and function (not (functionp function)))
-    (error "Turn action FUNCTION must be callable"))
-  (unless (functionp command)
-    (error "Turn action COMMAND must be callable"))
-  (unless (and (stringp label) (not (string-empty-p label)))
-    (error "Turn action LABEL must be a non-empty string"))
-  (setq skill-agent-shell-turn-actions
-        (cons (list :id id :function function :command command :label label
-                    :applicable-p applicable-p :priority priority)
-              (seq-remove
-               (lambda (entry) (eq (plist-get entry :id) id))
-               skill-agent-shell-turn-actions)))
-  id)
-
-(defun skill-agent-shell-unregister-turn-action (id)
-  "Unregister turn-complete action ID."
-  (setq skill-agent-shell-turn-actions
-        (seq-remove (lambda (entry) (eq (plist-get entry :id) id))
-                    skill-agent-shell-turn-actions))
-  id)
-
-(defun skill-agent-shell--applicable-actions (shell-buffer state)
-  "Return applicable registered actions for SHELL-BUFFER and STATE."
-  (seq-filter
-   (lambda (action)
-     (condition-case nil
-         (or (not (plist-get action :applicable-p))
-             (funcall (plist-get action :applicable-p) shell-buffer state))
-       (error nil)))
-   (skill-agent-shell--sort skill-agent-shell-turn-actions)))
-
-(defun skill-agent-shell--run-turn-actions (shell-buffer state)
-  "Prepare and notify applicable actions for SHELL-BUFFER and frozen STATE."
-  (let ((actions (skill-agent-shell--applicable-actions shell-buffer state)))
-    (with-current-buffer shell-buffer
-      (setq skill-agent-shell--available-actions actions))
-    (dolist (action actions)
-    (condition-case err
-        (when (plist-get action :function)
-          (funcall (plist-get action :function) shell-buffer state))
-      (error
-       (message "agent-shell action %s failed: %s"
-                (plist-get action :id) (error-message-string err)))))
-    (when (and actions skill-agent-shell-notify-turn-actions)
-      (message "Turn actions available: M-x skill-agent-shell-turn-action-menu"))))
-
-;;;###autoload
-(defun skill-agent-shell-turn-action-menu (&optional shell-buffer)
-  "Select an English-labeled action for SHELL-BUFFER's completed turn."
-  (interactive)
-  (let* ((shell (or shell-buffer
-                    (and (derived-mode-p 'agent-shell-mode) (current-buffer))
-                    (seq-find
-                     (lambda (buffer)
-                       (with-current-buffer buffer
-                         skill-agent-shell--available-actions))
-                     (buffer-list)))))
-    (unless (buffer-live-p shell)
-      (user-error "No agent-shell turn actions are available"))
-    (with-current-buffer shell
-      (unless skill-agent-shell--available-actions
-        (user-error "No actions are available for the latest turn"))
-      (let* ((choices
-              (mapcar (lambda (entry)
-                        (cons (plist-get entry :label) entry))
-                      skill-agent-shell--available-actions))
-             (label (completing-read "Turn action: " choices nil t))
-             (action (cdr (assoc-string label choices))))
-        (funcall (plist-get action :command)
-                 shell skill-agent-shell--last-completed-turn)))))
-
-(defun skill-agent-shell--handle-event (shell-buffer event)
-  "Handle agent-shell EVENT for SHELL-BUFFER."
-  (when (buffer-live-p shell-buffer)
-    (let ((kind (map-elt event :event))
-          (data (map-elt event :data)))
-      (with-current-buffer shell-buffer
-        (pcase kind
-          ('input-submitted
-           (setq skill-agent-shell--turn-state
-                 (list :paths nil :write-seen nil
-                       :started-at (float-time))))
-          ('file-write
-           (setq skill-agent-shell--turn-state
-                 (plist-put skill-agent-shell--turn-state :write-seen t))
-           (skill-agent-shell--record-path
-            (map-elt data :path) shell-buffer 'file-write))
-          ('tool-call-update
-           (let ((id (map-elt data :tool-call-id)))
-             (when id
-               (setq skill-agent-shell--turn-state
-                     (plist-put
-                      skill-agent-shell--turn-state :tool-call-ids
-                      (delete-dups
-                       (append
-                        (plist-get skill-agent-shell--turn-state :tool-call-ids)
-                        (list id)))))))
-           (skill-agent-shell--record-tool-call data shell-buffer))
-          ('turn-complete
-           (let ((frozen
-                  (append
-                   (copy-tree skill-agent-shell--turn-state)
-                   (list :completed-at (float-time)
-                         :stop-reason (map-elt data :stop-reason)))))
-             (setq skill-agent-shell--last-completed-turn frozen)
-             (skill-agent-shell--run-turn-actions shell-buffer frozen)))
-          ('clean-up
-           (skill-agent-shell--unsubscribe)))))))
-
-(defun skill-agent-shell--subscribe ()
-  "Subscribe the current agent-shell buffer once."
-  (unless skill-agent-shell--subscription
-    (let ((shell-buffer (current-buffer)))
-      (setq skill-agent-shell--turn-state (list :paths nil :write-seen nil))
-      (setq skill-agent-shell--subscription
-            (agent-shell-subscribe-to
-             :shell-buffer shell-buffer
-             :on-event
-             (lambda (event)
-               (skill-agent-shell--handle-event shell-buffer event)))))))
-
-(defun skill-agent-shell--unsubscribe ()
-  "Unsubscribe the current shell buffer and clear bridge state."
-  (when skill-agent-shell--subscription
-    (agent-shell-unsubscribe :subscription skill-agent-shell--subscription)
-    (setq skill-agent-shell--subscription nil)))
-
-(defun skill-agent-shell-current-turn-paths (&optional shell-buffer)
-  "Return advisory absolute paths from SHELL-BUFFER's completed turn."
-  (with-current-buffer (or shell-buffer (current-buffer))
-    (mapcar #'car (plist-get skill-agent-shell--last-completed-turn :paths))))
-
 ;;;###autoload
 (defun skill-agent-shell-bridge-enable ()
-  "Enable shared context and lifecycle integration after agent-shell loads."
+  "Enable shared automatic context after agent-shell loads."
   (interactive)
   (if (featurep 'agent-shell)
       (progn
         (skill-agent-shell--assert-compatible)
-        (skill-agent-shell--install-context-source)
-        (add-hook 'agent-shell-mode-hook #'skill-agent-shell--subscribe)
-        (dolist (buffer (buffer-list))
-          (with-current-buffer buffer
-            (when (derived-mode-p 'agent-shell-mode)
-              (skill-agent-shell--subscribe)))))
+        (skill-agent-shell--install-context-source))
     (with-eval-after-load 'agent-shell
       (skill-agent-shell--assert-compatible)
-      (skill-agent-shell--install-context-source)
-      (add-hook 'agent-shell-mode-hook #'skill-agent-shell--subscribe))))
+      (skill-agent-shell--install-context-source))))
 
 ;;;###autoload
 (defun skill-agent-shell-bridge-disable ()
-  "Disable shared context and lifecycle integration."
+  "Disable shared automatic context."
   (interactive)
   (when (boundp 'agent-shell-context-sources)
     (setq agent-shell-context-sources
-          (remove #'skill-agent-shell-context agent-shell-context-sources)))
-  (remove-hook 'agent-shell-mode-hook #'skill-agent-shell--subscribe)
-  (dolist (buffer (buffer-list))
-    (with-current-buffer buffer
-      (when skill-agent-shell--subscription
-        (skill-agent-shell--unsubscribe)))))
+          (remove #'skill-agent-shell-context agent-shell-context-sources))))
 
 (provide 'agent-shell-bridge)
 
