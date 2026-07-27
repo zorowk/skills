@@ -7,8 +7,7 @@
 (skill-tests-load-many
  '(
    "common/scripts/skill-runtime.el"
-   "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
-   "emacs-gtd-assistant/scripts/agent-shell-gtd-capture.el"))
+   "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"))
 
 (defvar emacs-gtd-capture-task-limit)
 (defvar emacs-gtd-directory)
@@ -174,13 +173,6 @@
       '(:operation add-many :authorization explicit
         :tasks ((:title "One") (:title "Two"))))
      'needs-input 'invalid-request)))
-
-(ert-deftest gtd-capture-prompt-is-read-only ()
-  (let ((prompt (agent-shell-gtd-capture--prompt)))
-    (should (string-match-p "Do not write to gtd.org yet" prompt))
-    (should (string-match-p ":operation add-many" prompt))
-    (should (string-match-p ":authorization explicit" prompt))
-    (should (string-match-p ":context work" prompt))))
 
 (ert-deftest gtd-capture-rejects-executable-org-links ()
   (skill-contract-tests-assert-failure

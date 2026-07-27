@@ -8,9 +8,7 @@
  '(
    "common/scripts/skill-runtime.el"
    "common/scripts/skill-git.el"
-   "common/scripts/agent-shell-bridge.el"
-   "denote-scribe/scripts/denote-scribe.el"
-   "denote-scribe/scripts/agent-shell-denote-capture.el"))
+   "denote-scribe/scripts/denote-scribe.el"))
 
 (defvar denote-scribe-review-commit-marker)
 (defvar skill-git--body-label-regexp)
@@ -301,16 +299,6 @@
               denote-scribe-critical-headings))))
       (when-let* ((buffer (get-file-buffer note))) (kill-buffer buffer))
       (delete-directory root t))))
-
-(ert-deftest denote-capture-prompt-links-gtd-in-both-directions ()
-  (let ((prompt (agent-shell-denote-capture--prompt)))
-    (should (string-match-p "Do not create or modify any file yet" prompt))
-    (should (string-match-p ":operation capture" prompt))
-    (should (string-match-p ":operation add-many" prompt))
-    (should (string-match-p ":operation link-gtd" prompt))
-    (should (string-match-p "file:' resource link" prompt))
-    (should (string-match-p "id:' links" prompt))
-    (should (string-match-p "important actionable follow-up" prompt))))
 
 (ert-deftest denote-hywiki-create-and-replace-stay-in-the-selected-directory ()
   (let* ((root (make-temp-file "denote-hywiki-" t))
