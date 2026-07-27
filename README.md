@@ -43,7 +43,6 @@ flowchart LR
     end
 
     subgraph COMMON["common 共享层"]
-        BRIDGE["agent-shell-bridge.el<br/>provider、总预算、回合状态"]
         RUNTIME["skill-runtime.el<br/>schema、envelope、metrics"]
         GITCORE["skill-git.el<br/>路径约束与 message formatter"]
     end
@@ -66,13 +65,11 @@ flowchart LR
     AS <-->|"ACP 对话与工具调用"| AGENT
 
     AS -->|"发送前请求上下文"| SOURCES
-    SOURCES --> BRIDGE
-    BRIDGE -->|"按优先级和总预算调用"| CODECTX
+    SOURCES --> CODECTX
     CODECTX --> NAV
     NAV --> BUFFER
     NAV --> CODEAPI
-    CODECTX -.->|"bounded live context"| BRIDGE
-    BRIDGE -.-> SOURCES
+    CODECTX -.->|"bounded live context"| SOURCES
     SOURCES -.-> AS
 
     AGENT -->|"用户要求管理或捕获任务"| GTD
@@ -104,14 +101,10 @@ flowchart LR
     AGENT -->|"用户要求评价 skill 使用"| USAGE
 ```
 
-`agent-shell-bridge.el` 是唯一直接编排 `agent-shell-context-sources` 的组件。它把自己放在
-显式 `region`、`error` 之后，为所有已注册 provider 执行同一个默认 1,800 字符硬上限，
-按优先级组合适用内容，并隔离单个 provider 的错误。新增 skill 应注册 provider，不应自行
-重排 agent-shell 的来源列表。桥接 metrics 只记录耗时、字符数和状态，不保留上下文原文。
-
 代码上下文 adapter 仍由 `emacs-code-navigator` 负责：读取 live buffer、光标、未保存状态、
-project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。公共 bridge 不理解代码
-语义，也不会为了收集上下文启动 Flymake。
+project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。它直接接入
+`agent-shell-context-sources`，保持 `region`、`error` 的优先级，执行 1,800 字符上限，
+并且不会为了收集上下文启动 Flymake。
 
 用户在 agent-shell 对话中要求审阅、生成提交信息或提交时，Agent 直接触发 `git-commit`，
 从 Git/Magit 重新获取状态和 diff，并在已知文件范围时传入明确的 `:paths`。不同仓库不会
@@ -206,9 +199,7 @@ push 流程。
 - `emacs-gtd-assistant`：Org mode 和已有的 GTD 文件及目标 heading；
 - `org-blog-exporter`：Org HTML exporter；发布流程还需要 Magit、Git 仓库和远端权限；
 - `git-commit`：Magit（用于从任意当前仓库收集提交证据）；
-- agent-shell 自动上下文：agent-shell 0.63.3 或更高版本，并支持
-  `agent-shell-context-sources`；可运行 `M-x skill-agent-shell-diagnose` 检查当前
-  session；
+- agent-shell 自动上下文：agent-shell 支持 `agent-shell-context-sources`；
 - `skill-usage-review`：无额外运行时依赖；
 - `ai-constitution`：无额外运行时依赖。
 

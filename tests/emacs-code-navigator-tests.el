@@ -7,7 +7,6 @@
 (skill-tests-load-many
  '(
    "common/scripts/skill-runtime.el"
-   "common/scripts/agent-shell-bridge.el"
    "emacs-code-navigator/scripts/emacs-code-navigator.el"
    "emacs-code-navigator/scripts/agent-shell-code-context.el"))
 
@@ -24,7 +23,6 @@
 (defvar emacs-code-navigator-semantic-buffer-policy)
 (defvar emacs-code-navigator-semantic-buffer-limit)
 (defvar emacs-code-navigator--semantic-buffers)
-(defvar skill-agent-shell-context-providers)
 (defvar agent-shell-context-sources)
 
 (ert-deftest navigator-schema-validates-numeric-boolean-and-exclusive-fields ()
@@ -326,22 +324,13 @@
 (ert-deftest navigator-agent-shell-enable-preserves-explicit-priority ()
   (let ((agent-shell-context-sources
          '(files region error emacs-code-navigator-agent-shell-context
-                 line custom-source))
-        (skill-agent-shell-context-providers nil))
-    (cl-letf (((symbol-function 'featurep)
-               (lambda (feature)
-                 (eq feature 'agent-shell)))
-              ((symbol-function 'skill-agent-shell--assert-compatible)
-               #'ignore))
-      (emacs-code-navigator-agent-shell-enable)
-      (emacs-code-navigator-agent-shell-enable))
+                 line custom-source)))
+    (emacs-code-navigator-agent-shell-enable)
+    (emacs-code-navigator-agent-shell-enable)
     (should
      (equal agent-shell-context-sources
-            '(region error skill-agent-shell-context
-                     files line custom-source)))
-    (should (= (length skill-agent-shell-context-providers) 1))
-    (should (eq (plist-get (car skill-agent-shell-context-providers) :id)
-                'emacs-code-navigator))))
+            '(region error emacs-code-navigator-agent-shell-context
+                     files line custom-source)))))
 
 (ert-deftest navigator-semantic-context-uses-the-exact-column-and-limit ()
   (with-temp-buffer

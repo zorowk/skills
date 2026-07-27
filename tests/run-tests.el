@@ -7,7 +7,6 @@
 
 (defconst skill-test-suite-files
   '("skill-runtime-tests.el"
-    "agent-shell-bridge-tests.el"
     "emacs-code-navigator-tests.el"
     "emacs-gtd-assistant-tests.el"
     "denote-scribe-tests.el"

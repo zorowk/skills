@@ -2,19 +2,13 @@
 
 ;;; Commentary:
 
-;; Provide compact position, semantic, and existing diagnostic context through
-;; the shared agent-shell bridge without displaying or modifying source buffers.
+;; Provide compact position, semantic, and existing diagnostic context without
+;; displaying or modifying source buffers.
 
 ;;; Code:
 
 (require 'seq)
 (require 'subr-x)
-
-(unless (featurep 'agent-shell-bridge)
-  (load (expand-file-name "../../common/scripts/agent-shell-bridge.el"
-                          (file-name-directory
-                           (or load-file-name buffer-file-name)))
-        nil nil t))
 
 (unless (featurep 'emacs-code-navigator)
   (load (expand-file-name "emacs-code-navigator.el"
@@ -29,13 +23,6 @@
 (declare-function flymake-diagnostic-text "flymake" (diagnostic))
 (declare-function flymake-diagnostic-type "flymake" (diagnostic))
 (declare-function flymake-diagnostics "flymake" (&optional beg end))
-(declare-function skill-agent-shell-register-context-provider
-                  "../../common/scripts/agent-shell-bridge"
-                  (id &rest arguments))
-(declare-function skill-agent-shell-unregister-context-provider
-                  "../../common/scripts/agent-shell-bridge" (id))
-(declare-function skill-agent-shell-bridge-enable
-                  "../../common/scripts/agent-shell-bridge" ())
 (defvar agent-shell-context-sources)
 
 (defgroup emacs-code-navigator-agent-shell nil
@@ -279,32 +266,34 @@ collection error, allowing agent-shell to try its next configured source."
                      (round (* 1000 (- (float-time) started)))))
          nil)))))
 
+(defun emacs-code-navigator-agent-shell--install ()
+  "Install the context source after explicit region and error sources."
+  (let* ((source #'emacs-code-navigator-agent-shell-context)
+         (sources (remove source agent-shell-context-sources))
+         (explicit
+          (seq-filter (lambda (item) (memq item '(region error))) sources))
+         (fallbacks
+          (seq-remove (lambda (item) (memq item '(region error))) sources)))
+    (setq agent-shell-context-sources
+          (append explicit (list source) fallbacks))))
+
 ;;;###autoload
 (defun emacs-code-navigator-agent-shell-enable ()
-  "Register bounded code context with the shared agent-shell bridge."
+  "Enable bounded code context in agent-shell."
   (interactive)
-  (when (boundp 'agent-shell-context-sources)
-    (setq agent-shell-context-sources
-          (remove #'emacs-code-navigator-agent-shell-context
-                  agent-shell-context-sources)))
-  (skill-agent-shell-register-context-provider
-   'emacs-code-navigator
-   :function #'emacs-code-navigator-agent-shell-context
-   :applicable-p #'emacs-code-navigator-agent-shell-applicable-p
-   :priority 50
-   :maximum-characters
-   emacs-code-navigator-agent-shell-context-maximum-characters)
-  (skill-agent-shell-bridge-enable))
+  (if (boundp 'agent-shell-context-sources)
+      (emacs-code-navigator-agent-shell--install)
+    (with-eval-after-load 'agent-shell
+      (emacs-code-navigator-agent-shell--install))))
 
 ;;;###autoload
 (defun emacs-code-navigator-agent-shell-disable ()
-  "Unregister bounded code context from the shared agent-shell bridge."
+  "Disable bounded code context in agent-shell."
   (interactive)
   (when (boundp 'agent-shell-context-sources)
     (setq agent-shell-context-sources
           (remove #'emacs-code-navigator-agent-shell-context
-                  agent-shell-context-sources)))
-  (skill-agent-shell-unregister-context-provider 'emacs-code-navigator))
+                  agent-shell-context-sources))))
 
 (provide 'agent-shell-code-context)
 
