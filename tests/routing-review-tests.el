@@ -38,7 +38,10 @@
   (dolist (id '(navigator-unsaved-buffer
                 navigator-general-xref-explanation
                 gtd-possible-next-step
-                gtd-confirmed-capture))
+                gtd-confirmed-capture
+                git-explicit-review
+                git-no-passive-review
+                denote-no-persistence-request))
     (should
      (seq-find
       (lambda (case) (eq (plist-get case :id) id))

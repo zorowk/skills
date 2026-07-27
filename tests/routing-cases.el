@@ -48,6 +48,21 @@
      :expected (git-commit)
      :excluded ()
      :reason "The request explicitly asks for a Git commit over a bounded file set.")
+    (:id git-explicit-review
+     :request "检查一下这轮 Git 修改有没有问题"
+     :expected (git-commit)
+     :excluded ()
+     :reason "The user explicitly asks for evidence-backed review of Git changes.")
+    (:id git-no-passive-review
+     :request "代码已经修改完成"
+     :expected ()
+     :excluded (git-commit)
+     :reason "A completed edit alone is not a request for Git review or commit.")
+    (:id denote-no-persistence-request
+     :request "总结一下我们刚才讨论的内容"
+     :expected ()
+     :excluded (denote-scribe)
+     :reason "A conversational summary is not a request to persist a Denote note.")
     (:id usage-review-after-tools
      :request "评价本轮 skills 使用情况"
      :expected (skill-usage-review)

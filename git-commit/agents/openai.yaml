@@ -1,4 +1,4 @@
 interface:
   display_name: "Git Commit"
   short_description: "Inspect, scope, and commit evidence-backed changes"
-  default_prompt: "Use $git-commit to inspect tracked and untracked changes, then create a concise evidence-backed commit limited to the explicitly authorized paths."
+  default_prompt: "Use $git-commit to inspect or review actual Git changes, prepare a message when requested, and commit only explicitly authorized paths."

@@ -1,9 +1,9 @@
 ---
 name: denote-scribe
 description: >-
-  Save confirmed technical or research conversations as Denote reasoning notes, optionally link
-  follow-up Org GTD tasks in both directions, review notes, promote mature HyWiki knowledge, and
-  commit generated files through Emacs.
+  Capture confirmed technical or research conversations as Denote reasoning notes, optionally link
+  follow-up Org GTD tasks, review existing notes, and promote mature HyWiki knowledge. Use when the
+  user explicitly asks to record, review, or promote persistent Denote knowledge.
 ---
 
 # Denote Scribe

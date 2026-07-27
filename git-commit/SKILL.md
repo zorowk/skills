@@ -1,8 +1,9 @@
 ---
 name: git-commit
 description: >-
-  Generate evidence-backed Git commit messages and perform explicitly requested commit or amend
-  operations; collect actual changes, adapt detail to risk, and preserve natural 100-column output.
+  Inspect or review Git changes, generate evidence-backed commit messages, and perform explicitly
+  requested commit or amend operations. Use when the user asks to review changes, prepare a commit
+  message, commit, or amend.
 ---
 
 # Git Commit
