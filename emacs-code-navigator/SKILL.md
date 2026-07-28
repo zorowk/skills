@@ -14,6 +14,8 @@ running Emacs session.
 Call documented script entry points directly. If a facade schema is unclear, use
 its `describe` operation. Do not inspect script implementations unless the
 documented entry point fails.
+Quote symbolic request values, for example:
+`(emacs-code-navigator-query (list :operation (quote describe) :target (quote locate)))`.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",

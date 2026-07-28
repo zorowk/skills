@@ -136,6 +136,10 @@
     (should (assq :kind (plist-get navigator :choices)))
     (should (assq :risk (plist-get commit :choices)))
     (should (assq :validation (plist-get commit :types)))
+    (should
+     (= (plist-get (plist-get commit :output-constraints)
+                   :maximum-line-width)
+        100))
     (should (assq :language (plist-get template :choices)))
     (should (plist-get publish :verification))))
 

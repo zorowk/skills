@@ -14,6 +14,8 @@ the structured evidence used by `format`, `commit`, or `amend`.
 Call documented script entry points directly. If a facade schema is unclear, use
 its `describe` operation. Do not inspect script implementations unless the
 documented entry point fails.
+Quote symbolic request values, for example:
+`(ai-git-commit-run (list :operation (quote describe) :target (quote commit)))`.
 Context includes bounded diffs for untracked files, with truncation metadata;
 do not infer their contents from `git status` alone.
 When the intended file set is known, pass the same exact `:paths` to `context`.
@@ -34,6 +36,7 @@ Always supply `:validation` as internal evidence, but do not repeat test command
 pass counts, or routine validation results in the commit body. Report them to the
 user after the operation. Include validation in Git history only when the user
 explicitly enables that formatter option.
+Keep every generated commit-message line within the facade's 100-column limit.
 
 For `commit` or `amend`, pass `:paths` with the exact repository files authorized
 for the operation. The facade validates and stages those paths, commits only that

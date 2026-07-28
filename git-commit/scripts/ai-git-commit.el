@@ -101,6 +101,7 @@ user after the operation.  It is omitted from Git history by default."
                     (:reason non-empty-string) (:validation non-empty-string)
                     (:boundary non-empty-string) (:scope non-empty-string))
             :choices ((:risk low medium high) (:detail auto compact full))
+            :output-constraints (:maximum-line-width 100)
             :effects nil)
     (commit
      :summary "Commit through headless Magit, then verify the complete HEAD message."
@@ -114,6 +115,7 @@ user after the operation.  It is omitted from Git history by default."
              (:directory non-empty-string) (:paths non-empty-string-list))
      :choices ((:risk low medium high) (:detail auto compact full)
                (:authorization explicit))
+     :output-constraints (:maximum-line-width 100)
      :effects (:committed))
     (amend
      :summary "Amend through headless Magit, then verify the complete HEAD message."
@@ -127,6 +129,7 @@ user after the operation.  It is omitted from Git history by default."
              (:directory non-empty-string) (:paths non-empty-string-list))
      :choices ((:risk low medium high) (:detail auto compact full)
                (:authorization explicit))
+     :output-constraints (:maximum-line-width 100)
      :effects (:committed :amended))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target) :effects nil))
