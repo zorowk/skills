@@ -136,7 +136,8 @@
                    "Plain context within the task's 100-character content budget."))
           (:links
            (custom emacs-gtd--validate-links
-                   :description "Safe HTTP, file, or id resource links."))
+                   :description
+                   "Safe HTTP, file, id, or Denote identifier resource links."))
           (:properties
            (custom emacs-gtd--validate-properties
                    :description "Safe non-reserved Org properties.")))
@@ -160,6 +161,14 @@
     (set-context :summary "Replace one resolved task's bounded context note."
                  :required-one-of (:id :query) :required (:context-notes)
                  :effects (:mutated))
+    (set-links :summary "Replace one resolved task's structured resource links."
+               :required-one-of (:id :query) :required (:links)
+               :types
+               ((:links
+                 (custom emacs-gtd--validate-links
+                         :description
+                         "Safe HTTP, file, id, or Denote identifier resource links.")))
+               :effects (:mutated))
     (add-note :summary "Append one timestamped multiline note to a task LOGBOOK."
               :required-one-of (:id :query) :required (:note)
               :effects (:mutated))
@@ -343,6 +352,28 @@ When INACTIVE is non-nil, return an inactive timestamp like
        (cons key value)))
    properties))
 
+(defun emacs-gtd--denote-identifier-from-file-target (target)
+  "Return Denote identifier when file TARGET points inside `denote-directory'."
+  (when (and (string-prefix-p "file:" target)
+             (boundp 'denote-directory)
+             (stringp denote-directory))
+    (let* ((path (org-link-unescape (substring target (length "file:"))))
+           (absolute-path (expand-file-name path))
+           (notes-directory
+            (file-name-as-directory (expand-file-name denote-directory)))
+           (basename (file-name-nondirectory absolute-path)))
+      (when (and (file-in-directory-p absolute-path notes-directory)
+                 (string-match
+                  "\\`\\([0-9]\\{8\\}T[0-9]\\{6\\}\\)--" basename))
+        (match-string 1 basename)))))
+
+(defun emacs-gtd--normalize-link-target (target)
+  "Return portable form of structured resource link TARGET."
+  (if-let ((identifier
+            (emacs-gtd--denote-identifier-from-file-target target)))
+      (concat "denote:" identifier)
+    target))
+
 (defun emacs-gtd--validate-links (links)
   "Return validated structured resource LINKS."
   (unless (or (null links) (listp links))
@@ -353,10 +384,15 @@ When INACTIVE is non-nil, return an inactive timestamp like
    (lambda (link)
      (unless (listp link)
        (error "Each link must be a plist"))
-     (let ((target (emacs-gtd--single-line
-                    (plist-get link :target) "LINK target"))
+     (let ((target
+            (emacs-gtd--normalize-link-target
+             (emacs-gtd--single-line
+              (plist-get link :target) "LINK target")))
            (description (plist-get link :description)))
-       (unless (string-match-p "\\`\\(?:https?\\|file\\|id\\):" target)
+       (unless
+           (or (string-match-p "\\`\\(?:https?\\|file\\|id\\):" target)
+               (string-match-p
+                "\\`denote:[0-9]\\{8\\}T[0-9]\\{6\\}\\'" target))
          (error "Unsupported or unsafe Org link target: %S" target))
        (when description
          (emacs-gtd--single-line description "LINK description"))
@@ -403,6 +439,24 @@ When INACTIVE is non-nil, return an inactive timestamp like
   (when (and content (not (string-empty-p content)))
     (insert (format ":%s:\n%s\n:END:\n"
                     name (emacs-gtd--drawer-content content)))))
+
+(defun emacs-gtd--replace-drawer-content (name content)
+  "Replace current task drawer NAME with safe CONTENT."
+  (save-restriction
+    (org-narrow-to-subtree)
+    (goto-char (point-min))
+    (unless (re-search-forward
+             (format "^:%s:[ \t]*$" (regexp-quote name)) nil t)
+      (error "Task has no %s drawer" name))
+    (forward-line 1)
+    (let ((content-start (point)))
+      (unless (re-search-forward "^:END:[ \t]*$" nil t)
+        (error "Task %s drawer has no :END:" name))
+      (beginning-of-line)
+      (delete-region content-start (point))
+      (goto-char content-start)
+      (when (and content (not (string-empty-p content)))
+        (insert (emacs-gtd--drawer-content content) "\n")))))
 
 (defun emacs-gtd--resource-text (links)
   "Return an Org list for structured LINKS."
@@ -675,19 +729,19 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
   (let ((title (org-get-heading t t t t)))
     (emacs-gtd--validate-task-spec
      (list :title title :context-notes context-notes)))
-  (save-restriction
-    (org-narrow-to-subtree)
-    (goto-char (point-min))
-    (unless (re-search-forward "^:CONTEXT:[ \t]*$" nil t)
-      (error "Task has no CONTEXT drawer"))
-    (forward-line 1)
-    (let ((content-start (point)))
-      (unless (re-search-forward "^:END:[ \t]*$" nil t)
-        (error "Task CONTEXT drawer has no :END:"))
-      (beginning-of-line)
-      (delete-region content-start (point))
-      (goto-char content-start)
-      (insert (emacs-gtd--drawer-content context-notes) "\n")))
+  (emacs-gtd--replace-drawer-content "CONTEXT" context-notes)
+  (emacs-gtd--find-id id)
+  (let ((item (emacs-gtd--item-at-point t)))
+    (emacs-gtd--save)
+    item))
+
+;;;###autoload
+(defun emacs-gtd-set-links (id links)
+  "Replace task ID's resource LINKS and return the updated item."
+  (setq links (emacs-gtd--validate-links links))
+  (emacs-gtd--find-id id)
+  (emacs-gtd--replace-drawer-content
+   "RESOURCES" (emacs-gtd--resource-text links))
   (emacs-gtd--find-id id)
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)
@@ -835,7 +889,7 @@ Use :operation `describe' to request operation schemas only when needed."
          (skill-runtime-result
           operation (mapcar #'emacs-gtd--compact-item items)
           (length items) nil nil (list :mutated t))))
-      ((or 'set-state 'reschedule 'set-deadline 'set-context 'add-note
+      ((or 'set-state 'reschedule 'set-deadline 'set-context 'set-links 'add-note
            'delete 'archive)
        (when (memq operation '(delete archive))
          (skill-runtime-require-authorization request operation))
@@ -851,6 +905,8 @@ Use :operation `describe' to request operation schemas only when needed."
                   ('set-context
                    (emacs-gtd-set-context
                     id (plist-get request :context-notes)))
+                  ('set-links
+                   (emacs-gtd-set-links id (plist-get request :links)))
                   ('add-note
                    (emacs-gtd-add-note id (plist-get request :note)))
                   ('delete (emacs-gtd-delete id))
