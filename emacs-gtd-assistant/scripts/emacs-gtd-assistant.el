@@ -64,7 +64,17 @@
   :group 'emacs-gtd-assistant)
 
 (defcustom emacs-gtd-context-maximum-characters 1600
-  "Maximum characters stored in one task CONTEXT drawer."
+  "Maximum characters stored in one task's single-line CONTEXT drawer."
+  :type 'positive-integer
+  :group 'emacs-gtd-assistant)
+
+(defcustom emacs-gtd-log-note-maximum-characters 1600
+  "Maximum characters stored in one multiline LOGBOOK note."
+  :type 'positive-integer
+  :group 'emacs-gtd-assistant)
+
+(defcustom emacs-gtd-generated-content-maximum-characters 100
+  "Maximum total characters in one generated task's title, body, and context."
   :type 'positive-integer
   :group 'emacs-gtd-assistant)
 
@@ -98,7 +108,8 @@
          :types
          ((:title
            (custom emacs-gtd--validate-single-line-contract
-                   :description "A non-empty single-line task title."))
+                   :description
+                   "A non-empty title within the task's 100-character content budget."))
           (:headline
            (custom emacs-gtd--validate-single-line-contract
                    :description "A non-empty single-line Org heading."))
@@ -115,10 +126,14 @@
           (:tags
            (custom emacs-gtd--validate-tags
                    :description "Org tags without whitespace or colons."))
-          (:body string)
+          (:body
+           (string
+            :description
+            "Optional body within the task's 100-character content budget."))
           (:context-notes
            (custom emacs-gtd--validate-context-notes
-                   :description "Bounded plain context text."))
+                   :description
+                   "Plain context within the task's 100-character content budget."))
           (:links
            (custom emacs-gtd--validate-links
                    :description "Safe HTTP, file, or id resource links."))
@@ -142,6 +157,12 @@
     (set-deadline :summary "Resolve an ID or unique query, then update its deadline."
                   :required-one-of (:id :query) :required (:timestamp)
                   :effects (:mutated))
+    (set-context :summary "Replace one resolved task's bounded context note."
+                 :required-one-of (:id :query) :required (:context-notes)
+                 :effects (:mutated))
+    (add-note :summary "Append one timestamped multiline note to a task LOGBOOK."
+              :required-one-of (:id :query) :required (:note)
+              :effects (:mutated))
     (delete :summary "Delete one resolved task after explicit authorization."
             :required-one-of (:id :query) :required (:authorization)
             :choices ((:authorization explicit))
@@ -245,6 +266,10 @@ When INACTIVE is non-nil, return an inactive timestamp like
   "Normalize optional timestamp TEXT for insertion into Org."
   (and text (emacs-gtd-normalize-timestamp text)))
 
+(defun emacs-gtd--default-scheduled-timestamp ()
+  "Return today's active date timestamp for a newly created GTD task."
+  (format-time-string "<%Y-%m-%d %a>"))
+
 (defun emacs-gtd--drawer-content (text)
   "Return TEXT safe for insertion inside an Org drawer."
   (replace-regexp-in-string
@@ -268,13 +293,24 @@ When INACTIVE is non-nil, return an inactive timestamp like
   tags)
 
 (defun emacs-gtd--validate-context-notes (text)
-  "Return validated bounded context-note TEXT."
+  "Return validated bounded single-line context-note TEXT."
   (when text
-    (unless (stringp text)
-      (error "CONTEXT-NOTES must be a string"))
+    (emacs-gtd--single-line text "CONTEXT-NOTES")
     (when (> (length text) emacs-gtd-context-maximum-characters)
       (error "CONTEXT-NOTES exceeds the configured limit of %d"
              emacs-gtd-context-maximum-characters)))
+  text)
+
+(defun emacs-gtd--validate-log-note (text)
+  "Return validated non-empty multiline log-note TEXT."
+  (unless (stringp text)
+    (error "NOTE must be a string"))
+  (setq text (string-trim text))
+  (when (string-empty-p text)
+    (error "NOTE must not be empty"))
+  (when (> (length text) emacs-gtd-log-note-maximum-characters)
+    (error "NOTE exceeds the configured limit of %d"
+           emacs-gtd-log-note-maximum-characters))
   text)
 
 (defun emacs-gtd--validate-task-list (tasks)
@@ -344,6 +380,16 @@ When INACTIVE is non-nil, return an inactive timestamp like
     (emacs-gtd--validate-context-notes context-notes)
     (when (and body (not (stringp body)))
       (error "BODY must be a string"))
+    (let ((content-characters
+           (+ (length title)
+              (length (or context-notes ""))
+              (length (or body "")))))
+      (when (> content-characters
+               emacs-gtd-generated-content-maximum-characters)
+        (error
+         "Generated task content is %d characters; limit is %d across TITLE, CONTEXT-NOTES, and BODY"
+         content-characters
+         emacs-gtd-generated-content-maximum-characters)))
     (plist-put copy :title title)
     (plist-put copy :properties
                (emacs-gtd--validate-properties
@@ -510,8 +556,10 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
                     "HEADLINE"))
          (todo (or (plist-get plist :todo) "TODO"))
          (priority (plist-get plist :priority))
-         (scheduled (emacs-gtd--optional-timestamp
-                     (plist-get plist :scheduled)))
+         (scheduled
+          (or (emacs-gtd--optional-timestamp
+               (plist-get plist :scheduled))
+              (emacs-gtd--default-scheduled-timestamp)))
          (deadline (emacs-gtd--optional-timestamp
                     (plist-get plist :deadline)))
          (body (plist-get plist :body))
@@ -616,6 +664,48 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
   "Set DEADLINE TIMESTAMP for GTD item ID and return the updated item."
   (emacs-gtd--find-id id)
   (org-deadline nil (emacs-gtd-normalize-timestamp timestamp))
+  (let ((item (emacs-gtd--item-at-point t)))
+    (emacs-gtd--save)
+    item))
+
+;;;###autoload
+(defun emacs-gtd-set-context (id context-notes)
+  "Replace task ID's CONTEXT drawer and return the updated item."
+  (emacs-gtd--find-id id)
+  (let ((title (org-get-heading t t t t)))
+    (emacs-gtd--validate-task-spec
+     (list :title title :context-notes context-notes)))
+  (save-restriction
+    (org-narrow-to-subtree)
+    (goto-char (point-min))
+    (unless (re-search-forward "^:CONTEXT:[ \t]*$" nil t)
+      (error "Task has no CONTEXT drawer"))
+    (forward-line 1)
+    (let ((content-start (point)))
+      (unless (re-search-forward "^:END:[ \t]*$" nil t)
+        (error "Task CONTEXT drawer has no :END:"))
+      (beginning-of-line)
+      (delete-region content-start (point))
+      (goto-char content-start)
+      (insert (emacs-gtd--drawer-content context-notes) "\n")))
+  (emacs-gtd--find-id id)
+  (let ((item (emacs-gtd--item-at-point t)))
+    (emacs-gtd--save)
+    item))
+
+;;;###autoload
+(defun emacs-gtd-add-note (id note)
+  "Append multiline NOTE to task ID's LOGBOOK and return the updated item."
+  (setq note (emacs-gtd--validate-log-note note))
+  (emacs-gtd--find-id id)
+  (goto-char (org-log-beginning t))
+  (insert "- Note taken on "
+          (format-time-string "[%Y-%m-%d %a %H:%M]")
+          " \\\\\n  "
+          (replace-regexp-in-string
+           "\n" "\n  " (emacs-gtd--drawer-content note))
+          "\n")
+  (emacs-gtd--find-id id)
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)
     item))
@@ -745,7 +835,8 @@ Use :operation `describe' to request operation schemas only when needed."
          (skill-runtime-result
           operation (mapcar #'emacs-gtd--compact-item items)
           (length items) nil nil (list :mutated t))))
-      ((or 'set-state 'reschedule 'set-deadline 'delete 'archive)
+      ((or 'set-state 'reschedule 'set-deadline 'set-context 'add-note
+           'delete 'archive)
        (when (memq operation '(delete archive))
          (skill-runtime-require-authorization request operation))
        (let ((id (emacs-gtd--request-id request)))
@@ -757,6 +848,11 @@ Use :operation `describe' to request operation schemas only when needed."
                    (emacs-gtd-reschedule id (plist-get request :timestamp)))
                   ('set-deadline
                    (emacs-gtd-set-deadline id (plist-get request :timestamp)))
+                  ('set-context
+                   (emacs-gtd-set-context
+                    id (plist-get request :context-notes)))
+                  ('add-note
+                   (emacs-gtd-add-note id (plist-get request :note)))
                   ('delete (emacs-gtd-delete id))
                   ('archive (emacs-gtd-archive id)))))
            (skill-runtime-result
