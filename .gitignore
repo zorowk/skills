@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+
+# Emacs
+*~
+\#*\#
+.\#*
+*.elc
+*.eln
+
+# Editor and IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs, caches, and temporary files
+*.log
+.cache/
+tmp/
+temp/
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+!.env.template
