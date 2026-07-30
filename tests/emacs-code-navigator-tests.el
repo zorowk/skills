@@ -332,6 +332,22 @@
             '(region error emacs-code-navigator-agent-shell-context
                      files line custom-source)))))
 
+(ert-deftest navigator-agent-shell-restore-preserves-point-before-context ()
+  (with-temp-buffer
+    (insert "Codex>\n\n[live-emacs-code-context]")
+    (goto-char (point-min))
+    (search-forward "Codex>")
+    (let ((original-point (point))
+          (history "restored history\n"))
+      (emacs-code-navigator-agent-shell--preserve-point-around-restore
+       (lambda (_state)
+         (goto-char (point-min))
+         (insert history)
+         (goto-char (point-max)))
+       nil)
+      (should (= (point) (+ original-point (length history))))
+      (should (looking-at-p "\n\n\\[live-emacs-code-context\\]")))))
+
 (ert-deftest navigator-semantic-context-uses-the-exact-column-and-limit ()
   (with-temp-buffer
     (emacs-lisp-mode)

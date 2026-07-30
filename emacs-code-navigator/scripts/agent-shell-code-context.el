@@ -23,6 +23,7 @@
 (declare-function flymake-diagnostic-text "flymake" (diagnostic))
 (declare-function flymake-diagnostic-type "flymake" (diagnostic))
 (declare-function flymake-diagnostics "flymake" (&optional beg end))
+(declare-function agent-shell--render-pending-restore "agent-shell" (state))
 (defvar agent-shell-context-sources)
 
 (defgroup emacs-code-navigator-agent-shell nil
@@ -79,6 +80,33 @@ definitions and synchronous Eldoc from the current live buffer."
 
 (defvar emacs-code-navigator-agent-shell-last-context-metrics nil
   "Metrics for the latest automatic context attempt, without context text.")
+
+(defun emacs-code-navigator-agent-shell--preserve-point-around-restore
+    (restore &rest arguments)
+  "Call RESTORE with STATE while preserving the current shell input point."
+  (save-excursion
+    (apply restore arguments)))
+
+(defun emacs-code-navigator-agent-shell--install-restore-point-fix ()
+  "Preserve input point when Agent Shell replays restored history."
+  (when (and (fboundp 'agent-shell--render-pending-restore)
+             (not (advice-member-p
+                   #'emacs-code-navigator-agent-shell--preserve-point-around-restore
+                   #'agent-shell--render-pending-restore)))
+    (advice-add
+     #'agent-shell--render-pending-restore
+     :around
+     #'emacs-code-navigator-agent-shell--preserve-point-around-restore)))
+
+(defun emacs-code-navigator-agent-shell--remove-restore-point-fix ()
+  "Remove the Agent Shell restore-point compatibility advice."
+  (when (and (fboundp 'agent-shell--render-pending-restore)
+             (advice-member-p
+              #'emacs-code-navigator-agent-shell--preserve-point-around-restore
+              #'agent-shell--render-pending-restore))
+    (advice-remove
+     #'agent-shell--render-pending-restore
+     #'emacs-code-navigator-agent-shell--preserve-point-around-restore)))
 
 (defun emacs-code-navigator-agent-shell-applicable-p ()
   "Return non-nil when the current buffer can provide live code context."
@@ -282,9 +310,12 @@ collection error, allowing agent-shell to try its next configured source."
   "Enable bounded code context in agent-shell."
   (interactive)
   (if (boundp 'agent-shell-context-sources)
-      (emacs-code-navigator-agent-shell--install)
+      (progn
+        (emacs-code-navigator-agent-shell--install)
+        (emacs-code-navigator-agent-shell--install-restore-point-fix))
     (with-eval-after-load 'agent-shell
-      (emacs-code-navigator-agent-shell--install))))
+      (emacs-code-navigator-agent-shell--install)
+      (emacs-code-navigator-agent-shell--install-restore-point-fix))))
 
 ;;;###autoload
 (defun emacs-code-navigator-agent-shell-disable ()
@@ -293,7 +324,8 @@ collection error, allowing agent-shell to try its next configured source."
   (when (boundp 'agent-shell-context-sources)
     (setq agent-shell-context-sources
           (remove #'emacs-code-navigator-agent-shell-context
-                  agent-shell-context-sources))))
+                  agent-shell-context-sources)))
+  (emacs-code-navigator-agent-shell--remove-restore-point-fix))
 
 (provide 'agent-shell-code-context)
 
