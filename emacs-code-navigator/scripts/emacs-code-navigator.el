@@ -634,8 +634,9 @@ source details."
             (emacs-code-navigator--symbol-kind-p symbol target-kind)))
          (symbols
           (if documentation
-              (delete-dups
-               (mapcar #'car (apropos-documentation pattern t)))
+              (let ((temp-buffer-show-function #'ignore))
+                (delete-dups
+                 (mapcar #'car (apropos-documentation pattern t))))
             (apropos-internal pattern predicate))))
     (mapcar
      (lambda (symbol)

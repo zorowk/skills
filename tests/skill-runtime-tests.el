@@ -72,6 +72,53 @@
                      "private"
                      (prin1-to-string metrics)))))))
 
+(ert-deftest skill-runtime-keeps-temporary-output-buffers-in-background ()
+  (let ((buffer-name "*skill-runtime-background-test*")
+        (show-count 0)
+        (temp-buffer-show-function
+         (lambda (&rest _) (setq show-count (1+ show-count)))))
+    (unwind-protect
+        (progn
+          (skill-runtime-measure
+           '(:operation sample)
+           (lambda ()
+             (with-output-to-temp-buffer buffer-name
+               (princ "background output"))
+             (skill-runtime-result 'sample '(:ok t))))
+          (should (zerop show-count))
+          (should-not (get-buffer-window buffer-name t)))
+      (when-let* ((buffer (get-buffer buffer-name)))
+        (kill-buffer buffer)))))
+
+(ert-deftest skill-runtime-keeps-display-buffer-calls-in-background ()
+  (save-window-excursion
+    (delete-other-windows)
+    (let ((buffer (get-buffer-create "*skill-runtime-display-test*")))
+      (unwind-protect
+          (progn
+            (skill-runtime-measure
+             '(:operation sample)
+             (lambda ()
+               (display-buffer buffer)
+               (skill-runtime-result 'sample '(:ok t))))
+            (should-not (get-buffer-window buffer t))
+            (should (= (length (window-list)) 1)))
+        (kill-buffer buffer)))))
+
+(ert-deftest skill-runtime-does-not-restore-user-window-choices ()
+  (save-window-excursion
+    (delete-other-windows)
+    (let ((user-buffer (get-buffer-create "*skill-runtime-user-choice-test*")))
+      (unwind-protect
+          (progn
+            (skill-runtime-measure
+             '(:operation sample)
+             (lambda ()
+               (switch-to-buffer user-buffer)
+               (skill-runtime-result 'sample '(:ok t))))
+            (should (eq (window-buffer (selected-window)) user-buffer)))
+        (kill-buffer user-buffer)))))
+
 (ert-deftest skill-runtime-measures-structured-public-failures ()
   (let* ((result
           (skill-runtime-measure

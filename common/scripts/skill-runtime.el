@@ -156,13 +156,19 @@ effects, and completed checks."
 
 Measure serialized character counts rather than claiming exact model-token
 usage.  Convert typed public conditions into failure envelopes while preserving
-unexpected Lisp errors.  Avoid retaining request or result content."
+unexpected Lisp errors.  Keep skill-created working buffers in the background
+without restoring or otherwise overriding user window choices, and avoid
+retaining request or result content."
   (let ((started (float-time)))
     (let* ((result
-            (condition-case error-data
-                (funcall function)
-              (skill-runtime-public-error
-               (skill-runtime--public-error-result request error-data))))
+            (let ((display-buffer-overriding-action
+                   '((display-buffer-no-window)
+                     (allow-no-window . t)))
+                  (temp-buffer-show-function #'ignore))
+              (condition-case error-data
+                  (funcall function)
+                (skill-runtime-public-error
+                 (skill-runtime--public-error-result request error-data)))))
            (elapsed-ms (max 0 (round (* 1000 (- (float-time) started)))))
            (data (plist-get result :data))
            (page (plist-get result :page))
