@@ -17,6 +17,16 @@ mutate? := commit? AND exact authorized paths are known AND one truthful commit 
 done?   := committed paths equal authorized paths AND HEAD message matches
 ```
 
+## Semantic predicates
+
+```text
+truthful-commit? := one message accurately describes every included change
+                    AND no change needs a materially different rationale
+```
+
+A feature and its focused tests can form one truthful commit. An unrelated
+documentation cleanup bundled with that feature cannot.
+
 Every request is one self-loading expression:
 
 ```elisp

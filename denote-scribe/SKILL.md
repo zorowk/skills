@@ -19,6 +19,16 @@ promote? := reusable knowledge AND clear scope AND traceable evidence
 done?    := requested effects are present AND completion verification passes
 ```
 
+## Semantic predicates
+
+```text
+reusable? := useful beyond the current incident
+             AND likely to answer more than one future question
+```
+
+A general explanation supported by several investigations is reusable. A
+one-off command that only repairs the current machine state is not.
+
 Every request is one self-loading expression:
 
 ```elisp

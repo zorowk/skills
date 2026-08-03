@@ -17,6 +17,17 @@ mutate? := explicit confirmation AND unambiguous task target
 done?   := requested task state is observable through the facade
 ```
 
+## Semantic predicates
+
+```text
+actionable? := begins with a concrete action
+               AND has an identifiable completion state
+```
+
+"Compare the two backends and record the result" is actionable. "Eglot may be
+interesting" is not. Actionability permits a proposal, never an unconfirmed
+mutation.
+
 Every request is one self-loading expression:
 
 ```elisp
