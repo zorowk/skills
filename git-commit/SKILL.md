@@ -27,7 +27,7 @@ truthful-commit? := one message accurately describes every included change
 A feature and its focused tests can form one truthful commit. An unrelated
 documentation cleanup bundled with that feature cannot.
 
-Every request is one self-loading expression:
+Invoke the facade with one self-loading expression:
 
 ```elisp
 (progn
@@ -35,9 +35,8 @@ Every request is one self-loading expression:
   (ai-git-commit-run REQUEST))
 ```
 
-Replace `<skill-dir>` with this skill's directory and uppercase names with real
-Elisp values. `REQUEST` is a plist beginning with `:operation`. Query exact
-parameters before an unfamiliar operation:
+Replace `<skill-dir>` and uppercase placeholders with real Elisp values.
+`REQUEST` is a plist beginning with `:operation`. Describe an unknown operation:
 
 ```elisp
 (ai-git-commit-run
@@ -61,21 +60,19 @@ effects, then retry only the safe remainder.
 `stop` means no further facade calls for the blocked goal in this turn. If safe
 recovery is unclear, report observed effects and the remaining goal, then stop.
 
-Then derive the fields required by `commit` or `amend` from that result. Use only
-fields returned by `describe`. Do not inspect the script unless the entry point
-fails.
+Derive `commit` or `amend` fields from that result. When `describe` is used, send
+only fields declared by the returned schema. Inspect the script only if the entry
+point fails.
 Context includes bounded diffs for untracked files, with truncation metadata;
 do not infer their contents from `git status` alone.
 When the intended file set is known, pass the same exact `:paths` to `context`.
 It keeps global status visibility while excluding unrelated diff contents and
 untracked-file reads.
 
-Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
-first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
-"--eval"]`, so the user can allow or reject server-socket access. Never interpret
-a sandbox `Operation not permitted` or socket-access denial as evidence that the
-Emacs server is down. Report it unavailable only when the escalated attempt also
-fails.
+Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
+first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
+permission denial as a permission failure; report the server unavailable only if
+the escalated call fails.
 
 Use this contract:
 

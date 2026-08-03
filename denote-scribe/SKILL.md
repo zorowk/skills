@@ -29,7 +29,7 @@ reusable? := useful beyond the current incident
 A general explanation supported by several investigations is reusable. A
 one-off command that only repairs the current machine state is not.
 
-Every request is one self-loading expression:
+Invoke the facade with one self-loading expression:
 
 ```elisp
 (progn
@@ -37,9 +37,8 @@ Every request is one self-loading expression:
   (denote-scribe-run REQUEST))
 ```
 
-Replace `<skill-dir>` with this skill's directory and uppercase names with real
-Elisp values. `REQUEST` is a plist beginning with `:operation`. Query exact
-parameters before an unfamiliar operation:
+Replace `<skill-dir>` and uppercase placeholders with real Elisp values.
+`REQUEST` is a plist beginning with `:operation`. Describe an unknown operation:
 
 ```elisp
 (denote-scribe-run
@@ -64,16 +63,14 @@ effects, then retry only the safe remainder.
 `stop` means no further facade calls for the blocked goal in this turn. If safe
 recovery is unclear, report observed effects and the remaining goal, then stop.
 
-Use only fields returned by `describe`. Do not inspect the script unless the entry
-point fails. Read `references/hywiki-denote-interface.md` only for integration
-details.
+When `describe` is used, send only fields declared by the returned schema. Inspect
+the script only if the entry point fails. Read
+`references/hywiki-denote-interface.md` only for integration details.
 
-Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
-first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
-"--eval"]`, so the user can allow or reject server-socket access. Never interpret
-a sandbox `Operation not permitted` or socket-access denial as evidence that the
-Emacs server is down. Report it unavailable only when the escalated attempt also
-fails.
+Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
+first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
+permission denial as a permission failure; report the server unavailable only if
+the escalated call fails.
 
 Match the critical template to the conversation language and use a concrete title.
 Separate evidence from inference, include counter-evidence and uncertainty, and
