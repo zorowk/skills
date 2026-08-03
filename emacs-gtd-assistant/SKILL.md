@@ -48,7 +48,19 @@ Confirmed conversation capture:
 
 ```elisp
 (emacs-gtd-execute
- (list :operation (quote add-many) :tasks TASKS
+ (list :operation (quote add-many)
+       :tasks
+       (list
+        (list :title "Compare Eglot and lsp-mode completion"
+              :context (quote personal) :priority "B"
+              :tags (list "emacs" "research")
+              :scheduled "<2026-08-04 Tue>"
+              :context-notes "Record latency and completion-quality findings."
+              :links
+              (list
+               (list :target "https://www.gnu.org/software/emacs/manual/html_node/eglot/"
+                     :description "Eglot manual"))
+              :properties (list (cons "SOURCE" "agent-shell"))))
        :authorization (quote explicit)))
 ```
 

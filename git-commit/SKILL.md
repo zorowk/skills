@@ -50,6 +50,29 @@ Collect bounded evidence first:
  (list :operation (quote context) :directory DIRECTORY :paths PATHS))
 ```
 
+Create a scoped conventional commit with `:type` and `:scope` as separate
+fields:
+
+```elisp
+(ai-git-commit-run
+ (list :operation (quote commit)
+       :type "fix" :scope "theme"
+       :summary "defer unavailable system themes"
+       :context "Early startup can run before ef-themes is installed."
+       :changes
+       (list "Check theme availability before loading it."
+             "Cover installed and missing theme paths.")
+       :reason "Allow startup to continue while packages are reinstalled."
+       :validation "ERT suite passed."
+       :boundary "Only early-init.el and its focused tests."
+       :authorization (quote explicit) :risk (quote low)
+       :directory "/path/to/repository"
+       :paths (list "early-init.el" "test/init-functions-tests.el")))
+```
+
+Use only the conventional category in `:type`, such as `"fix"`; never embed
+the scope there as `"fix(theme)"`.
+
 ## Execution and recovery
 
 Call documented operations directly. Use `describe` only when the schema is

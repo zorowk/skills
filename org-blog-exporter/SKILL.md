@@ -37,9 +37,18 @@ Explicit publish:
 
 ```elisp
 (org-blog-exporter-run
- (list :operation (quote publish) :files FILES
+ (list :operation (quote publish)
+       :files (list "/home/alice/notes/emacs-startup.org")
+       :title "publish Emacs startup note"
+       :notes-dir "/home/alice/notes/"
+       :repository-dir "/home/alice/site/"
+       :setupfile "/home/alice/notes/setupfile.org"
        :authorization (quote explicit)))
 ```
+
+Use existing public Org files below `:notes-dir`.  `publish` exports them,
+commits generated files in `:repository-dir`, and pushes the configured
+upstream.
 
 ## Execution and recovery
 

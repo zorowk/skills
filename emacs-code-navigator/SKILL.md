@@ -41,6 +41,14 @@ Typical project lookup:
        :source (quote live)))
 ```
 
+Exact symbol lookup uses `:name`, not `:query`:
+
+```elisp
+(emacs-code-navigator-query
+ (list :operation (quote symbol) :name "zoro-apply-system-theme"
+       :file "/path/to/early-init.el" :source (quote live) :full t))
+```
+
 ## Execution and recovery
 
 Call documented operations directly. Use `describe` only when the schema is

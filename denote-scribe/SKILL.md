@@ -49,9 +49,15 @@ Confirmed conversation capture:
 
 ```elisp
 (denote-scribe-run
- (list :operation (quote capture) :title TITLE :body-file BODY_FILE
+ (list :operation (quote capture)
+       :title "Why early theme loading must tolerate missing packages"
+       :body-file "/tmp/denote-capture-body.org"
+       :keywords (list "emacs" "startup" "themes")
        :authorization (quote explicit)))
 ```
+
+Create `:body-file` first from the `critical` template and keep it readable
+until capture completes.  Pass `:keywords` as a list of strings.
 
 ## Execution and recovery
 
