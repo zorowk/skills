@@ -379,7 +379,7 @@ When INACTIVE is non-nil, return an inactive timestamp like
 
 (defun emacs-gtd--normalize-link-target (target)
   "Return portable form of structured resource link TARGET."
-  (if-let ((identifier
+  (if-let* ((identifier
             (emacs-gtd--denote-identifier-from-file-target target)))
       (concat "denote:" identifier)
     target))
