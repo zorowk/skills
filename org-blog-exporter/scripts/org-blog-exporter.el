@@ -132,8 +132,10 @@ instead."
   '((preflight :summary "Validate configured notes, output, and setup files."
                :optional (:notes-dir :output-dir :setupfile))
     (export :summary "Export public Org notes and verify every source-to-output artifact."
+            :required (:authorization)
             :optional (:files :notes-dir :output-dir :setupfile
                               :offset :limit :full)
+            :choices ((:authorization explicit))
             :effects (:exported-count)
             :verification
             (:artifact
@@ -1214,6 +1216,10 @@ CAUSES may provide the bounded error page exposed by a compact response."
 Use :operation `describe' to request operation schemas only when needed."
   (skill-runtime-validate-request org-blog-exporter--schemas request)
   (let* ((operation (plist-get request :operation))
+         (_authorization
+          (when (plist-get (alist-get operation org-blog-exporter--schemas)
+                           :effects)
+            (skill-runtime-require-authorization request operation)))
          (result
           (pcase operation
            ('preflight
@@ -1231,7 +1237,6 @@ Use :operation `describe' to request operation schemas only when needed."
               (plist-get request :setupfile)
               (plist-get request :notes-dir)))
             ('publish
-             (skill-runtime-require-authorization request "Publish")
              (append
               (list :scope (if (plist-get request :files) 'files 'all))
               (org-blog-exporter-publish

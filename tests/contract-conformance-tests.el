@@ -220,6 +220,21 @@
           (should (= (length effects)
                      (length (delete-dups (copy-sequence effects))))))))))
 
+(ert-deftest effectful-facade-operations-require-explicit-authorization ()
+  (dolist (facade skill-contract-test-facades)
+    (let ((operations
+           (plist-get
+            (plist-get
+             (skill-contract-test-call facade '(:operation describe))
+             :data)
+            :operations)))
+      (dolist (operation operations)
+        (let ((schema (skill-contract-test-schema facade operation)))
+          (when (plist-get schema :effects)
+            (should (memq :authorization (plist-get schema :required)))
+            (should (equal (assq :authorization (plist-get schema :choices))
+                           '(:authorization explicit)))))))))
+
 (ert-deftest preflight-operations-return-standard-envelopes ()
   (let* ((root (make-temp-file "skill-preflight-" t))
          (notes (expand-file-name "notes" root))

@@ -205,6 +205,11 @@ retaining request or result content."
 COUNT defaults to zero for nil DATA and one otherwise.
 STATUS defaults to `ok'.  Include PAGE, EFFECTS, ERROR, and VERIFICATION when
 non-nil."
+  (when (eq status 'partial)
+    (unless effects
+      (error "Partial result must expose observed effects"))
+    (unless verification
+      (error "Partial result must expose completion verification")))
   (let ((result
          (list :protocol-version skill-runtime-envelope-version
                :status (or status 'ok)

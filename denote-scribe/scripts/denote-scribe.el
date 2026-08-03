@@ -144,8 +144,9 @@
               :required (:kind :language)
               :choices ((:kind critical hywiki) (:language en zh)))
     (create :summary "Create one Denote note from a completed body file."
-            :required (:title :body-file)
+            :required (:title :body-file :authorization)
             :optional (:keywords :notes-dir :signature :date :git-dir)
+            :choices ((:authorization explicit))
             :effects (:created))
     (capture
      :summary "Create one confirmed conversation note with explicit authorization."
@@ -173,9 +174,9 @@
                :required (:file) :optional (:section-maximum))
     (list :summary "Return a filtered page of Denote notes."
           :optional (:start :end :notes-dir :keywords :offset :limit))
-    (hywiki :summary "Create a HyWiki page; replacement requires authorization."
-            :required (:page-name :body-file)
-            :optional (:replace :authorization :hywiki-dir)
+    (hywiki :summary "Create or replace one explicitly authorized HyWiki page."
+            :required (:page-name :body-file :authorization)
+            :optional (:replace :hywiki-dir)
             :choices ((:authorization explicit))
             :effects (:mutated))
     (commit
@@ -1003,6 +1004,8 @@ plain HyWikiWord without a section suffix."
 Use :operation `describe' to request operation schemas only when needed."
   (skill-runtime-validate-request denote-scribe--schemas request)
   (let ((operation (plist-get request :operation)))
+    (when (plist-get (alist-get operation denote-scribe--schemas) :effects)
+      (skill-runtime-require-authorization request operation))
     (pcase operation
       ('preflight
        (let ((data
@@ -1037,7 +1040,6 @@ Use :operation `describe' to request operation schemas only when needed."
          (skill-runtime-result operation created 1 nil nil
                                (list :created t))))
       ('capture
-       (skill-runtime-require-authorization request "Denote capture")
        (let ((created
               (denote-scribe-create-with-review-context
                (plist-get request :title)
@@ -1050,7 +1052,6 @@ Use :operation `describe' to request operation schemas only when needed."
          (skill-runtime-result operation created 1 nil nil
                                (list :created t))))
       ('link-gtd
-       (skill-runtime-require-authorization request "GTD backlinks")
        (skill-runtime-result
         operation
         (denote-scribe-link-gtd
@@ -1099,8 +1100,6 @@ Use :operation `describe' to request operation schemas only when needed."
           operation (plist-get page :items) (length files) 'ok
           (plist-get page :page))))
       ('hywiki
-       (when (plist-get request :replace)
-         (skill-runtime-require-authorization request "HyWiki replacement"))
        (skill-runtime-result
         operation
         (denote-scribe-hywiki-create
@@ -1110,7 +1109,6 @@ Use :operation `describe' to request operation schemas only when needed."
          (plist-get request :hywiki-dir))
         1 nil nil (list :mutated t)))
       ('commit
-       (skill-runtime-require-authorization request "Commit")
        (let ((committed
               (denote-scribe-git-commit
                (plist-get request :title)

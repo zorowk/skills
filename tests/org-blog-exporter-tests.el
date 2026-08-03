@@ -31,7 +31,8 @@
                  (org-blog-exporter-run
                   (list :operation 'export :files (list source)
                         :notes-dir notes :output-dir output
-                        :setupfile setupfile :full t))))
+                        :setupfile setupfile :full t
+                        :authorization 'explicit))))
             (let* ((verification (plist-get result :verification))
                    (artifact (plist-get verification :artifact))
                    (mapping (car (plist-get artifact :source-output-map))))
@@ -126,8 +127,8 @@
     (cl-letf (((symbol-function 'org-blog-exporter-export)
                (lambda (&rest _) partial)))
       (dolist (request
-               '((:operation export)
-                 (:operation export :full t)))
+               '((:operation export :authorization explicit)
+                 (:operation export :full t :authorization explicit)))
         (let* ((result (org-blog-exporter-run request))
                (error-data (plist-get result :error)))
           (skill-contract-tests-assert-failure

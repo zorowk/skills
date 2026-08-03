@@ -166,7 +166,8 @@
               (and partial
                    '(:data (:completed ("one"))
                      :count 1
-                     :effects (:mutated-count 1))))
+                     :effects (:mutated-count 1)
+                     :verification (:workflow (:remaining-count 1)))))
              (result
               (skill-runtime-measure
                '(:operation sample)
@@ -185,8 +186,18 @@
                              '(:completed ("one"))))
               (should (= (plist-get result :count) 1))
               (should (equal (plist-get result :effects)
-                             '(:mutated-count 1))))
+                             '(:mutated-count 1)))
+              (should (equal (plist-get result :verification)
+                             '(:workflow (:remaining-count 1)))))
           (should-not (plist-get result :effects)))))))
+
+(ert-deftest skill-runtime-rejects-unobservable-partial-results ()
+  (should-error
+   (skill-runtime-result 'sample '(:completed nil) 0 'partial))
+  (should-error
+   (skill-runtime-result
+    'sample '(:completed ("one")) 1 'partial nil
+    '(:mutated-count 1))))
 
 (ert-deftest skill-runtime-preserves-unexpected-lisp-errors ()
   (should-error

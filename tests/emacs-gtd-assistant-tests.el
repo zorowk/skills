@@ -29,7 +29,7 @@
                  (added
                   (emacs-gtd-execute
                    '(:operation add :title "Temporary task"
-                     :headline "Personal")))
+                     :headline "Personal" :authorization explicit)))
                  (id (plist-get (plist-get added :data) :id))
                  (listed
                   (emacs-gtd-execute
@@ -66,15 +66,16 @@
           (with-temp-file org-id-locations-file (insert "()\n"))
           (let* ((missing-id
                   (emacs-gtd-execute
-                   '(:operation set-state :id "missing-id" :state "DONE")))
+                   '(:operation set-state :id "missing-id" :state "DONE"
+                     :authorization explicit)))
                  (missing-title
                   (emacs-gtd-execute
                    '(:operation set-state :query "Absent task"
-                     :state "DONE")))
+                     :state "DONE" :authorization explicit)))
                  (ambiguous
                   (emacs-gtd-execute
                    '(:operation set-state :query "Duplicate task"
-                     :state "DONE"))))
+                     :state "DONE" :authorization explicit))))
             (skill-contract-tests-assert-failure
              missing-id 'needs-input 'not-found)
             (should

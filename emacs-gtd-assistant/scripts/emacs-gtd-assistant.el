@@ -90,10 +90,10 @@
     (resolve :summary "Resolve a title query and expose ambiguity without guessing."
              :required (:query) :optional (:include-done))
     (add :summary "Add one task through Org and return its compact identity."
-         :required (:title)
+         :required (:title :authorization)
          :optional (:headline :context :scheduled :deadline :priority :tags
                               :body :context-notes :links :properties)
-         :choices ((:context personal work))
+         :choices ((:context personal work) (:authorization explicit))
          :effects (:mutated))
     (add-many
      :summary "Atomically add confirmed structured tasks from a conversation."
@@ -150,27 +150,37 @@
      :choices ((:authorization explicit))
      :effects (:mutated))
     (set-state :summary "Resolve an ID or unique query, then update its state."
-               :required-one-of (:id :query) :required (:state)
+               :required-one-of (:id :query) :required (:state :authorization)
+               :choices ((:authorization explicit))
                :effects (:mutated))
     (reschedule :summary "Resolve an ID or unique query, then update scheduling."
-                :required-one-of (:id :query) :required (:timestamp)
+                :required-one-of (:id :query)
+                :required (:timestamp :authorization)
+                :choices ((:authorization explicit))
                 :effects (:mutated))
     (set-deadline :summary "Resolve an ID or unique query, then update its deadline."
-                  :required-one-of (:id :query) :required (:timestamp)
+                  :required-one-of (:id :query)
+                  :required (:timestamp :authorization)
+                  :choices ((:authorization explicit))
                   :effects (:mutated))
     (set-context :summary "Replace one resolved task's bounded context note."
-                 :required-one-of (:id :query) :required (:context-notes)
+                 :required-one-of (:id :query)
+                 :required (:context-notes :authorization)
+                 :choices ((:authorization explicit))
                  :effects (:mutated))
     (set-links :summary "Replace one resolved task's structured resource links."
-               :required-one-of (:id :query) :required (:links)
+               :required-one-of (:id :query)
+               :required (:links :authorization)
                :types
                ((:links
                  (custom emacs-gtd--validate-links
                          :description
                          "Safe HTTP, file, id, or Denote identifier resource links.")))
+               :choices ((:authorization explicit))
                :effects (:mutated))
     (add-note :summary "Append one timestamped multiline note to a task LOGBOOK."
-              :required-one-of (:id :query) :required (:note)
+              :required-one-of (:id :query) :required (:note :authorization)
+              :choices ((:authorization explicit))
               :effects (:mutated))
     (delete :summary "Delete one resolved task after explicit authorization."
             :required-one-of (:id :query) :required (:authorization)
@@ -856,6 +866,8 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
 Use :operation `describe' to request operation schemas only when needed."
   (skill-runtime-validate-request emacs-gtd--schemas request)
   (let ((operation (plist-get request :operation)))
+    (when (plist-get (alist-get operation emacs-gtd--schemas) :effects)
+      (skill-runtime-require-authorization request operation))
     (pcase operation
       ('preflight
        (let ((data (emacs-gtd-preflight)))
@@ -884,15 +896,12 @@ Use :operation `describe' to request operation schemas only when needed."
           (or (plist-get request :task) request)))
         1 nil nil (list :mutated t)))
       ('add-many
-       (skill-runtime-require-authorization request operation)
        (let ((items (emacs-gtd-add-many (plist-get request :tasks))))
          (skill-runtime-result
           operation (mapcar #'emacs-gtd--compact-item items)
           (length items) nil nil (list :mutated t))))
       ((or 'set-state 'reschedule 'set-deadline 'set-context 'set-links 'add-note
            'delete 'archive)
-       (when (memq operation '(delete archive))
-         (skill-runtime-require-authorization request operation))
        (let ((id (emacs-gtd--request-id request)))
          (let ((value
                 (pcase operation

@@ -330,7 +330,8 @@
             (let ((created
                    (denote-scribe-run
                     (list :operation 'hywiki :page-name "TestConcept"
-                          :body-file body :hywiki-dir hywiki))))
+                          :body-file body :hywiki-dir hywiki
+                          :authorization 'explicit))))
               (should (eq (plist-get (plist-get created :data) :status)
                           'created)))
             (skill-contract-tests-assert-failure

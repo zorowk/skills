@@ -12,7 +12,8 @@ description: >-
 ```text
 export?  := explicit export or publish request
 publish? := explicit publish request AND explicit authorization
-mutate?  := unambiguous sources AND requested operation permits its effects
+mutate?  := explicit authorization AND unambiguous sources
+            AND requested operation permits its effects
 done?    := requested outputs and repository effects pass verification
 ```
 
