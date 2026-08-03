@@ -10,6 +10,15 @@ description: >-
 
 Treat Denote as reasoning history and HyWiki as stable knowledge.
 
+## Decision summary
+
+```text
+run?     := explicit record, review, or promotion request
+mutate?  := explicit authorization AND unambiguous target
+promote? := reusable knowledge AND clear scope AND traceable evidence
+done?    := requested effects are present AND completion verification passes
+```
+
 Every request is one self-loading expression:
 
 ```elisp

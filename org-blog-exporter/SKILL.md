@@ -7,6 +7,15 @@ description: >-
 
 # Org Blog Exporter
 
+## Decision summary
+
+```text
+export?  := explicit export or publish request
+publish? := explicit publish request AND explicit authorization
+mutate?  := unambiguous sources AND requested operation permits its effects
+done?    := requested outputs and repository effects pass verification
+```
+
 Every request is one self-loading expression:
 
 ```elisp

@@ -8,6 +8,15 @@ description: >-
 
 # Git Commit
 
+## Decision summary
+
+```text
+review? := explicit review request
+commit? := explicit commit or amend request
+mutate? := commit? AND exact authorized paths are known AND one truthful commit fits
+done?   := committed paths equal authorized paths AND HEAD message matches
+```
+
 Every request is one self-loading expression:
 
 ```elisp

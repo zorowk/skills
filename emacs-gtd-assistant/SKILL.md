@@ -8,6 +8,15 @@ description: >
 
 # Emacs GTD Assistant
 
+## Decision summary
+
+```text
+run?    := explicit persistent-task request
+propose := actionable follow-up is inferred but not confirmed
+mutate? := explicit confirmation AND unambiguous task target
+done?   := requested task state is observable through the facade
+```
+
 Every request is one self-loading expression:
 
 ```elisp

@@ -8,6 +8,14 @@ description: >-
 
 # Emacs Code Navigator
 
+## Decision summary
+
+```text
+run?  := the answer depends on live Emacs or project-navigation evidence
+live? := unsaved state OR cursor context OR session-backed capability
+done? := requested evidence is returned with its source and limitations
+```
+
 Every request is one self-loading expression:
 
 ```elisp
