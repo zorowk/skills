@@ -53,19 +53,13 @@ Collect bounded evidence first:
 
 ## Execution and recovery
 
-```text
-known documented operation       -> call directly
-schema unknown                   -> describe, then call
-first invalid-request            -> describe, revise, retry once
-second invalid-request           -> report rejected fields; stop
-status=partial                    -> inspect effects and verification;
-                                     preserve completed effects;
-                                     retry only the safe remainder
-```
+Call documented operations directly. Use `describe` only when the schema is
+unknown or after the first `invalid-request`; revise and retry once. A second
+invalid request stops the goal. On `partial`, preserve returned evidence and
+effects, then retry only the safe remainder.
 
-Treat `stop` as no further facade calls for the blocked goal in this turn,
-especially no effectful calls. If safe partial recovery is unclear, enumerate
-observed effects and the remaining goal, then stop.
+`stop` means no further facade calls for the blocked goal in this turn. If safe
+recovery is unclear, report observed effects and the remaining goal, then stop.
 
 Then derive the fields required by `commit` or `amend` from that result. Use only
 fields returned by `describe`. Do not inspect the script unless the entry point

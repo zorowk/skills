@@ -43,18 +43,13 @@ Typical project lookup:
 
 ## Execution and recovery
 
-```text
-known documented operation       -> call directly
-schema unknown                   -> describe, then call
-first invalid-request            -> describe, revise, retry once
-second invalid-request           -> report rejected fields; stop
-status=partial                    -> preserve returned evidence;
-                                     retry only the safe missing query
-```
+Call documented operations directly. Use `describe` only when the schema is
+unknown or after the first `invalid-request`; revise and retry once. A second
+invalid request stops the goal. On `partial`, preserve returned evidence, then
+retry only the safe missing query.
 
-Treat `stop` as no further facade calls for the blocked goal in this turn. If
-safe partial recovery is unclear, report returned evidence and the remaining
-query, then stop.
+`stop` means no further facade calls for the blocked goal in this turn. If safe
+recovery is unclear, report returned evidence and the remaining query, then stop.
 
 Use only fields returned by `describe`. Do not inspect the script unless the entry
 point fails.
