@@ -8,6 +8,9 @@
 (defconst skill-runtime-envelope-version 2
   "Version of the public skill result envelope.")
 
+(defconst skill-runtime-schema-version 1
+  "Version of operation schemas returned by `skill-runtime-describe'.")
+
 (defconst skill-runtime-metrics-version 1
   "Schema version for metrics returned by `skill-runtime-measure'.")
 
@@ -602,8 +605,10 @@ SCHEMAS is an alist whose entries are (OPERATION . PLIST)."
            :field-path '(:target)
            :expected (mapcar #'car schemas)
            :actual target))
-        (list :operation target :schema schema))
-    (list :operations (mapcar #'car schemas)
+        (list :schema-version skill-runtime-schema-version
+              :operation target :schema schema))
+    (list :schema-version skill-runtime-schema-version
+          :operations (mapcar #'car schemas)
           :catalog (mapcar #'skill-runtime--catalog-entry schemas))))
 
 (provide 'skill-runtime)

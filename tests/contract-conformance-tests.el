@@ -148,7 +148,9 @@
     (let ((result
            (skill-contract-test-call facade '(:operation describe))))
       (skill-contract-test-assert-success-envelope result 'describe)
-      (should (plist-get (plist-get result :data) :operations)))))
+      (let ((description (plist-get result :data)))
+        (should (= (plist-get description :schema-version) 1))
+        (should (plist-get description :operations))))))
 
 (ert-deftest skill-facades-return-structured-invalid-requests ()
   (dolist (facade skill-contract-test-facades)
