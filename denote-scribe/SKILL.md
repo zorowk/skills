@@ -10,14 +10,34 @@ description: >-
 
 Treat Denote as reasoning history and HyWiki as stable knowledge.
 
-Resolve bundled paths from this skill directory, not the working directory. Load
-`scripts/denote-scribe.el` and call `denote-scribe-run`. Read
-`references/hywiki-denote-interface.md` only when integration details are needed.
-Call documented script entry points directly. If a facade schema is unclear, use
-its `describe` operation. Do not inspect script implementations unless the
-documented entry point fails.
-Quote symbolic request values, for example:
-`(denote-scribe-run (list :operation (quote describe) :target (quote capture)))`.
+Every request is one self-loading expression:
+
+```elisp
+(progn
+  (load-file "<skill-dir>/scripts/denote-scribe.el")
+  (denote-scribe-run REQUEST))
+```
+
+Replace `<skill-dir>` with this skill's directory and uppercase names with real
+Elisp values. `REQUEST` is a plist beginning with `:operation`. Query exact
+parameters before an unfamiliar operation:
+
+```elisp
+(denote-scribe-run
+ (list :operation (quote describe) :target (quote capture)))
+```
+
+Confirmed conversation capture:
+
+```elisp
+(denote-scribe-run
+ (list :operation (quote capture) :title TITLE :body-file BODY_FILE
+       :authorization (quote explicit)))
+```
+
+Use only fields returned by `describe`. Do not inspect the script unless the entry
+point fails. Read `references/hywiki-denote-interface.md` only for integration
+details.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
@@ -31,10 +51,20 @@ Separate evidence from inference, include counter-evidence and uncertainty, and
 preserve useful exact artifacts. Read full notes only for truncated or disputed
 evidence.
 
-Promote only reusable, bounded concepts with traceable support that the user can
-explain: require two independent notes or one deep `supported`/`stable`
-investigation. Reject bare terms, transient fixes, reference material, and unresolved
-questions. Merge aliases, preserve provenance, deduplicate, and allow no-promotion.
+Promote only when:
+
+```text
+promote only if:
+  concept is reusable
+  AND scope is clear
+  AND evidence is traceable
+  AND the user can explain it
+  AND (independent supporting notes >= 2
+       OR investigation status is supported or stable)
+```
+
+Reject bare terms, transient fixes, reference material, and unresolved questions.
+Merge aliases, preserve provenance, deduplicate, and allow no-promotion.
 
 Commit only files from this run when explicitly requested; mark review complete only
 after every page is reviewed, including a valid no-promotion result. Do not push or
@@ -45,22 +75,31 @@ response exposes pending `:verification`: artifact identifies delivered and trun
 summaries, workflow exposes continuation, and knowledge-assessment remains pending.
 Read every page and every truncated or disputed source before completion.
 
-To record a completed review, pass `:review-verification` to `commit`; never use a
-bare completion boolean. Artifact must identify reviewed files and valid templates
-and provenance. Workflow must prove complete page and item coverage. Knowledge
-assessment must choose `promoted` or `no-promotion`, record each promotion criterion
-and rationale, and include the supporting notes and promoted pages when applicable.
-Treat a complete no-promotion assessment as valid; do not equate it with an incomplete
-review. Require every promoted HyWiki page to be included in the same commit.
+To record completion, pass `:review-verification` to `commit`, never a bare boolean:
 
-For agent-shell capture, first present an editable note proposal and zero to three
-optional GTD candidates without mutation. After explicit confirmation, use
-`capture` with `:authorization explicit`; add each confirmed GTD task with the
-created Denote file as a structured `file:` resource, then use `link-gtd` with
-the returned task IDs and `:authorization explicit`. Backlinks belong below
-Open Questions or 开放问题 so required top-level headings remain unchanged.
-Report partial state if cross-file linking fails. Do not promote HyWiki, commit,
-push, or create unconfirmed tasks as part of capture.
+```text
+review_done :=
+  artifacts identify files, templates, and provenance
+  AND workflow covers every page and item
+  AND assessment is promoted or no-promotion
+  AND every promotion records criteria, rationale, and supporting notes
+  AND every promoted HyWiki page is in the same commit
+```
+
+A complete `no-promotion` assessment is valid.
+
+For agent-shell capture:
+
+```text
+propose note + 0..3 GTD candidates -> no mutation
+explicit confirmation             -> capture(authorization=explicit)
+confirmed GTD candidate            -> add task with Denote file: resource
+task created                       -> link-gtd(authorization=explicit)
+link failure                       -> report partial state
+```
+
+Put backlinks below Open Questions or 开放问题. Do not promote HyWiki, commit,
+push, or create unconfirmed tasks during capture.
 
 When capturing the current conversation, propose GTD candidates only when the
 extracted evidence reveals valuable actionable follow-up.

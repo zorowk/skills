@@ -8,14 +8,33 @@ description: >-
 
 # Emacs Code Navigator
 
-Resolve `scripts/emacs-code-navigator.el` from this skill directory, not the working
-directory; load it and call `emacs-code-navigator-query` through the
-running Emacs session.
-Call documented script entry points directly. If a facade schema is unclear, use
-its `describe` operation. Do not inspect script implementations unless the
-documented entry point fails.
-Quote symbolic request values, for example:
-`(emacs-code-navigator-query (list :operation (quote describe) :target (quote locate)))`.
+Every request is one self-loading expression:
+
+```elisp
+(progn
+  (load-file "<skill-dir>/scripts/emacs-code-navigator.el")
+  (emacs-code-navigator-query REQUEST))
+```
+
+Replace `<skill-dir>` with this skill's directory and uppercase names with real
+Elisp values. `REQUEST` is a plist beginning with `:operation`. Query exact
+parameters before an unfamiliar operation:
+
+```elisp
+(emacs-code-navigator-query
+ (list :operation (quote describe) :target (quote locate)))
+```
+
+Typical project lookup:
+
+```elisp
+(emacs-code-navigator-query
+ (list :operation (quote locate) :query QUERY :file FILE
+       :source (quote live)))
+```
+
+Use only fields returned by `describe`. Do not inspect the script unless the entry
+point fails.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` from the
 first attempt and request the narrow reusable `prefix_rule: ["emacsclient",
@@ -24,19 +43,23 @@ a sandbox `Operation not permitted` or socket-access denial as evidence that the
 Emacs server is down. Report it unavailable only when the escalated attempt also
 fails.
 
-Pass `:source live` for unsaved buffers and `:source disk` when saved contents
-matter. Let `auto` retain the live-session default. Read each result's
-`:provenance` before combining it with filesystem or batch evidence, and call
-`file-state` when the live buffer may differ from disk.
+Choose operations directly:
 
-Use `symbol` for one exact name and `symbols` for several exact names in one
-request. The batch operation preserves input order and reports unknown names as
-`:found nil`; pass `:full t` only when complete Help facets are needed. Use
-`capability` instead when the name is uncertain or pattern discovery is needed.
-Use `locate` first for project code when the appropriate backend is uncertain.
-When the user names multiple project roots, call `locate-many` once with those
-directories in the user's order. Treat each project's provenance and strategy
-independently; never assume one xref or clangd index crosses project boundaries.
+```text
+unsaved buffer                  -> source=live
+saved content                   -> source=disk
+one exact name                  -> symbol
+several exact names             -> symbols
+uncertain name or pattern search -> capability
+uncertain project backend       -> locate
+multiple explicit roots         -> locate-many(roots in user order)
+```
+
+Let `auto` retain the live-session default. Read `:provenance` before combining
+results with disk or batch evidence; call `file-state` when live and disk may
+differ. `symbols` preserves input order and returns `:found nil` for misses. Pass
+`:full t` only for complete Help facets. Treat each project independently; never
+assume an xref or clangd index crosses project boundaries.
 
 Do not run this facade in batch Emacs as a substitute for the user's session.
 When the server is unavailable, use direct filesystem reads for `search`,
