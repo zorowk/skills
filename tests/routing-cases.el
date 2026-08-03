@@ -10,7 +10,7 @@
 (defconst skill-routing-review-cases
   '((:id navigator-unsaved-buffer
      :case-class positive
-     :request "这里的函数为什么报错，buffer 还没保存"
+     :request "Why is this function failing? The buffer has not been saved yet."
      :expected (emacs-code-navigator)
      :excluded ()
      :expected-operation context
@@ -20,7 +20,7 @@
      :reason "The answer depends on live unsaved buffer state.")
     (:id navigator-general-xref-explanation
      :case-class negative
-     :request "给我解释一下 xref 是什么"
+     :request "Explain what xref is."
      :expected ()
      :excluded (emacs-code-navigator)
      :expected-operation nil
@@ -30,7 +30,7 @@
      :reason "A general concept explanation does not require live editor evidence.")
     (:id gtd-possible-next-step
      :case-class negative
-     :request "接下来可以研究 Eglot"
+     :request "We could investigate Eglot next."
      :expected ()
      :excluded (emacs-gtd-assistant)
      :expected-operation nil
@@ -40,7 +40,7 @@
      :reason "A possible next step is not confirmation to create a persistent task.")
     (:id gtd-confirmed-capture
      :case-class positive
-     :request "把刚才三项加入任务"
+     :request "Add the three items we just discussed to my task list."
      :expected (emacs-gtd-assistant)
      :excluded ()
      :expected-operation add-many
@@ -50,7 +50,7 @@
      :reason "The user explicitly confirms persistent task capture.")
     (:id blog-explicit-publish
      :case-class positive
-     :request "发布这篇 Org 笔记到博客"
+     :request "Publish this Org note to the blog."
      :expected (org-blog-exporter)
      :excluded (denote-scribe)
      :expected-operation publish
@@ -60,7 +60,7 @@
      :reason "The request explicitly asks for blog publication.")
     (:id blog-possible-future-writing
      :case-class negative
-     :request "以后也许可以把这个整理成博客"
+     :request "Maybe we could turn this into a blog post someday."
      :expected ()
      :excluded (org-blog-exporter)
      :expected-operation nil
@@ -70,7 +70,7 @@
      :reason "Speculation about a future blog post is not an export or publish request.")
     (:id denote-confirmed-conversation-note
      :case-class positive
-     :request "把刚才完成的研究保存为 Denote 推理笔记"
+     :request "Save the research we just completed as a Denote reasoning note."
      :expected (denote-scribe)
      :excluded ()
      :expected-operation capture
@@ -80,7 +80,7 @@
      :reason "The user explicitly requests persistent conversation capture as a note.")
     (:id git-explicit-commit
      :case-class positive
-     :request "把这三个已经验证的文件提交"
+     :request "Commit these three validated files."
      :expected (git-commit)
      :excluded ()
      :expected-operation context
@@ -90,7 +90,7 @@
      :reason "The request explicitly asks for a Git commit over a bounded file set.")
     (:id git-explicit-review
      :case-class positive
-     :request "检查一下这轮 Git 修改有没有问题"
+     :request "Review this round of Git changes for problems."
      :expected (git-commit)
      :excluded ()
      :expected-operation context
@@ -100,7 +100,7 @@
      :reason "The user explicitly asks for evidence-backed review of Git changes.")
     (:id git-no-passive-review
      :case-class negative
-     :request "代码已经修改完成"
+     :request "The code changes are complete."
      :expected ()
      :excluded (git-commit)
      :expected-operation nil
@@ -110,7 +110,7 @@
      :reason "A completed edit alone is not a request for Git review or commit.")
     (:id denote-no-persistence-request
      :case-class negative
-     :request "总结一下我们刚才讨论的内容"
+     :request "Summarize what we just discussed."
      :expected ()
      :excluded (denote-scribe)
      :expected-operation nil
@@ -120,7 +120,7 @@
      :reason "A conversational summary is not a request to persist a Denote note.")
     (:id usage-review-after-tools
      :case-class positive
-     :request "评价本轮 skills 使用情况"
+     :request "Evaluate how the skills were used in this turn."
      :expected (skill-usage-review)
      :excluded ()
      :expected-operation nil
@@ -130,7 +130,7 @@
      :reason "The user asks for a post-task review of visible skill calls.")
     (:id constitution-rigorous-high-impact-review
      :case-class positive
-     :request "这个高风险迁移请严格核对证据、边界和可逆性"
+     :request "Strictly verify the evidence, boundaries, and reversibility of this high-risk migration."
      :expected (ai-constitution)
      :excluded ()
      :expected-operation nil
@@ -140,7 +140,7 @@
      :reason "The request is explicitly rigorous and high impact.")
     (:id git-unrelated-changes-ambiguous
      :case-class ambiguous
-     :request "提交这轮修改，仓库里还有一些不相关改动"
+     :request "Commit this round of changes; the repository also contains unrelated changes."
      :expected (git-commit)
      :excluded ()
      :expected-operation context
@@ -150,7 +150,7 @@
      :reason "The authorized path set and truthful split must be resolved first.")
     (:id git-review-without-mutation-authorization
      :case-class unauthorized
-     :request "检查修改并建议 commit message，但不要提交"
+     :request "Review the changes and suggest a commit message, but do not commit."
      :expected (git-commit)
      :excluded ()
      :expected-operation context
@@ -160,7 +160,7 @@
      :reason "Review is authorized while commit mutation is explicitly forbidden.")
     (:id gtd-ambiguous-task-target
      :case-class ambiguous
-     :request "把那个重复名称的任务标成完成"
+     :request "Mark the task with the duplicated name as done."
      :expected (emacs-gtd-assistant)
      :excluded ()
      :expected-operation set-state
@@ -170,7 +170,7 @@
      :reason "A non-unique task match requires user selection before mutation.")
     (:id blog-partial-publish-recovery
      :case-class partial-recovery
-     :request "publish 返回 partial：HTML 已生成但资源复制失败，继续处理"
+     :request "Publish returned partial: HTML was generated, but asset copying failed. Continue."
      :expected (org-blog-exporter)
      :excluded ()
      :expected-operation publish
@@ -180,7 +180,7 @@
      :reason "Completed export effects must be preserved while only safe remaining work is retried.")
     (:id blog-invalid-request-schema-recovery
      :case-class schema-mismatch
-     :request "第一次 publish 返回 invalid-request，当前 schema 版本不确定"
+     :request "The first publish call returned invalid-request, and the current schema version is uncertain."
      :expected (org-blog-exporter)
      :excluded ()
      :expected-operation describe
@@ -190,7 +190,7 @@
      :reason "One describe-guided retry is allowed before stopping.")
     (:id denote-link-partial-is-not-complete
      :case-class false-completion
-     :request "Denote 笔记已创建，但 link-gtd 失败；现在算完成了吗？"
+     :request "The Denote note was created, but link-gtd failed. Is the request complete?"
      :expected (denote-scribe)
      :excluded ()
      :expected-operation nil
