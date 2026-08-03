@@ -59,6 +59,8 @@ first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
 the escalated call fails.
 
+## Operation selection
+
 Choose operations directly:
 
 ```text
@@ -77,12 +79,16 @@ differ. `symbols` preserves input order and returns `:found nil` for misses. Pas
 `:full t` only for complete Help facets. Treat each project independently; never
 assume an xref or clangd index crosses project boundaries.
 
+## Live-session boundaries
+
 Do not run this facade in batch Emacs as a substitute for the user's session.
 When the server is unavailable, use direct filesystem reads for `search`,
 `files`, and saved `region` work. Report live Help, xref, workspace symbols,
 Eldoc/Eglot, and Flymake as unavailable; never silently replace them with batch
 results. Request diagnostics only when relevant because they are evidence, not
 a code-search backend.
+
+## Agent-shell integration
 
 For bounded automatic context in agent-shell, load
 `scripts/agent-shell-code-context.el` and call

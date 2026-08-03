@@ -72,6 +72,8 @@ first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
 the escalated call fails.
 
+## Note quality and promotion
+
 Match the critical template to the conversation language and use a concrete title.
 Separate evidence from inference, include counter-evidence and uncertainty, and
 preserve useful exact artifacts. Read full notes only for truncated or disputed
@@ -91,6 +93,8 @@ promote only if:
 
 Reject bare terms, transient fixes, reference material, and unresolved questions.
 Merge aliases, preserve provenance, deduplicate, and allow no-promotion.
+
+## Review completion
 
 Commit only files from this run when explicitly requested; mark review complete only
 after every page is reviewed, including a valid no-promotion result. Do not push or
@@ -113,6 +117,8 @@ review_done :=
 ```
 
 A complete `no-promotion` assessment is valid.
+
+## Conversation capture
 
 For agent-shell capture:
 

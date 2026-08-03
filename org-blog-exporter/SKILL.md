@@ -59,6 +59,8 @@ first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
 the escalated call fails.
 
+## Completion
+
 Resolve ambiguous files before acting. Never bypass a facade safety error.
 
 ```text
