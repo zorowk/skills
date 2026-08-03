@@ -41,6 +41,21 @@ Typical project lookup:
        :source (quote live)))
 ```
 
+## Execution and recovery
+
+```text
+known documented operation       -> call directly
+schema unknown or version unsure -> describe, then call
+first invalid-request            -> describe, revise, retry once
+second invalid-request           -> report rejected fields; stop
+status=partial                    -> preserve returned evidence;
+                                     retry only the safe missing query
+```
+
+Treat `stop` as no further facade calls for the blocked goal in this turn. If
+safe partial recovery is unclear, report returned evidence and the remaining
+query, then stop.
+
 Use only fields returned by `describe`. Do not inspect the script unless the entry
 point fails.
 

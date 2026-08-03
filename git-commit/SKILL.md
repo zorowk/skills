@@ -41,6 +41,22 @@ Collect bounded evidence first:
  (list :operation (quote context) :directory DIRECTORY :paths PATHS))
 ```
 
+## Execution and recovery
+
+```text
+known documented operation       -> call directly
+schema unknown or version unsure -> describe, then call
+first invalid-request            -> describe, revise, retry once
+second invalid-request           -> report rejected fields; stop
+status=partial                    -> inspect effects and verification;
+                                     preserve completed effects;
+                                     retry only the safe remainder
+```
+
+Treat `stop` as no further facade calls for the blocked goal in this turn,
+especially no effectful calls. If safe partial recovery is unclear, enumerate
+observed effects and the remaining goal, then stop.
+
 Then derive the fields required by `commit` or `amend` from that result. Use only
 fields returned by `describe`. Do not inspect the script unless the entry point
 fails.
