@@ -101,6 +101,5 @@ Path-scoped context returns status and content only for that path set; use
 `:excluded-change-count` to detect unrelated repository changes without exposing
 their names.
 
-Prefer `:detail compact` for routine personal-repository work. Automatic detail
-also stays compact for up to four low-risk or three medium-risk changes; use
-`:detail full` when risk, boundaries, or independent change groups need visibility.
+Use `:detail full` only when risk, boundaries, or independent change groups need
+visibility; otherwise let `auto` choose.

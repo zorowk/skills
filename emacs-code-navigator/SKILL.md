@@ -86,14 +86,10 @@ a code-search backend.
 
 For bounded automatic context in agent-shell, load
 `scripts/agent-shell-code-context.el` and call
-`emacs-code-navigator-agent-shell-enable`. It preserves explicit region and
-error context priority, adds bounded definitions and synchronous Eldoc at the
-actual cursor, reads existing Flymake diagnostics without starting Flymake,
-and returns nil on failure so agent-shell fallbacks can continue.
+`emacs-code-navigator-agent-shell-enable`. It returns nil on failure so normal
+agent-shell fallbacks can continue.
 
-Multi-project semantic queries reuse an existing project buffer or, under the
-`open-on-demand` policy, visit one hidden anchor file per explicit project and
-retain it for later queries. Use
-`emacs-code-navigator-close-semantic-buffers` to close only navigator-owned,
-unmodified, undisplayed anchors. Text fallback remains available when no live
-semantic backend is ready.
+Open-on-demand semantic queries may retain navigator-owned hidden project
+buffers. Use `emacs-code-navigator-close-semantic-buffers` for cleanup; it closes
+only unmodified, undisplayed buffers. Text fallback remains available when no
+live semantic backend is ready.
