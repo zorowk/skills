@@ -997,6 +997,46 @@ starting; all-file export preserves per-file error reporting."
                   :upstream-commit
                   (plist-get push :upstream-commit)))))))))
 
+(defun org-blog-exporter--complete-publish
+    (repository source-files setupfile notes-dir asset-plan progress title)
+  "Finish one publish run from validated PROGRESS.
+
+Update the index for SOURCE-FILES, copy ASSET-PLAN, preserve partial effects,
+then commit and push generated paths in REPOSITORY.  SETUPFILE, NOTES-DIR, and
+TITLE retain their public publish meanings."
+  (let ((root (plist-get repository :git-root))
+        index-file
+        assets)
+    (setq
+     index-file
+     (condition-case error-data
+         (org-blog-exporter-update-index
+          source-files root setupfile notes-dir)
+       (file-error
+        (org-blog-exporter--signal-partial-publish
+         'index error-data progress))))
+    (setq progress (plist-put progress :index index-file))
+    (condition-case error-data
+        (setq
+         assets
+         (org-blog-exporter--copy-assets
+          asset-plan
+          (lambda (target)
+            (setq progress
+                  (plist-put progress :assets
+                             (append (plist-get progress :assets)
+                                     (list target)))))))
+      (file-error
+       (org-blog-exporter--signal-partial-publish
+        'assets error-data progress)))
+    (setq progress (plist-put progress :assets assets))
+    (append
+     progress
+     (org-blog-exporter--finish-publish
+      repository
+      (append (plist-get progress :exported) (list index-file) assets)
+      title))))
+
 ;;;###autoload
 (defun org-blog-exporter-publish-files
     (org-files &optional title repository-dir setupfile notes-dir)
@@ -1031,36 +1071,9 @@ commit only generated paths, and push."
                 :output-directory root
                 :asset-plan-count (length asset-plan)
                 :assets nil
-                :index nil))
-         index-file
-         assets)
-    (setq
-     index-file
-     (condition-case error-data
-         (org-blog-exporter-update-index
-          org-files root setupfile notes-dir)
-       (file-error
-        (org-blog-exporter--signal-partial-publish
-         'index error-data progress))))
-    (setq progress (plist-put progress :index index-file))
-    (condition-case error-data
-        (setq
-         assets
-         (org-blog-exporter--copy-assets
-          asset-plan
-          (lambda (target)
-            (setq progress
-                  (plist-put progress :assets
-                             (append (plist-get progress :assets)
-                                     (list target)))))))
-      (file-error
-       (org-blog-exporter--signal-partial-publish
-        'assets error-data progress)))
-    (setq progress (plist-put progress :assets assets))
-    (append
-     progress
-     (org-blog-exporter--finish-publish
-      repository (append exported (list index-file) assets) title))))
+                :index nil)))
+    (org-blog-exporter--complete-publish
+     repository org-files setupfile notes-dir asset-plan progress title)))
 
 ;;;###autoload
 (defun org-blog-exporter-publish-all
@@ -1093,36 +1106,9 @@ commit only generated paths, and push."
           (append summary
                   (list :asset-plan-count (length asset-plan)
                         :assets nil :index nil)))
-    (let (index-file assets)
-      (setq
-       index-file
-       (condition-case error-data
-           (org-blog-exporter-update-index
-            (plist-get summary :candidates) root setupfile notes-dir)
-         (file-error
-          (org-blog-exporter--signal-partial-publish
-           'index error-data summary))))
-      (setq summary (plist-put summary :index index-file))
-      (condition-case error-data
-          (setq
-           assets
-           (org-blog-exporter--copy-assets
-            asset-plan
-            (lambda (target)
-              (setq summary
-                    (plist-put summary :assets
-                               (append (plist-get summary :assets)
-                                       (list target)))))))
-        (file-error
-         (org-blog-exporter--signal-partial-publish
-          'assets error-data summary)))
-      (setq summary (plist-put summary :assets assets))
-      (append
-       summary
-       (org-blog-exporter--finish-publish
-        repository
-        (append (plist-get summary :exported) (list index-file) assets)
-        title)))))
+    (org-blog-exporter--complete-publish
+     repository (plist-get summary :candidates) setupfile notes-dir
+     asset-plan summary title)))
 
 ;;;###autoload
 (defun org-blog-exporter-publish
