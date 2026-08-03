@@ -149,7 +149,6 @@
            (skill-contract-test-call facade '(:operation describe))))
       (skill-contract-test-assert-success-envelope result 'describe)
       (let ((description (plist-get result :data)))
-        (should (= (plist-get description :schema-version) 1))
         (should (plist-get description :operations))))))
 
 (ert-deftest skill-facades-return-structured-invalid-requests ()

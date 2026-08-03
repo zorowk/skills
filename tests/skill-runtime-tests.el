@@ -9,7 +9,6 @@
    "common/scripts/skill-runtime.el"))
 
 (defvar skill-runtime-envelope-version)
-(defvar skill-runtime-schema-version)
 (defvar skill-runtime-metrics-version)
 
 (defconst skill-runtime-test-public-failures
@@ -49,13 +48,10 @@
             :page (:truncated nil)
             :verification (:artifact (:checked t))))))
 
-(ert-deftest skill-runtime-describe-versions-operation-schemas ()
+(ert-deftest skill-runtime-describe-returns-catalog-and-target-schema ()
   (let* ((schemas '((sample :summary "Describe a sample operation.")))
          (catalog (skill-runtime-describe schemas))
          (target (skill-runtime-describe schemas 'sample)))
-    (should (= skill-runtime-schema-version 1))
-    (should (= (plist-get catalog :schema-version) 1))
-    (should (= (plist-get target :schema-version) 1))
     (should (equal (plist-get catalog :operations) '(sample)))
     (should (equal (plist-get target :schema)
                    '(:summary "Describe a sample operation.")))))

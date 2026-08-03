@@ -57,7 +57,7 @@ Confirmed conversation capture:
 
 ```text
 known documented operation       -> call directly
-schema unknown or version unsure -> describe, then call
+schema unknown                   -> describe, then call
 first invalid-request            -> describe, revise, retry once
 second invalid-request           -> report rejected fields; stop
 status=partial                    -> inspect effects and verification;

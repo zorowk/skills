@@ -180,7 +180,7 @@
      :reason "Completed export effects must be preserved while only safe remaining work is retried.")
     (:id blog-invalid-request-schema-recovery
      :case-class schema-mismatch
-     :request "The first publish call returned invalid-request, and the current schema version is uncertain."
+     :request "The first publish call returned invalid-request, and the current operation schema is uncertain."
      :expected (org-blog-exporter)
      :excluded ()
      :expected-operation describe
