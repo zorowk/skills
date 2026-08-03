@@ -1027,19 +1027,7 @@ Use :operation `describe' to request operation schemas only when needed."
         (denote-scribe-template-file
          (plist-get request :kind)
          (plist-get request :language))))
-      ('create
-       (let* ((created
-               (denote-scribe-create-with-review-context
-                (plist-get request :title)
-                (plist-get request :body-file)
-                (plist-get request :keywords)
-                (plist-get request :notes-dir)
-                (plist-get request :signature)
-                (plist-get request :date)
-                (plist-get request :git-dir))))
-         (skill-runtime-result operation created 1 nil nil
-                               (list :created t))))
-      ('capture
+      ((or 'create 'capture)
        (let ((created
               (denote-scribe-create-with-review-context
                (plist-get request :title)

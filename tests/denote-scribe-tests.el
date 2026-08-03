@@ -95,22 +95,23 @@
       (when-let* ((buffer (get-file-buffer created))) (kill-buffer buffer))
       (delete-directory root t))))
 
-(ert-deftest denote-conversation-capture-requires-explicit-authorization ()
-  (let ((request
-         '(:operation capture :title "Research note"
-           :body-file "/tmp/body.org")))
-    (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)
-               (lambda (&rest _)
-                 '(:file "/tmp/created.org" :review-state (:review-due nil)))))
-      (skill-contract-tests-assert-failure
-       (denote-scribe-run request)
-       'needs-input 'authorization-required)
-      (let ((result
-             (denote-scribe-run
-              (append request '(:authorization explicit)))))
-        (should (equal (plist-get (plist-get result :data) :file)
-                       "/tmp/created.org"))
-        (should (equal (plist-get result :effects) '(:created t)))))))
+(ert-deftest denote-create-and-capture-share-authorized-facade-behavior ()
+  (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)
+             (lambda (&rest _)
+               '(:file "/tmp/created.org" :review-state (:review-due nil)))))
+    (dolist (operation '(create capture))
+      (let ((request
+             (list :operation operation :title "Research note"
+                   :body-file "/tmp/body.org")))
+        (skill-contract-tests-assert-failure
+         (denote-scribe-run request)
+         'needs-input 'authorization-required)
+        (let ((result
+               (denote-scribe-run
+                (append request '(:authorization explicit)))))
+          (should (equal (plist-get (plist-get result :data) :file)
+                         "/tmp/created.org"))
+          (should (equal (plist-get result :effects) '(:created t))))))))
 
 (ert-deftest denote-review-separates-delivery-from-knowledge-assessment ()
   (let ((summary
