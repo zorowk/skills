@@ -1,4 +1,4 @@
 interface:
   display_name: "Org Blog Exporter"
   short_description: "Export and publish Org notes to the HTML blog"
-  default_prompt: "Use $org-blog-exporter to export public Org notes, and publish generated HTML only when I explicitly request publishing."
+  default_prompt: "Use $org-blog-exporter to explicitly export public Org notes or publish their verified static HTML output."

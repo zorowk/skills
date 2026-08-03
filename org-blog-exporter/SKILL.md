@@ -1,8 +1,8 @@
 ---
 name: org-blog-exporter
 description: >-
-  Export or explicitly publish configured Org notes as static HTML through Emacs, including local
-  resources, generated commits, and pushes for authorized publishing.
+  Export or publish configured Org notes as static HTML through Emacs, including local resources
+  and verified Git publication. Use only when the user explicitly requests export or publication.
 ---
 
 # Org Blog Exporter

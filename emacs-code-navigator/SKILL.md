@@ -1,9 +1,10 @@
 ---
 name: emacs-code-navigator
 description: >-
-  Use for code questions involving live Emacs buffers, cursor context, unsaved edits,
-  diagnostics, definitions, references, or single- and multi-project navigation. Prefer live
-  Emacs evidence over disk when editor state matters.
+  Use for code questions that depend on live Emacs buffers, cursor context, unsaved edits,
+  diagnostics, definitions, references, or explicit single- and multi-project navigation. Prefer
+  live evidence when editor state matters. Do not use for general explanations or saved-file
+  questions that do not depend on editor or project state.
 ---
 
 # Emacs Code Navigator

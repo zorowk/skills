@@ -1,4 +1,4 @@
 interface:
   display_name: "Emacs Code Navigator"
   short_description: "Navigate live Emacs code across projects"
-  default_prompt: "Use $emacs-code-navigator to trace this symbol from my current Emacs cursor across the project directories I name."
+  default_prompt: "Use $emacs-code-navigator when this code question depends on my live Emacs cursor, unsaved buffers, diagnostics, or explicit project roots."
