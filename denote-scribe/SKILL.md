@@ -1,9 +1,10 @@
 ---
 name: denote-scribe
 description: >-
-  Capture confirmed technical or research conversations as Denote reasoning notes, optionally link
+  Capture confirmed technical or research conversations as Denote reasoning notes, preserve
+  executable scripts with their purpose and operating context in Org Babel notes, optionally link
   follow-up Org GTD tasks, review existing notes, and promote mature HyWiki knowledge. Use when the
-  user explicitly asks to record, review, or promote persistent Denote knowledge.
+  user explicitly asks to record, review, or promote persistent Denote knowledge or contextual scripts.
 ---
 
 # Denote Scribe
@@ -56,8 +57,22 @@ Confirmed conversation capture:
        :authorization (quote explicit)))
 ```
 
-Create `:body-file` first from the `critical` template and keep it readable
-until capture completes.  Pass `:keywords` as a list of strings.
+Create `:body-file` first from the `critical` or `script` template and keep it
+readable until capture completes.  Pass `:kind critical` or `:kind script`;
+omitting `:kind` preserves the `critical` default.  Pass `:keywords` as a list
+of strings.
+
+For a contextual script note:
+
+```elisp
+(denote-scribe-run
+ (list :operation (quote capture)
+       :kind (quote script)
+       :title "Inspect Wayland protocol scanner output"
+       :body-file "/tmp/denote-script-body.org"
+       :keywords (list "script" "wayland")
+       :authorization (quote explicit)))
+```
 
 ## Execution and recovery
 
@@ -80,10 +95,16 @@ the escalated call fails.
 
 ## Note quality and promotion
 
-Match the critical template to the conversation language and use a concrete title.
-Separate evidence from inference, include counter-evidence and uncertainty, and
-preserve useful exact artifacts. Read full notes only for truncated or disputed
-evidence.
+Match the selected template to the conversation language and use a concrete title.
+For critical notes, separate evidence from inference, include counter-evidence and
+uncertainty, and preserve useful exact artifacts. Read full notes only for truncated
+or disputed evidence.
+
+For script notes, keep the executable content inside Org Babel source blocks. Record
+the purpose, usage boundary, prerequisites, inputs, side effects, invocation,
+verification, recovery, maintenance constraints, and provenance. Use the exact Babel
+language and real executable content, retain `:eval query`, and do not add `:tangle`
+or create a separate script file.
 
 Promote only when:
 
@@ -126,7 +147,8 @@ A complete `no-promotion` assessment is valid.
 
 ## Conversation capture
 
-For agent-shell capture:
+For agent-shell capture, first select `critical` for technical reasoning or `script`
+for contextual executable code:
 
 ```text
 propose note + 0..3 GTD candidates -> no mutation
@@ -136,8 +158,8 @@ task created                       -> link-gtd(authorization=explicit)
 link failure                       -> report partial state
 ```
 
-Put backlinks below Open Questions or 开放问题. Do not promote HyWiki, commit,
-push, or create unconfirmed tasks during capture.
+Put backlinks below Open Questions or 开放问题 in critical notes. Do not promote
+HyWiki, commit, push, or create unconfirmed tasks during capture.
 
 When capturing the current conversation, propose GTD candidates only when the
 extracted evidence reveals valuable actionable follow-up.

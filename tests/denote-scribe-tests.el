@@ -113,6 +113,36 @@
                          "/tmp/created.org"))
           (should (equal (plist-get result :effects) '(:created t))))))))
 
+(ert-deftest denote-script-templates-are-bilingual-and-validated ()
+  (dolist (language '(en zh))
+    (let ((template (denote-scribe-template-file 'script language)))
+      (should (file-readable-p template))
+      (should (progn (denote-scribe--validate-script-body template) t))))
+  (let ((invalid (make-temp-file "denote-script-invalid-" nil ".org")))
+    (unwind-protect
+        (progn
+          (with-temp-file invalid
+            (insert "* Purpose\n* When to Use\n* Prerequisites\n"
+                    "* Inputs and Side Effects\n* Script\n* How to Run\n"
+                    "* Verification and Recovery\n* Maintenance Notes\n* Provenance\n"))
+          (should-error (denote-scribe--validate-script-body invalid)))
+      (delete-file invalid))))
+
+(ert-deftest denote-capture-forwards-script-kind ()
+  (let (received-kind)
+    (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)
+               (lambda (&rest args)
+                 (setq received-kind (car (last args)))
+                 '(:file "/tmp/script.org" :review-state (:review-due nil)))))
+      (let ((result
+             (denote-scribe-run
+              '(:operation capture :kind script :title "Contextual script"
+                :body-file "/tmp/body.org" :keywords ("script")
+                :authorization explicit))))
+        (should (eq received-kind 'script))
+        (should (equal (plist-get (plist-get result :data) :file)
+                       "/tmp/script.org"))))))
+
 (ert-deftest denote-review-separates-delivery-from-knowledge-assessment ()
   (let ((summary
          '(:file "/tmp/reviewed.org"

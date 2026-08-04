@@ -122,6 +122,17 @@
     "开放问题" "提取概念")
   "Required Chinese headings for a critical Denote body, in order.")
 
+(defconst denote-scribe-script-headings
+  '("Purpose" "When to Use" "Prerequisites" "Inputs and Side Effects"
+    "Script" "How to Run" "Verification and Recovery" "Maintenance Notes"
+    "Provenance")
+  "Required English headings for a contextual script note, in order.")
+
+(defconst denote-scribe-script-headings-zh
+  '("用途" "适用场景" "前置条件" "输入与副作用" "脚本" "运行方法"
+    "验证与恢复" "维护说明" "来源")
+  "Required Chinese headings for a contextual script note, in order.")
+
 (defconst denote-scribe-hywiki-headings
   '("Context" "Definition" "My Understanding" "Why It Matters" "Evidence"
     "Reasoning" "Boundaries" "Related Concepts" "Open Questions" "Provenance")
@@ -134,25 +145,27 @@
 
 (defconst denote-scribe-review-summary-headings
   '("Question" "Evidence" "Conclusion" "Open Questions" "Extract Concepts"
-    "核心问题" "证据" "结论" "开放问题" "提取概念")
-  "Critical-note headings included in compact AI-review summaries.")
+    "核心问题" "证据" "结论" "开放问题" "提取概念"
+    "Purpose" "Script" "Verification and Recovery" "Maintenance Notes"
+    "用途" "脚本" "验证与恢复" "维护说明")
+  "Note headings included in compact AI-review summaries.")
 
 (defconst denote-scribe--schemas
   '((preflight :summary "Validate Denote, HyWiki, and repository configuration."
                :optional (:notes-dir :hywiki-dir :git-dir))
-    (template :summary "Return the exact critical-note or HyWiki template."
+    (template :summary "Return the exact critical-note, script-note, or HyWiki template."
               :required (:kind :language)
-              :choices ((:kind critical hywiki) (:language en zh)))
+              :choices ((:kind critical script hywiki) (:language en zh)))
     (create :summary "Create one Denote note from a completed body file."
             :required (:title :body-file :authorization)
-            :optional (:keywords :notes-dir :signature :date :git-dir)
-            :choices ((:authorization explicit))
+            :optional (:kind :keywords :notes-dir :signature :date :git-dir)
+            :choices ((:kind critical script) (:authorization explicit))
             :effects (:created))
     (capture
      :summary "Create one confirmed conversation note with explicit authorization."
      :required (:title :body-file :authorization)
-     :optional (:keywords :notes-dir :signature :date :git-dir)
-     :choices ((:authorization explicit))
+     :optional (:kind :keywords :notes-dir :signature :date :git-dir)
+     :choices ((:kind critical script) (:authorization explicit))
      :effects (:created))
     (link-gtd
      :summary "Add confirmed GTD id links below the note's open questions."
@@ -324,13 +337,15 @@
 (defun denote-scribe-template-file (kind &optional language)
   "Return the bundled template for KIND and LANGUAGE.
 
-KIND is `critical' or `hywiki'.  LANGUAGE is `en' or `zh' and defaults to
+KIND is `critical', `script', or `hywiki'.  LANGUAGE is `en' or `zh' and defaults to
 `en'.  Signal an error if the selected template is unavailable."
   (let* ((lang (or language 'en))
          (name
           (pcase (cons kind lang)
             (`(critical . en) "critical-note-template.org")
             (`(critical . zh) "critical-note-template-zh.org")
+            (`(script . en) "script-note-template.org")
+            (`(script . zh) "script-note-template-zh.org")
             (`(hywiki . en) "hywiki-concept-template.org")
             (`(hywiki . zh) "hywiki-concept-template-zh.org")
             (_ (error "Unknown template kind/language: %S/%S" kind lang))))
@@ -395,6 +410,36 @@ SCHEMAS is a list of accepted top-level heading lists for LABEL."
               nil t)))
       (unless concept
         (error "%s must contain a level-2 concept heading" concept-parent)))))
+
+(defun denote-scribe--validate-script-body (body-file)
+  "Validate contextual Org Babel script structure in readable BODY-FILE."
+  (with-temp-buffer
+    (insert-file-contents body-file)
+    (delay-mode-hooks (org-mode))
+    (let* ((tree (denote-scribe--org-tree))
+           (blocks
+            (org-element-map tree 'src-block
+              (lambda (block)
+                (list (org-element-property :language block)
+                      (org-element-property :value block))))))
+      (denote-scribe--validate-headings
+       tree
+       (list denote-scribe-script-headings denote-scribe-script-headings-zh)
+       "Script body")
+      (unless blocks
+        (error "Script body must contain at least one Org Babel source block"))
+      (dolist (block blocks)
+        (unless (denote-scribe--nonempty (car block))
+          (error "Every script source block must declare a Babel language"))
+        (unless (denote-scribe--nonempty (string-trim (or (cadr block) "")))
+          (error "Every script source block must contain executable content"))))))
+
+(defun denote-scribe--validate-note-body (body-file &optional kind)
+  "Validate BODY-FILE as KIND, which defaults to `critical'."
+  (pcase (or kind 'critical)
+    ('critical (denote-scribe--validate-critical-body body-file))
+    ('script (denote-scribe--validate-script-body body-file))
+    (other (error "Unknown Denote note kind: %S" other))))
 
 (defun denote-scribe--validate-hywiki-body (body-file)
   "Validate concept-page structure in readable Org BODY-FILE."
@@ -740,7 +785,7 @@ when a returned section is truncated or requires deeper evidence checking."
 
 ;;;###autoload
 (defun denote-scribe-create-with-review-context
-    (title body-file &optional keywords notes-dir signature date git-dir)
+    (title body-file &optional keywords notes-dir signature date git-dir kind)
   "Create a Denote report and return its complete AI-review context.
 
 The creation arguments match `denote-scribe-create'; GIT-DIR selects the
@@ -750,7 +795,7 @@ Denote corpus; later reviews include notes changed since the last completed
 review plus the newly created report."
   (let* ((state (denote-scribe-git-review-state git-dir))
          (file (denote-scribe-create
-                title body-file keywords notes-dir signature date)))
+                title body-file keywords notes-dir signature date kind)))
     (let ((review-files
            (and (plist-get state :review-due)
                 (denote-scribe--review-files file state notes-dir))))
@@ -917,19 +962,21 @@ keyword; otherwise do not filter by keywords."
 (defalias 'denote-scribe-list-reports #'denote-scribe-list-notes)
 
 ;;;###autoload
-(defun denote-scribe-create (title body-file &optional keywords notes-dir signature date)
+(defun denote-scribe-create
+    (title body-file &optional keywords notes-dir signature date kind)
   "Create an Org Denote report with TITLE and insert BODY-FILE.
 
 KEYWORDS is a list of strings.  When nil, do not add keywords.
 NOTES-DIR overrides `denote-scribe-notes-directory'.
-SIGNATURE and DATE are passed to Denote when non-nil.
+SIGNATURE and DATE are passed to Denote when non-nil.  KIND is `critical' or
+`script' and defaults to `critical'.
 
 Return the created file path."
   (unless (and (stringp title) (not (string= title "")))
     (error "TITLE must be a non-empty string"))
   (unless (and (stringp body-file) (file-readable-p body-file))
     (error "BODY-FILE is not readable: %S" body-file))
-  (denote-scribe--validate-critical-body body-file)
+  (denote-scribe--validate-note-body body-file kind)
   (require 'denote)
   (let* ((target-dir
           (file-name-as-directory
@@ -1036,7 +1083,8 @@ Use :operation `describe' to request operation schemas only when needed."
                (plist-get request :notes-dir)
                (plist-get request :signature)
                (plist-get request :date)
-               (plist-get request :git-dir))))
+               (plist-get request :git-dir)
+               (plist-get request :kind))))
          (skill-runtime-result operation created 1 nil nil
                                (list :created t))))
       ('link-gtd

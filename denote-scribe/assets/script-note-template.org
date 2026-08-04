@@ -1,0 +1,38 @@
+* Purpose
+What task does this script perform, and why is preserving it worthwhile?
+
+* When to Use
+State the situations where this script applies and the boundaries where it does not.
+
+* Prerequisites
+- Working directory:
+- Required tools or services:
+- Required permissions:
+
+* Inputs and Side Effects
+- Inputs and parameters:
+- Files, services, or state read:
+- Files, services, or state changed:
+
+* Script
+Keep the executable content in Org Babel.  Use the exact language, retain
+`:eval query`, and do not add `:tangle`.
+
+#+begin_src shell :eval query
+set -eu
+# Replace this comment with the executable script.
+#+end_src
+
+* How to Run
+Document the buffer location, invocation, arguments, and expected output.
+
+* Verification and Recovery
+- Success criteria:
+- Failure signals:
+- Recovery or rollback:
+
+* Maintenance Notes
+Record version assumptions, fragile dependencies, and known limitations.
+
+* Provenance
+Record the source conversation, investigation, project, or external references.
