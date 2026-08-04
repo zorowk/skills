@@ -8,27 +8,17 @@ description: >
 
 # Emacs GTD Assistant
 
-## Decision summary
-
-```text
-run?    := explicit persistent-task request
-propose := actionable follow-up is inferred but not confirmed
-mutate? := explicit confirmation AND unambiguous task target
-done?   := requested task state is observable through the facade
-```
-
-## Semantic predicates
-
 ```text
 actionable? := begins with a concrete action
                AND has an identifiable completion state
+run?        := explicit persistent-task request
+propose?    := actionable follow-up inferred but not confirmed
+mutate?     := explicit confirmation AND unambiguous task target
+done?       := requested task state is observable through the facade
 ```
 
-"Compare the two backends and record the result" is actionable. "Eglot may be
-interesting" is not. Actionability permits a proposal, never an unconfirmed
-mutation.
-
-Invoke the facade with one self-loading expression:
+Actionability permits a proposal, never mutation. Invoke the facade with one
+self-loading expression; `REQUEST` is a plist beginning with `:operation`:
 
 ```elisp
 (progn
@@ -36,53 +26,23 @@ Invoke the facade with one self-loading expression:
   (emacs-gtd-execute REQUEST))
 ```
 
-Replace `<skill-dir>` and uppercase placeholders with real Elisp values.
-`REQUEST` is a plist beginning with `:operation`. Describe an unknown operation:
-
-```elisp
-(emacs-gtd-execute
- (list :operation (quote describe) :target (quote add-many)))
-```
-
-Confirmed conversation capture:
-
-```elisp
-(emacs-gtd-execute
- (list :operation (quote add-many)
-       :tasks
-       (list
-        (list :title "Compare Eglot and lsp-mode completion"
-              :context (quote personal) :priority "B"
-              :tags (list "emacs" "research")
-              :scheduled "<2026-08-04 Tue>"
-              :context-notes "Record latency and completion-quality findings."
-              :links
-              (list
-               (list :target "https://www.gnu.org/software/emacs/manual/html_node/eglot/"
-                     :description "Eglot manual"))
-              :properties (list (cons "SOURCE" "agent-shell"))))
-       :authorization (quote explicit)))
-```
-
 ## Execution and recovery
 
-Call documented operations directly. Use `describe` only when the schema is
-unknown or after the first `invalid-request`; revise and retry once. A second
-invalid request stops the goal. On `partial`, preserve returned evidence and
-effects, then retry only the safe remainder.
+```text
+known schema       -> call operation directly
+unknown schema     -> describe(target), then call
+invalid-request #1 -> describe(target), revise once
+invalid-request #2 -> stop
+partial            -> preserve evidence/effects; retry only the safe remainder
+stop               -> report effects and remaining goal; no more facade calls
+```
 
-`stop` means no further facade calls for the blocked goal in this turn. If safe
-recovery is unclear, report observed effects and the remaining goal, then stop.
-
-When `describe` is used, send only fields declared by the returned schema. Inspect
-the script only if the entry point fails.
+Send only schema-declared fields. Inspect the script only if the entry point fails.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
 the escalated call fails.
-
-Follow these gates:
 
 ```text
 ambiguous match         -> present choices; stop

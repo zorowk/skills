@@ -8,18 +8,11 @@ description: >-
 
 # Git Commit
 
-## Decision summary
-
 ```text
 review? := explicit review request
 commit? := explicit commit or amend request
 mutate? := commit? AND exact authorized paths are known AND one truthful commit fits
 done?   := committed paths equal authorized paths AND HEAD message matches
-```
-
-## Semantic predicates
-
-```text
 truthful-commit? := one message accurately describes every included change
                     AND no change needs a materially different rationale
 ```
@@ -27,7 +20,8 @@ truthful-commit? := one message accurately describes every included change
 A feature and its focused tests can form one truthful commit. An unrelated
 documentation cleanup bundled with that feature cannot.
 
-Invoke the facade with one self-loading expression:
+Invoke the facade with one self-loading expression; `REQUEST` is a plist beginning
+with `:operation`:
 
 ```elisp
 (progn
@@ -35,69 +29,23 @@ Invoke the facade with one self-loading expression:
   (ai-git-commit-run REQUEST))
 ```
 
-Replace `<skill-dir>` and uppercase placeholders with real Elisp values.
-`REQUEST` is a plist beginning with `:operation`. Describe an unknown operation:
-
-```elisp
-(ai-git-commit-run
- (list :operation (quote describe) :target (quote commit)))
-```
-
-Collect bounded evidence first:
-
-```elisp
-(ai-git-commit-run
- (list :operation (quote context) :directory DIRECTORY :paths PATHS))
-```
-
-Create a scoped conventional commit with `:type` and `:scope` as separate
-fields:
-
-```elisp
-(ai-git-commit-run
- (list :operation (quote commit)
-       :type "fix" :scope "theme"
-       :summary "defer unavailable system themes"
-       :context "Early startup can run before ef-themes is installed."
-       :changes
-       (list "Check theme availability before loading it."
-             "Cover installed and missing theme paths.")
-       :reason "Allow startup to continue while packages are reinstalled."
-       :validation "ERT suite passed."
-       :boundary "Only early-init.el and its focused tests."
-       :authorization (quote explicit) :risk (quote low)
-       :directory "/path/to/repository"
-       :paths (list "early-init.el" "test/init-functions-tests.el")))
-```
-
-Use only the conventional category in `:type`, such as `"fix"`; never embed
-the scope there as `"fix(theme)"`.
-
 ## Execution and recovery
 
-Call documented operations directly. Use `describe` only when the schema is
-unknown or after the first `invalid-request`; revise and retry once. A second
-invalid request stops the goal. On `partial`, preserve returned evidence and
-effects, then retry only the safe remainder.
+```text
+known schema       -> call operation directly
+unknown schema     -> describe(target), then call
+invalid-request #1 -> describe(target), revise once
+invalid-request #2 -> stop
+partial            -> preserve evidence/effects; retry only the safe remainder
+stop               -> report effects and remaining goal; no more facade calls
+```
 
-`stop` means no further facade calls for the blocked goal in this turn. If safe
-recovery is unclear, report observed effects and the remaining goal, then stop.
-
-Derive `commit` or `amend` fields from that result. When `describe` is used, send
-only fields declared by the returned schema. Inspect the script only if the entry
-point fails.
-Context includes bounded diffs for untracked files, with truncation metadata;
-do not infer their contents from `git status` alone.
-When the intended file set is known, pass the same exact `:paths` to `context`.
-It keeps global status visibility while excluding unrelated diff contents and
-untracked-file reads.
+Send only schema-declared fields. Inspect the script only if the entry point fails.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
 the escalated call fails.
-
-Use this contract:
 
 ```text
 PRE:
@@ -111,18 +59,16 @@ POST:
   HEAD message = requested message
 ```
 
-Never invent issues, tests, products, or impact. Keep routine test commands, pass
-counts, and validation results out of the commit body; report them after the
-operation. Include validation in history only when explicitly requested.
-Keep every generated commit-message line within the facade's 100-column limit.
+Before commit/amend, call `context` with the same exact authorized `:paths`. It returns
+bounded tracked and untracked diffs plus `:excluded-change-count`; never infer untracked
+content from status alone. Use `:detail full` only when boundaries, risk, or independent
+change groups require it.
 
-For `commit` or `amend`, pass `:paths` with the exact repository files authorized
-for the operation. The facade validates and stages those paths, commits only that
-path set, and verifies the resulting HEAD message. Omit `:paths` only when the user
-intentionally wants to commit the existing index as-is.
-Path-scoped context returns status and content only for that path set; use
-`:excluded-change-count` to detect unrelated repository changes without exposing
-their names.
+Pass conventional category and scope separately (`:type "fix"`, `:scope "theme"`),
+truthful evidence-derived fields, required internal `:validation`, and explicit
+authorization. Omit `:paths` only when the user intentionally authorizes the existing
+index as-is.
 
-Use `:detail full` only when risk, boundaries, or independent change groups need
-visibility; otherwise let `auto` choose.
+Never invent issues, tests, products, or impact. Keep routine test commands, pass counts,
+and validation results out of the commit body; report them afterward. Include validation
+in history only when explicitly requested. Keep message lines within 100 columns.

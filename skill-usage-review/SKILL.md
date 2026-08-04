@@ -9,13 +9,14 @@ description: >-
 
 # Skill Usage Review
 
-Use only calls, results, errors, metrics, and outcomes visible in the current conversation. Do not
-rerun tools, modify files, or create telemetry solely for the review. State when missing history
-limits the assessment.
+```text
+evidence := calls + results + errors + metrics + outcomes visible in this conversation
+allowed? := review needs no rerun, file mutation, or new telemetry
+order    := correctness -> evidence sufficiency -> safety -> economy
+praise economy only if earlier dimensions pass
+```
 
-Evaluate correctness, evidence sufficiency, safety, and economy in that order. Earlier dimensions
-gate later praise: do not call an incomplete, unsupported, or unsafe result efficient merely because
-it was short. Rate all four independently when evidence permits.
+State when missing history limits the assessment.
 Do not sum, average, weight, or otherwise combine the four ratings.
 
 Use matching-version facade metrics when available: request and response character counts, field
@@ -23,34 +24,30 @@ count, elapsed time, result count, truncation, degradation, and resolved source.
 are local proxies, not exact model tokens. Field count measures interface surface, not cognitive
 difficulty. Metrics are diagnostic evidence, not optimization targets.
 
-Classify visible output as essential, safety-related, or redundant. Estimate effective context
-efficiency as a range, not false precision:
+Classify visible output as essential, safety-related, or redundant. Estimate context efficiency as
+a range, never false precision:
 
 ```text
 (essential characters + safety characters) / measured base response characters
 ```
 
-Explain the classification. Treat the range as diagnostic only; it cannot determine economy or
-outweigh missing evidence, unsafe behavior, or an incomplete outcome.
+Explain the classification. The range cannot determine economy or outweigh missing evidence,
+unsafe behavior, or incomplete work.
 
-Rate each dimension independently from visible evidence on a `0` to `3` scale:
+Rate independently from visible evidence:
 
-- Correctness: `0` failed; `1` partial; `2` achieved with material uncertainty; `3` decisively
-  verified.
-- Evidence sufficiency: `0` no evidence for material claims; `1` major gaps; `2` adequate evidence
-  for important claims; `3` decisive and traceable coverage.
-- Safety: `0` material violation; `1` important gaps; `2` proportionate safeguards; `3` robust,
-  reversible safeguards without excess overhead.
-- Economy: `0` wasteful or misrouted; `1` material avoidable cost; `2` proportionate; `3` lean while
-  preserving evidence and safety.
+```text
+Correctness:            0 failed | 1 partial | 2 material uncertainty | 3 decisively verified
+Evidence sufficiency:   0 none | 1 major gaps | 2 adequate | 3 decisive and traceable
+Safety:                 0 violation | 1 important gaps | 2 proportionate | 3 robust and reversible
+Economy:                0 wasteful | 1 avoidable cost | 2 proportionate | 3 lean without lost quality
 
-Report recovery separately as a diagnostic, not as a fifth rating:
+Observed recovery cost: failed calls + retries + repeated reads + partial-state repair + extra output
+Latent recovery risk:   future rework from missing evidence, skipped validation, or unclear state
+```
 
-- Observed recovery cost: visible failed calls, schema retries, repeated reads, partial-state repair,
-  and attributable extra time or output.
-- Latent recovery risk: inferred future rework from missing evidence, skipped validation, unclear
-  state, or unsupported conclusions.
+Report recovery separately, never as a fifth rating.
 
 Return a compact outcome gate, per-skill evidence, available totals, four ratings with confidence,
-recovery diagnostics, the efficiency range, and at most three prioritized improvements. Keep
-observed facts separate from inference.
+recovery diagnostics, the efficiency range, and at most three prioritized improvements. Separate
+observed facts from inference.
