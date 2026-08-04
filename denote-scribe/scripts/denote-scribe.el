@@ -421,7 +421,8 @@ SCHEMAS is a list of accepted top-level heading lists for LABEL."
             (org-element-map tree 'src-block
               (lambda (block)
                 (list (org-element-property :language block)
-                      (org-element-property :value block))))))
+                      (org-element-property :value block)
+                      (org-element-property :parameters block))))))
       (denote-scribe--validate-headings
        tree
        (list denote-scribe-script-headings denote-scribe-script-headings-zh)
@@ -432,7 +433,13 @@ SCHEMAS is a list of accepted top-level heading lists for LABEL."
         (unless (denote-scribe--nonempty (car block))
           (error "Every script source block must declare a Babel language"))
         (unless (denote-scribe--nonempty (string-trim (or (cadr block) "")))
-          (error "Every script source block must contain executable content"))))))
+          (error "Every script source block must contain executable content"))
+        (let ((arguments
+               (org-babel-parse-header-arguments (or (caddr block) ""))))
+          (unless (equal (alist-get :eval arguments) "query")
+            (error "Every script source block must declare :eval query"))
+          (when (assq :tangle arguments)
+            (error "Script source blocks must not declare :tangle")))))))
 
 (defun denote-scribe--validate-note-body (body-file &optional kind)
   "Validate BODY-FILE as KIND, which defaults to `critical'."

@@ -128,6 +128,23 @@
           (should-error (denote-scribe--validate-script-body invalid)))
       (delete-file invalid))))
 
+(ert-deftest denote-script-validation-enforces-execution-without-tangling ()
+  (let ((template (denote-scribe-template-file 'script 'en)))
+    (dolist (replacement '("" ":eval query :tangle /tmp/generated.sh"))
+      (let ((body (make-temp-file "denote-script-policy-" nil ".org")))
+        (unwind-protect
+            (progn
+              (with-temp-file body
+                (insert-file-contents template)
+                (goto-char (point-min))
+                (search-forward "#+begin_src shell :eval query")
+                (replace-match
+                 (string-trim-right
+                  (concat "#+begin_src shell " replacement))
+                 t t))
+              (should-error (denote-scribe--validate-script-body body)))
+          (delete-file body))))))
+
 (ert-deftest denote-capture-forwards-script-kind ()
   (let (received-kind)
     (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)

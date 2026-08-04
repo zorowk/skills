@@ -12,18 +12,14 @@ description: >-
 Treat Denote as reasoning history and HyWiki as stable knowledge.
 
 ```text
-run?       := explicit record, review, or promotion request
-kind       := technical reasoning -> critical
-              contextual executable code -> script
-              stable reusable knowledge -> hywiki
-mutate?    := explicit authorization AND unambiguous target
-reusable?  := useful beyond one incident AND likely to answer future questions
-promote?   := reusable? AND clear scope AND traceable evidence
-done?      := requested effects exist AND completion verification passes
+kind      := technical reasoning -> critical
+             contextual executable code -> script
+             stable reusable knowledge -> hywiki
+reusable? := useful beyond one incident AND likely to answer future questions
+promote?  := reusable? AND clear scope AND traceable evidence
 ```
 
-Invoke the facade with one self-loading expression; `REQUEST` is a plist beginning
-with `:operation`:
+Invoke the facade with one self-loading expression:
 
 ```elisp
 (progn
@@ -31,18 +27,7 @@ with `:operation`:
   (denote-scribe-run REQUEST))
 ```
 
-## Execution and recovery
-
-```text
-known schema       -> call operation directly
-unknown schema     -> describe(target), then call
-invalid-request #1 -> describe(target), revise once
-invalid-request #2 -> stop
-partial            -> preserve evidence/effects; retry only the safe remainder
-stop               -> report observed effects and the remaining goal; no more facade calls
-```
-
-Send only schema-declared fields. Inspect the script only if the entry point fails.
+The facade owns request validation, authorization, effects, and recovery metadata.
 Read `references/hywiki-denote-interface.md` only for HyWiki integration.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
@@ -59,7 +44,6 @@ critical|script` (`critical` is the default), a concrete title, and string keywo
 critical := evidence separate from inference + counter-evidence + uncertainty + exact artifacts
 script   := purpose + boundary + prerequisites + inputs/side-effects + invocation
             + Org Babel executable + verification/recovery + maintenance + provenance
-script safety := exact language AND :eval query AND no :tangle AND no separate script file
 
 conversation capture:
   propose note + 0..3 valuable GTD candidates -> no mutation
@@ -67,8 +51,8 @@ conversation capture:
   confirmed GTD task created -> link-gtd(authorization=explicit)
 ```
 
-Read full notes only for truncated or disputed evidence. Put GTD backlinks below
-Open Questions or 开放问题 in critical notes. Never create unconfirmed tasks.
+Read full notes only for truncated or disputed evidence. Propose GTD candidates only
+when the conversation reveals valuable follow-up; never create unconfirmed tasks.
 
 ## Promotion and review
 
@@ -76,15 +60,8 @@ Open Questions or 开放问题 in critical notes. Never create unconfirmed tasks
 promote? := reusable? AND user can explain it
             AND (independent supporting notes >= 2
                  OR investigation status is supported|stable)
-review_done? := every page/item reviewed
-                AND truncated/disputed sources read
-                AND assessment is promoted|no-promotion
-                AND artifacts/templates/provenance verified
-                AND each promotion records criteria, rationale, support, and same-commit HyWiki page
 ```
 
 Reject bare terms, transient fixes, reference material, and unresolved questions.
-Merge aliases, deduplicate, preserve provenance, and allow no-promotion. Review
-delivery is never completion: pass complete `:review-verification`, not a boolean.
-Commit only files from this run when explicitly requested. Never push, promote, or
-create GTD tasks without explicit user intent.
+Merge aliases, deduplicate, preserve provenance, and allow no-promotion. Never push,
+promote, commit, or create GTD tasks without explicit user intent.

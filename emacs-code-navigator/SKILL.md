@@ -12,11 +12,9 @@ description: >-
 ```text
 run?  := the answer depends on live Emacs or project-navigation evidence
 live? := unsaved state OR cursor context OR session-backed capability
-done? := requested evidence is returned with its source and limitations
 ```
 
-Invoke the facade with one self-loading expression; `REQUEST` is a plist beginning
-with `:operation`:
+Invoke the facade with one self-loading expression:
 
 ```elisp
 (progn
@@ -24,18 +22,7 @@ with `:operation`:
   (emacs-code-navigator-query REQUEST))
 ```
 
-## Execution and recovery
-
-```text
-known schema       -> call operation directly
-unknown schema     -> describe(target), then call
-invalid-request #1 -> describe(target), revise once
-invalid-request #2 -> stop
-partial            -> keep returned evidence; retry only the safe missing query
-stop               -> report evidence and remaining query; no more facade calls
-```
-
-Send only schema-declared fields. Inspect the script only if the entry point fails.
+The facade owns request validation, source constraints, provenance, and recovery metadata.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
@@ -55,9 +42,9 @@ multiple explicit roots          -> locate-many(roots in user order)
 ```
 
 Let `auto` retain the live-session default. Read `:provenance` before combining
-results with disk evidence; call `file-state` when live and disk may differ.
-`symbols` preserves input order and reports misses. Use `:full t` only for complete
-Help facets. Treat projects independently; never assume xref or clangd crosses roots.
+results with disk evidence; call `file-state` when live and disk may differ. Use
+`:full t` only when complete Help facets matter. Treat projects independently;
+never assume xref or clangd crosses roots.
 
 ## Live-session boundaries
 
