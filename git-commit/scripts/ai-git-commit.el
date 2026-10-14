@@ -16,6 +16,8 @@
 (defvar skill-git-message-column)
 (defvar magit-display-buffer-noselect)
 (defvar magit-process-popup-time)
+(defvar magit-run-hooks-from-githooks)
+(defvar magit-githook-directory)
 (declare-function skill-git-format-message "../../common/scripts/skill-git"
                   (spec))
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
@@ -391,7 +393,14 @@ Permit regular files, symlinks, and tracked paths deleted from the worktree."
       ;; Keep the complete asynchronous operation headless.  In particular,
       ;; the process sentinel runs while `accept-process-output' waits below,
       ;; so these bindings must outlive the initial Magit call.
-      (let ((magit-process-popup-time -1)
+      ;; Magit's Git hooks call this Emacs through emacsclient.  A synchronous
+      ;; server evaluation cannot service that nested evaluation while waiting
+      ;; for Git, so disable only Magit's injected callback hooks here.  Clear
+      ;; the cached directory too; the switch alone does not bypass that cache.
+      ;; Repository Git hooks remain enabled, and both bindings are restored.
+      (let ((magit-run-hooks-from-githooks nil)
+            (magit-githook-directory nil)
+            (magit-process-popup-time -1)
             (magit-display-buffer-noselect t)
             (inhibit-message t)
             (message-log-max nil))
