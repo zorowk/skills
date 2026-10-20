@@ -173,11 +173,42 @@
      :request "Publish returned partial: HTML was generated, but asset copying failed. Continue."
      :expected (org-blog-exporter)
      :excluded ()
-     :expected-operation publish
+     :expected-operation resume
      :mutation conditional
      :control inspect-and-retry-selectively
      :completion forbidden
-     :reason "Completed export effects must be preserved while only safe remaining work is retried.")
+     :reason "Use the returned session recovery token to resume verified remaining work.")
+    (:id navigator-chinese-unsaved-buffer
+     :case-class positive
+     :request "分析当前光标所在函数，缓冲区里有尚未保存的修改。"
+     :expected (emacs-code-navigator)
+     :excluded (denote-scribe emacs-gtd-assistant)
+     :expected-operation context
+     :mutation forbidden
+     :control execute
+     :completion allowed
+     :reason "Unsaved cursor context requires live editor evidence in either language.")
+    (:id chinese-no-persistence-request
+     :case-class negative
+     :request "总结刚才的分析，以后可以继续研究 Eglot。"
+     :expected ()
+     :excluded (denote-scribe emacs-gtd-assistant org-blog-exporter)
+     :expected-operation nil
+     :mutation forbidden
+     :control answer-without-skill
+     :completion allowed
+     :reason "A Chinese summary and possible next step do not request persistence.")
+    (:id live-buffer-and-git-review
+     :case-class positive
+     :request "结合当前未保存的函数和 Git diff 审查问题，并说明哪些改动尚未进入磁盘。"
+     :expected (emacs-code-navigator git-commit)
+     :excluded (denote-scribe emacs-gtd-assistant)
+     :expected-operation nil
+     :expected-operations ((emacs-code-navigator . context) (git-commit . context))
+     :mutation forbidden
+     :control execute
+     :completion allowed
+     :reason "Live unsaved evidence and repository evidence require both facades with provenance.")
     (:id blog-invalid-request-schema-recovery
      :case-class schema-mismatch
      :request "The first publish call returned invalid-request, and the current operation schema is uncertain."

@@ -5,6 +5,38 @@
 (require 'test-helper)
 (require 'routing-cases)
 
+(skill-tests-load-many
+ '("emacs-code-navigator/scripts/emacs-code-navigator.el"
+   "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
+   "denote-scribe/scripts/denote-scribe.el"
+   "org-blog-exporter/scripts/org-blog-exporter.el"
+   "git-commit/scripts/ai-git-commit.el"))
+
+(defconst skill-routing-review-test-schemas
+  '((emacs-code-navigator . emacs-code-navigator--schemas)
+    (emacs-gtd-assistant . emacs-gtd--schemas)
+    (denote-scribe . denote-scribe--schemas)
+    (org-blog-exporter . org-blog-exporter--schemas)
+    (git-commit . ai-git-commit--schemas)))
+
+(ert-deftest routing-review-operations-exist-in-the-expected-facade ()
+  (dolist (case skill-routing-review-cases)
+    (let* ((expected (plist-get case :expected))
+           (operation (plist-get case :expected-operation))
+           (operations (plist-get case :expected-operations)))
+      (when (cdr expected)
+        (should-not operation)
+        (should (equal (sort (copy-sequence expected) #'string<)
+                       (sort (mapcar #'car operations) #'string<))))
+      (when operation
+        (should (= (length expected) 1))
+        (setq operations (list (cons (car expected) operation))))
+      (dolist (entry operations)
+        (should (memq (car entry) expected))
+        (let ((schema-symbol (alist-get (car entry) skill-routing-review-test-schemas)))
+          (should schema-symbol)
+          (should (assq (cdr entry) (symbol-value schema-symbol))))))))
+
 (defun skill-routing-review-test-symbol-list-p (value)
   "Return non-nil when VALUE is a proper list of symbols."
   (and (proper-list-p value) (seq-every-p #'symbolp value)))
