@@ -1,0 +1,82 @@
+#+title: Org 驱动的 AI 项目工作流改造
+#+startup: overview
+
+* 目标与约定
+由用户选择目标、任务和工作节奏；从 Org/Agenda 进入对应 AI 会话。
+先讨论形成需求、架构等项目文档，再按用户指令将实施步骤写成 Org 子任务。
+项目文档保存在项目仓库，链接挂到 Org 项目；Org 本身承担实施计划与进度。
+不使用 Hyperbole，不自动创建后续任务，不因 AI 回合结束而标记 DONE。
+聊天记录和截图集中保存到 ~/Dropbox/.agent-shell/；后端原生会话不承诺跨机恢复。
+
+本文件是这次改造的实施任务树；完成过程中直接更新，不另建实施文档。
+
+* DONE 1. 建立项目与任务的数据契约
+- 项目：独立 ID、PROJECT_DIR、仓库与主要文档 RESOURCES 链接。
+- 任务：独立 ID、目标/验收/接续信息、归属项目。
+- 会话：任务 ID、agent 配置、session ID、聊天记录路径，可一任务多会话。
+- get/list 查询不修改 Org；写入必须经统一 facade，并遵守已有显式授权。
+  保留原有 resolve 在唯一匹配时补建 ID 的兼容行为。
+- 支持 Agenda 中现有两个文件，不只支持 gtd.org。
+- 验收：可读取父项目资料；任务移动/改名后仍按 ID 识别；不继承父 ID。
+
+* DONE 2. 扩展 Org facade 与 skill
+- 增加读单个条目及项目上下文、项目配置、按父 ID 添加子任务的操作。
+- 保留原有查询、状态、链接与日志功能，避免破坏 Denote 等调用方。
+- 明确用户发起的项目拆分不受“聊天候选最多三项”限制。
+- 明确讨论到文档到任务的工作方式，现有授权足够时直接执行。
+- 验收：隔离临时 Org 文件测试层级、授权、写入和原有兼容行为。
+
+* DONE 3. 接入 agent-shell
+- 入口沿用 C-z a：从 Org 或 Agenda 识别项目，先选 AI，再选该项目会话。
+- 按明确 PROJECT_DIR 识别项目；普通待办不建 ID，保留原生行为。
+- 保存本次工作项与所选会话的关联；同项目子任务共享会话候选。
+- 无可恢复会话时可新建，并预填目标、文档入口和接续信息，等待用户发送。
+- 收尾命令预填总结请求，由 AI 通过 facade 更新任务日志/接续信息。
+- 存储按项目 ID 分目录；非 Org 会话也集中保存，按路径摘要隔离。
+- 不自动移动旧记录，不重定位已运行会话的 transcript。
+- 验收：mock agent API 验证复用、恢复/新建分支、异步关联与存储隔离。
+
+* DONE 4. 配置 Emacs 用户入口
+- init-llm.el 加载技能仓库中的集成模块，配置 Dropbox 存储位置。
+- Org 和 Agenda 使用相同的开始/继续及收尾快捷键。
+- 沿用原来的 Agenda 视图，不增加额外工作视图。
+- 保留原有 agent、代码上下文和个人任务配置。
+- 验收：批处理配置检查，并在运行中的 Emacs 验证命令和只读上下文。
+
+* DONE 5. 验证与交付
+- 执行相关 ERT、skill frontmatter 校验，检查两个仓库差异。
+- 如存在失败，区分新问题与已有问题；记录已执行的证据。
+- 提供开始/继续、收尾的实际操作方式。
+- 本次不创建 Mahjong 项目，不更改现有任务状态，不提交 Git。
+
+* 实施记录
+- 2026-10-20：已读取现有 .emacs.d 配置、Org/agent-shell 文档及 skill facade。
+- 初始工作树：skills 与 .emacs.d 均无未提交修改。
+
+- 已完成：新增 emacs-gtd-project.el 和 agent-shell-org-tasks.el；扩展 skill 与工作流说明。
+- 已完成：.emacs.d/elisp/init-llm.el 加载集成；保持 init-org.el 原有配置。
+- 验证：skills 全量 106 项 ERT 通过；.emacs.d 全量 40 项 ERT 通过。
+- 验证：skill quick_validate 与两个仓库的 git diff --check 通过。
+- 验证：实际 agent-shell + 本地模拟 ACP 服务完成握手、异步 ID 关联、集中路径和未发送 prompt 检查。
+- 验证：运行中 Emacs 的 Org/Agenda 快捷键、存储函数、两个管理文件、A 视图、preflight 均正常。
+- 已修复：跨文件 outline 缓存、父子 drawer 定位，以及冷启动时 org-agenda 延迟加载顺序问题。
+- 使用：项目标题上 M-x emacs-gtd-agent-configure-project；工作项上 C-z a；
+  C-u C-z a 新开；C-c C-x w 收尾；shell 内 C-c C-x o 回任务。
+- 边界：未迁移旧记录，未修改个人任务状态，未创建 Mahjong 项目，未发真实 AI 请求，未提交 Git。
+- 边界：恢复失败时保留关联并提示用 C-u 新开；跨机恢复仍依赖后端原生会话状态。
+- 维护：精确 cwd/新建策略通过单独包装调用当前 agent-shell--start；升级包后可复跑相关测试。
+
+* DONE 入口修订：沿用原快捷键和项目会话选择
+- Org 与 Agenda 的 C-z a 统一识别最近的 PROJECT_DIR，先弹出 AI 选择，再走原生会话选择。
+- 同一项目的所有任务共享该 AI 的会话候选，不再自动恢复任务最近的一次会话。
+- 会话列表按 cwd 精确筛选；活跃 buffer 同时按 cwd 与 agent identifier 筛选。
+- 无项目关联的条目走原生 agent-shell，不创建 ID；取消 AI 选择不修改 Org。
+- 选中已有活跃会话时更新本次工作项关联；收尾不再重新弹出 AI 选择。
+- 验证：skills 全量 108 项与 .emacs.d 40 项测试通过；收尾调整后领域测试再次通过。
+- 验证：本地 ACP session/list 同时返回当前项目和更近的外项目会话，实际原生选择流程排除外项目。
+- 验证：当前 Emacs 的 Org/Agenda C-z a 已更新，global C-z a 仍为 agent-shell。
+- 会话列表与恢复仍依赖 AI 后端能力；普通项目目录下的旧会话无需提前绑定 Org。
+
+* DONE 清理多余入口
+- 按用户要求移除额外 A 工作视图及 C-c C-x a 重复入口；保留原 C-z a、收尾与回任务功能。
+- init-org.el 恢复原有内容，测试和使用说明同步清理。

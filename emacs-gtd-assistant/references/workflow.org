@@ -1,0 +1,53 @@
+#+title: Org 与 agent-shell 工作流
+
+* 入口
+先选择 Org 的项目标题，执行 =M-x emacs-gtd-agent-configure-project=，选择代码目录。
+这会保存该标题自己的 ID 和 PROJECT_DIR，不改 TODO 状态。
+仓库、需求与架构文档链接放在项目的 RESOURCES 抽屉。
+
+Org 与 Agenda：
+- =C-z a=：沿用原快捷键，先选 AI，再选该 AI 在此项目的会话或新建。
+- 同一项目下所有子任务共享项目会话候选，旧会话不要求预先关联过 Org。
+- =C-u C-z a=：选 AI 后直接新建。
+- 仅当前条目或祖先有 PROJECT_DIR 时启用；普通待办保持原生 agent-shell 行为，不建 ID。
+- 识别依赖明确的项目目录，不猜标题；取消 AI 选择不会改 Org。
+
+agent-shell：
+- =C-c C-x w=：准备收尾请求。
+- =C-c C-x o=：回到关联的 Org 工作项。
+
+沿用原来的 Org Agenda 视图，无需切换到额外视图。
+这些入口都不自动发送 prompt，不自动改变 TODO 状态。
+
+* 从讨论到执行
+项目可以只有标题和资料，先从项目进入讨论会话。
+确认需求与架构文档后，明确让 AI 将实施步骤写成项目下的 Org 子任务。
+任务正文写目标与验收条件，CONTEXT 写当前接续点，LOGBOOK 写有日期的结果。
+通过项目级资料和任务上下文接手，不需要每次重读全部聊天。
+
+* 数据约定
+- ID：项目与每个工作项各自唯一，不能继承父项目的 ID。
+- PROJECT_DIR：最近一个包含此属性的标题是当前工作项的项目。
+- RESOURCES：仓库与需求、架构等文档的 Org 链接。
+- CONTEXT：短接续说明。
+- LOGBOOK：收尾结果、实际验证及阻塞。
+- AI_SESSIONS：集成模块维护的 JSON 会话列表，最新关联在前。
+  每条包含 agent 配置 identifier、session-id、cwd、transcript、更新时间。
+
+只操作配置的 gtd.org 及 emacs-gtd-extra-files；其他 Org 文件需先显式加入。
+跨文件移动工作项后，确保目标文件仍在此列表中。重复 ID 会报歧义。
+
+* 文件与恢复
+新会话的 transcript、截图等保存到 ~/Dropbox/.agent-shell/：
+- 有项目 ID：projects/<项目ID的SHA256>/<资料子目录>/。
+- 普通未绑定会话：unbound/<本地项目路径的SHA256>/<资料子目录>/。
+目录解析函数不创建目录，agent-shell 按需创建。
+
+已有正在运行的会话 transcript 路径不变；旧项目 .agent-shell 不自动搬迁。
+日志同步不代表 agent 原生会话同步。恢复依赖本机后端保留的会话状态。
+先选 AI，再使用后端 session/list 和原生会话选择界面。
+历史会话按项目目录精确筛选，活跃 buffer 同时按目录与 agent 筛选。
+未报告 cwd 的历史会话不猜归属；后端不支持会话列表/恢复时沿用其新建行为。
+选择同一项目的活跃会话时，将本次工作项上下文关联到所选会话。
+恢复失败时不删除历史、不偷偷开新会话；用 C-u C-z a 明确新开并携带 Org 接续信息。
+本集成仅对本地存在的项目目录启用。

@@ -43,6 +43,16 @@
   :type 'string
   :group 'emacs-gtd-assistant)
 
+(defcustom emacs-gtd-extra-files nil
+  "Additional Org files explicitly managed by this facade."
+  :type '(repeat file)
+  :group 'emacs-gtd-assistant)
+
+(defun emacs-gtd--files ()
+  "Return explicitly configured managed Org files, primary file first."
+  (delete-dups (mapcar #'expand-file-name
+                      (cons (emacs-gtd--file) emacs-gtd-extra-files))))
+
 (defcustom emacs-gtd-default-headline "Personal"
   "Default top-level heading for newly added tasks."
   :type 'string
@@ -455,9 +465,13 @@ When INACTIVE is non-nil, return an inactive timestamp like
   (save-restriction
     (org-narrow-to-subtree)
     (goto-char (point-min))
-    (unless (re-search-forward
-             (format "^:%s:[ \t]*$" (regexp-quote name)) nil t)
-      (error "Task has no %s drawer" name))
+    (let ((end (save-excursion (outline-next-heading) (point))))
+      (unless (re-search-forward
+               (format "^:%s:[ \t]*$" (regexp-quote name)) end t)
+        (goto-char (point-min))
+        (org-end-of-meta-data t)
+        (insert (format ":%s:\n:END:\n" name))
+        (forward-line -2)))
     (forward-line 1)
     (let ((content-start (point)))
       (unless (re-search-forward "^:END:[ \t]*$" nil t)
@@ -492,7 +506,7 @@ Create an ID only when CREATE-ID is non-nil."
                (org-entry-get (point) "ID")))
          (tags (org-get-tags nil t))
          (line (line-number-at-pos))
-         (outline (org-get-outline-path t t)))
+         (outline (org-get-outline-path t)))
     `((id . ,id)
       (todo . ,todo)
       (priority . ,(and priority (char-to-string priority)))
@@ -523,34 +537,49 @@ Create an ID only when CREATE-ID is non-nil."
     result))
 
 (defun emacs-gtd--find-id (id)
-  "Move point to Org entry with ID in the GTD file."
+  "Move to the unique local ID in the configured managed files.
+Reading an identity does not require writable access or create an ID."
   (emacs-gtd--single-line id "ID")
-  (set-buffer (emacs-gtd--buffer t))
-  (widen)
-  (let ((position (org-find-property "ID" id)))
-    (unless position
+  (let (matches)
+    (dolist (file (emacs-gtd--files))
+      (when (file-readable-p file)
+        (with-current-buffer (find-file-noselect file)
+          (org-with-wide-buffer
+           (org-map-entries
+            (lambda ()
+              (when (equal (org-entry-get nil "ID" nil) id)
+                (push (point-marker) matches))) nil 'file)))))
+    (unless (= (length matches) 1)
+      (mapc (lambda (marker) (set-marker marker nil)) matches)
       (skill-runtime-signal
-       'skill-runtime-not-found
-       (format "No GTD item with ID: %s" id)
-       :target-type 'gtd-id
-       :target id))
-    (goto-char position)
-    (org-back-to-heading t)))
+       (if matches 'skill-runtime-ambiguous 'skill-runtime-not-found)
+       (format "Expected one managed Org entry with ID %s; found %d"
+               id (length matches))
+       :target-type 'gtd-id :target id))
+    (let ((marker (car matches)))
+      (set-buffer (marker-buffer marker))
+      (widen)
+      (goto-char marker)
+      (set-marker marker nil)
+      (org-back-to-heading t))))
 
 (defun emacs-gtd--ensure-id-at-point ()
   "Ensure current heading has an ID and return it."
   (org-id-get-create))
 
 ;;;###autoload
-(defun emacs-gtd-ensure-id-at-line (line)
+(defun emacs-gtd-ensure-id-at-line (line &optional file)
   "Ensure the GTD item at LINE has an ID and return the item."
   (unless (and (integerp line) (> line 0))
     (error "LINE must be a positive integer"))
-  (with-current-buffer (emacs-gtd--buffer t)
+  (when (and file (not (member (expand-file-name file) (emacs-gtd--files))))
+    (error "File is outside managed Org files: %s" file))
+  (with-current-buffer (if file (find-file-noselect file) (emacs-gtd--buffer t))
     (widen)
     (goto-char (point-min))
     (forward-line (1- line))
-    (org-back-to-heading t)
+    (unless (org-at-heading-p)
+      (error "LINE must point to an Org heading"))
     (emacs-gtd--ensure-id-at-point)
     (let ((item (emacs-gtd--item-at-point)))
       (emacs-gtd--save)
@@ -559,18 +588,17 @@ Create an ID only when CREATE-ID is non-nil."
 ;;;###autoload
 (defun emacs-gtd-list (&optional include-done)
   "Return GTD items.  Omit done/cancelled items unless INCLUDE-DONE is non-nil."
-  (with-current-buffer (emacs-gtd--buffer)
-    (org-with-wide-buffer
-     (let (items)
-       (org-map-entries
-       (lambda ()
-          (let ((todo (org-get-todo-state)))
-            (when (and (emacs-gtd--actionable-heading-p)
-                       (or include-done
-                           (not (member todo '("DONE" "CANCELLED")))))
-              (push (emacs-gtd--item-at-point) items))))
-        nil 'file)
-       (nreverse items)))))
+  (let (items)
+    (dolist (file (emacs-gtd--files))
+      (when (file-readable-p file)
+        (with-current-buffer (find-file-noselect file)
+          (org-with-wide-buffer
+           (org-map-entries
+            (lambda ()
+              (when (and (emacs-gtd--actionable-heading-p)
+                         (or include-done (not (org-entry-is-done-p))))
+                (push (emacs-gtd--item-at-point) items))) nil 'file)))))
+    (nreverse items)))
 
 ;;;###autoload
 (defun emacs-gtd-find-by-title (query &optional include-done)
@@ -604,7 +632,7 @@ result contains one :item with a persistent ID.  Other results contain
               :item
               (or (and (cdr (assq 'id item)) item)
                   (emacs-gtd-ensure-id-at-line
-                   (cdr (assq 'line item))))))))))
+                   (cdr (assq 'line item)) (cdr (assq 'file item))))))))))
 
 ;;;###autoload
 (defun emacs-gtd-add-task (title &optional plist defer-save)
@@ -736,9 +764,7 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
 (defun emacs-gtd-set-context (id context-notes)
   "Replace task ID's CONTEXT drawer and return the updated item."
   (emacs-gtd--find-id id)
-  (let ((title (org-get-heading t t t t)))
-    (emacs-gtd--validate-task-spec
-     (list :title title :context-notes context-notes)))
+  (emacs-gtd--validate-context-notes context-notes)
   (emacs-gtd--replace-drawer-content "CONTEXT" context-notes)
   (emacs-gtd--find-id id)
   (let ((item (emacs-gtd--item-at-point t)))
@@ -924,13 +950,16 @@ Use :operation `describe' to request operation schemas only when needed."
             operation
             (if (stringp value) value (emacs-gtd--compact-item value))
             1 nil nil (list :mutated t)))))
-      (_ (error "Unknown GTD operation %S; expected %S"
-                operation (mapcar #'car emacs-gtd--schemas))))))
+      (_ (emacs-gtd-project-execute request)))))
 
 ;;;###autoload
 (defun emacs-gtd-execute (request)
   "Execute measured GTD REQUEST."
   (skill-runtime-measure request (lambda () (emacs-gtd--execute request))))
+
+(load (expand-file-name "emacs-gtd-project.el"
+                        (file-name-directory (or load-file-name buffer-file-name)))
+      nil nil t)
 
 (provide 'emacs-gtd-assistant)
 
