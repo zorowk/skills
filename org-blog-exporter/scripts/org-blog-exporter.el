@@ -157,9 +157,144 @@ instead."
       (:generated-files-committed :commit-exists :committed-paths
                                   :push-succeeded :branch :upstream
                                   :commit :upstream-commit)))
+    (resume
+     :summary "Resume an unchanged partial publish using its session-local recovery token."
+     :required (:recovery-token :authorization)
+     :optional (:offset :limit :full)
+     :types ((:recovery-token non-empty-string))
+     :choices ((:authorization explicit))
+     :effects (:exported-count :changed :commit :push))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `org-blog-exporter-run'.")
+
+(defvar org-blog-exporter--recoveries nil
+  "At most sixteen partial publish checkpoints in this Emacs session.")
+
+(defvar org-blog-exporter--publish-context nil
+  "Dynamically bound inputs for the current publish operation.")
+
+(defun org-blog-exporter--fingerprints (files)
+  "Snapshot exact contents and resolved paths of FILES, including absent files."
+  (mapcar
+   (lambda (file)
+     (list file (file-truename file)
+           (cond ((file-symlink-p file) 'symlink)
+                 ((file-regular-p file) 'file)
+                 ((file-directory-p file) 'directory)
+                 ((file-exists-p file) 'other)
+                 (t 'absent))
+           (and (file-regular-p file) (org-blog-exporter--file-digest file))))
+   (delete-dups (copy-sequence files))))
+
+(defun org-blog-exporter--checkpoint (stage progress)
+  "Remember STAGE and PROGRESS for a bounded, verified selective retry."
+  (when (and org-blog-exporter--publish-context
+             (plist-get (plist-get org-blog-exporter--publish-context :repository)
+                        :remote-url))
+    (let* ((context (copy-tree org-blog-exporter--publish-context))
+           (repository (plist-get context :repository))
+           (root (plist-get repository :git-root))
+           (default-directory root)
+           (outputs
+            (append
+             (mapcar (lambda (file)
+                       (org-blog-exporter--target-file
+                        file root (plist-get context :notes-dir)
+                        (plist-get context :setupfile)))
+                     (plist-get context :files))
+             (list (expand-file-name "index.html" root))
+             (mapcar (lambda (entry) (plist-get entry :target))
+                     (plist-get context :asset-plan))))
+           (inputs
+            (append (plist-get context :files)
+                    (list (org-blog-exporter--setupfile
+                           (plist-get context :setupfile)))
+                    (mapcar (lambda (entry) (plist-get entry :source))
+                            (plist-get context :asset-plan))))
+           (token (secure-hash 'sha256
+                               (format "%s%s%s" (float-time) (random) root))))
+      (dolist (entry (list (cons :stage stage) (cons :progress (copy-tree progress))
+                           (cons :head (magit-git-string "rev-parse" "HEAD"))
+                           (cons :branch (magit-git-string "symbolic-ref" "HEAD"))
+                           (cons :git-config (magit-git-items "config" "--null" "--list"))
+                           (cons :outputs outputs)
+                           (cons :fingerprints (org-blog-exporter--fingerprints
+                                                (append inputs outputs)))))
+        (setq context (plist-put context (car entry) (cdr entry))))
+      (push (cons token context)
+            org-blog-exporter--recoveries)
+      (setq org-blog-exporter--recoveries
+            (seq-take org-blog-exporter--recoveries 16))
+      token)))
+
+(defun org-blog-exporter-resume (token)
+  "Resume TOKEN once after verifying inputs, outputs, HEAD, and changed paths.
+Tokens belong to this Emacs session.  A failed retry returns a new token."
+  (let* ((context (cdr (assoc token org-blog-exporter--recoveries)))
+         (repository (plist-get context :repository))
+         (root (plist-get repository :git-root)))
+    (unless context
+      (skill-runtime-signal 'skill-runtime-not-found
+                            "Publish recovery token is absent or expired"))
+    (let* ((default-directory root)
+           (outputs (plist-get context :outputs))
+           (dirty (delete-dups
+                   (append (magit-git-items "diff" "--name-only" "-z" "HEAD")
+                           (magit-git-items "diff" "--cached" "--name-only" "-z")
+                           (magit-git-items "ls-files" "--others"
+                                            "--exclude-standard" "-z"))))
+           (fingerprints (plist-get context :fingerprints)))
+      (unless
+          (and (equal (plist-get context :head)
+                      (magit-git-string "rev-parse" "HEAD"))
+               (equal (plist-get context :branch)
+                      (magit-git-string "symbolic-ref" "HEAD"))
+               (equal (plist-get context :git-config)
+                      (magit-git-items "config" "--null" "--list"))
+               (equal fingerprints
+                      (org-blog-exporter--fingerprints (mapcar #'car fingerprints)))
+               (seq-every-p
+                (lambda (path)
+                  (let ((absolute (expand-file-name path root)))
+                    (and (member absolute outputs)
+                         (file-in-directory-p (file-truename absolute) root))))
+                dirty))
+        (skill-runtime-signal 'skill-runtime-stale-context
+                              "Publish inputs, outputs, HEAD or unrelated paths changed"))
+      (setq org-blog-exporter--recoveries
+            (assoc-delete-all token org-blog-exporter--recoveries))
+      (let* ((org-blog-exporter--publish-context context)
+             (progress (copy-tree (plist-get context :progress)))
+             (stage (plist-get context :stage)))
+        (dolist (key '(:error-count :errors :recovery-token))
+          (setq progress (plist-put progress key nil)))
+        (if (eq stage 'push)
+            (org-blog-exporter--push-result repository progress)
+          (when (eq stage 'export)
+            (let* ((remaining (seq-difference (plist-get context :files)
+                                              (mapcar (lambda (a) (plist-get a :source))
+                                                      (plist-get progress :artifacts))
+                                              #'equal))
+                   (artifacts (copy-sequence (plist-get progress :artifacts))))
+              (dolist (file remaining)
+                (condition-case err
+                    (let ((artifact
+                           (org-blog-exporter--export-file-artifact
+                            file root (plist-get context :setupfile)
+                            (org-blog-exporter--asset-targets
+                             (plist-get context :asset-plan))
+                            (plist-get context :notes-dir))))
+                      (setq artifacts (append artifacts (list artifact)))
+                      (setq progress (plist-put progress :artifacts artifacts)
+                            progress (plist-put progress :exported
+                                                (mapcar (lambda (a) (plist-get a :output)) artifacts))
+                            progress (plist-put progress :exported-count (length artifacts))))
+                  (file-error (org-blog-exporter--signal-partial-publish 'export err progress))))))
+          (org-blog-exporter--complete-publish
+           repository (plist-get context :files) (plist-get context :setupfile)
+           (plist-get context :notes-dir) (plist-get context :asset-plan)
+           progress (plist-get context :title)))))))
 
 (defconst org-blog-exporter--assessment-properties
   '(("STATUS" "Status" "状态")
@@ -637,11 +772,24 @@ Use Chinese labels when CHINESE is non-nil."
 (defun org-blog-exporter--export-file-artifacts
     (org-files &optional output-dir setupfile asset-targets notes-dir)
   "Export ORG-FILES and return verified artifact descriptions."
-  (mapcar
-   (lambda (file)
-     (org-blog-exporter--export-file-artifact
-      file output-dir setupfile asset-targets notes-dir))
-   org-files))
+  (let (artifacts)
+    (dolist (file org-files)
+      (condition-case err
+          (push (org-blog-exporter--export-file-artifact
+                 file output-dir setupfile asset-targets notes-dir) artifacts)
+        (file-error
+         (if (not org-blog-exporter--publish-context)
+             (signal (car err) (cdr err))
+           (org-blog-exporter--signal-partial-publish
+            'export err
+            (list :scope 'files :candidate-count (length org-files)
+                  :candidates org-files :artifacts (reverse artifacts)
+                  :exported (mapcar (lambda (a) (plist-get a :output))
+                                    (reverse artifacts))
+                  :exported-count (length artifacts) :output-directory output-dir
+                  :asset-plan-count
+                  (length (plist-get org-blog-exporter--publish-context :asset-plan))))))))
+    (nreverse artifacts)))
 
 (defun org-blog-exporter-export-files
     (org-files &optional output-dir setupfile asset-targets notes-dir)
@@ -876,7 +1024,7 @@ starting; all-file export preserves per-file error reporting."
           (list :artifact
                 (org-blog-exporter--artifact-verification
                  checked-artifacts))))
-    (when (eq operation 'publish)
+    (when (memq operation '(publish resume))
       (setq verification
             (append
              verification
@@ -903,22 +1051,50 @@ starting; all-file export preserves per-file error reporting."
 (defun org-blog-exporter--signal-partial-publish (stage error-data result)
   "Signal a structured partial publish at STAGE with ERROR-DATA and RESULT."
   (let* ((message (error-message-string error-data))
-         (failed
-          (append result
-                  (list :changed nil :commit nil :push nil
-                        :error-count 1
-                        :errors (list (list stage message))))))
+         (failed (copy-tree result)))
+    (setq failed (plist-put failed :error-count 1)
+          failed (plist-put failed :errors (list (list stage message))))
+    (when-let* ((token (condition-case nil
+                           (org-blog-exporter--checkpoint stage failed)
+                         (file-error nil))))
+      (setq failed (plist-put failed :recovery-token token)))
     (skill-runtime-signal
      'skill-runtime-partial-failure
      (format "Blog publish stopped during %s: %s" stage message)
      :stage stage
+     :recovery-token (plist-get failed :recovery-token)
      :cause message
      :data failed
      :count (or (plist-get failed :exported-count) 0)
      :effects (org-blog-exporter--effects 'publish failed)
      :verification (org-blog-exporter--verification 'publish failed))))
 
-(defun org-blog-exporter--finish-publish (repository exported title)
+(defun org-blog-exporter--push-result (repository progress)
+  "Push the already committed PROGRESS, retaining it on an operational failure."
+  (let* ((root (plist-get repository :git-root))
+         (commit (plist-get progress :commit))
+         (result (copy-tree progress))
+         (push
+          (condition-case err
+              (progn (skill-git-assert-clean root) (skill-git-push root))
+            (error (org-blog-exporter--signal-partial-publish 'push err progress))))
+         (commit-id (plist-get commit :commit))
+         (pushed-id (plist-get push :commit)))
+    (unless (and commit-id pushed-id (string-prefix-p commit-id pushed-id)
+                 (plist-get push :verified))
+      (org-blog-exporter--signal-partial-publish
+       'push '(error "Published commit verification failed") progress))
+    (setq result (plist-put result :push push)
+          result (plist-put result :repository-verification
+                            (list :generated-files-committed t :commit-exists t
+                                  :committed-paths (plist-get commit :paths)
+                                  :push-succeeded t :branch (plist-get push :branch)
+                                  :upstream (plist-get push :upstream)
+                                  :commit pushed-id
+                                  :upstream-commit (plist-get push :upstream-commit))))
+    result))
+
+(defun org-blog-exporter--finish-publish (repository exported title &optional progress)
   "Commit EXPORTED files in REPOSITORY with structured TITLE evidence, then push."
   (let* ((root (plist-get repository :git-root))
          (relative-paths
@@ -929,14 +1105,18 @@ starting; all-file export preserves per-file error reporting."
                   exported))
          (status (skill-git-status root relative-paths)))
     (if (string-empty-p status)
-        (append repository
-                (list
-                 :changed nil :exported exported :commit nil :push nil
-                 :repository-verification
-                 (list :generated-files-committed 'already-clean
-                       :commit-exists 'not-created
-                       :committed-paths relative-paths
-                       :push-succeeded 'not-needed)))
+        (let ((result (copy-tree (append progress repository))))
+          (setq result (plist-put result :changed nil)
+                result (plist-put result :exported
+                                  (or (plist-get progress :exported) exported))
+                result (plist-put result :commit nil)
+                result (plist-put result :push nil)
+                result (plist-put result :repository-verification
+                                  (list :generated-files-committed 'already-clean
+                                        :commit-exists 'not-created
+                                        :committed-paths relative-paths
+                                        :push-succeeded 'not-needed)))
+          result)
       (let* ((message
               (skill-git-format-message
                (list
@@ -960,41 +1140,30 @@ starting; all-file export preserves per-file error reporting."
                 (concat "Source Org notes and unrelated repository paths are not committed by "
                         "this publish step."))))
              (commit
-              (skill-git-commit-paths
-               root message exported
-               #'org-blog-exporter--published-relative-path-p
-               "published blog files")))
-        (skill-git-assert-clean root)
-        (let* ((push (skill-git-push root))
-               (commit-id (plist-get commit :commit))
-               (pushed-id (plist-get push :commit))
-               (committed-paths (plist-get commit :paths))
+              (condition-case err
+                  (skill-git-commit-paths
+                   root message exported
+                   #'org-blog-exporter--published-relative-path-p
+                   "published blog files")
+                (error (org-blog-exporter--signal-partial-publish
+                        'commit err progress)))))
+        (let* ((committed-paths (plist-get commit :paths))
                (paths-match
                 (equal (sort (copy-sequence relative-paths) #'string<)
                        (sort (copy-sequence committed-paths) #'string<)))
-               (commit-matches
-                (and commit-id pushed-id
-                     (string-prefix-p commit-id pushed-id))))
-          (unless (and paths-match commit-matches
-                       (plist-get push :verified))
-            (error "Published commit verification failed in %s" root))
-          (append
-           repository
-           (list
-            :changed t
-            :exported exported
-            :commit commit
-            :push push
-            :repository-verification
-            (list :generated-files-committed paths-match
-                  :commit-exists commit-matches
-                  :committed-paths committed-paths
-                  :push-succeeded (plist-get push :verified)
-                  :branch (plist-get push :branch)
-                  :upstream (plist-get push :upstream)
-                  :commit pushed-id
-                  :upstream-commit
-                  (plist-get push :upstream-commit)))))))))
+               (committed (copy-tree (append progress repository))))
+          (setq committed (plist-put committed :changed t)
+                committed (plist-put committed :commit commit)
+                committed (plist-put committed :exported
+                                     (or (plist-get progress :exported) exported))
+                committed (plist-put committed :repository-verification
+                                     (list :generated-files-committed paths-match
+                                           :commit-exists t :push-succeeded nil
+                                           :committed-paths committed-paths)))
+          (unless paths-match
+            (org-blog-exporter--signal-partial-publish
+             'commit '(error "Committed paths differ from generated paths") committed))
+          (org-blog-exporter--push-result repository committed))))))
 
 (defun org-blog-exporter--complete-publish
     (repository source-files setupfile notes-dir asset-plan progress title)
@@ -1008,12 +1177,13 @@ TITLE retain their public publish meanings."
         assets)
     (setq
      index-file
-     (condition-case error-data
-         (org-blog-exporter-update-index
-          source-files root setupfile notes-dir)
-       (file-error
-        (org-blog-exporter--signal-partial-publish
-         'index error-data progress))))
+     (or (plist-get progress :index)
+	 (condition-case error-data
+             (org-blog-exporter-update-index
+              source-files root setupfile notes-dir)
+	   (file-error
+            (org-blog-exporter--signal-partial-publish
+             'index error-data progress)))))
     (setq progress (plist-put progress :index index-file))
     (condition-case error-data
         (setq
@@ -1023,18 +1193,17 @@ TITLE retain their public publish meanings."
           (lambda (target)
             (setq progress
                   (plist-put progress :assets
-                             (append (plist-get progress :assets)
-                                     (list target)))))))
+                             (delete-dups
+                              (append (plist-get progress :assets)
+                                      (list target))))))))
       (file-error
        (org-blog-exporter--signal-partial-publish
         'assets error-data progress)))
     (setq progress (plist-put progress :assets assets))
-    (append
-     progress
-     (org-blog-exporter--finish-publish
-      repository
-      (append (plist-get progress :exported) (list index-file) assets)
-      title))))
+    (org-blog-exporter--finish-publish
+     repository
+     (append (plist-get progress :exported) (list index-file) assets)
+     title progress)))
 
 ;;;###autoload
 (defun org-blog-exporter-publish-files
@@ -1054,6 +1223,9 @@ commit only generated paths, and push."
          (root (plist-get repository :git-root))
          (asset-plan (org-blog-exporter--asset-plan org-files root))
          (asset-targets (org-blog-exporter--asset-targets asset-plan))
+         (org-blog-exporter--publish-context
+          (list :repository repository :files org-files :setupfile setupfile
+                :notes-dir notes-dir :asset-plan asset-plan :title title))
          (artifacts
           (org-blog-exporter--export-file-artifacts
            org-files root setupfile asset-targets notes-dir))
@@ -1090,6 +1262,9 @@ commit only generated paths, and push."
          (files (org-blog-exporter-list-candidates notes-dir))
          (asset-plan (org-blog-exporter--asset-plan files root))
          (asset-targets (org-blog-exporter--asset-targets asset-plan))
+         (org-blog-exporter--publish-context
+          (list :repository repository :files files :setupfile setupfile
+                :notes-dir notes-dir :asset-plan asset-plan :title title))
          (summary (org-blog-exporter-export-all
                    notes-dir root setupfile asset-targets)))
     (unless (zerop (plist-get summary :error-count))
@@ -1186,7 +1361,7 @@ CAUSES may provide the bounded error page exposed by a compact response."
      (list :exported-count
            (or (plist-get result :exported-count)
                (length (plist-get result :exported)))))
-    ('publish
+    ((or 'publish 'resume)
      (list :exported-count
            (or (plist-get result :exported-count)
                (length (plist-get result :exported)))
@@ -1230,6 +1405,8 @@ Use :operation `describe' to request operation schemas only when needed."
                (plist-get request :notes-dir)
                (plist-get request :repository-dir)
                (plist-get request :setupfile))))
+            ('resume
+             (org-blog-exporter-resume (plist-get request :recovery-token)))
             (_ (error "Unknown blog operation: %S" operation)))))
     (cond
      ((eq operation 'describe)
