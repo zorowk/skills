@@ -1,14 +1,14 @@
 # AI Skills
 
 一组面向 AI 助手的本地 skills。它们把可靠性约束、运行中的 Emacs 状态，以及
-Denote、HyWiki、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流。
+Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流。
 
 ## Skills
 
 | Skill | 功能 | 典型请求 |
 | --- | --- | --- |
 | [`ai-constitution`](ai-constitution/SKILL.md) | 在复杂、不确定或高影响任务中应用轻量可靠性原则：先理解和验证，再执行最小、可逆的改动；简单任务仍保持直接。 | “严格分析这个问题并验证结论” |
-| [`denote-scribe`](denote-scribe/SKILL.md) | 将已完成的排障、开发或研究对话保存为中英文 Denote 批判性思考笔记；按 Git 提交节奏执行 AI Review，将成熟概念提炼到 HyWiki，并通过非交互式 Magit 提交本次生成的文件。 | “输出 Denote 报告” |
+| [`denote-scribe`](denote-scribe/SKILL.md) | 将确认的技术讨论与脚本保存为 Denote 笔记，支持笔记回顾、Org 任务链接，以及明确授权后的 Git 提交。 | “输出 Denote 报告” |
 | [`emacs-code-navigator`](emacs-code-navigator/SKILL.md) | 将运行中的 Emacs 作为能力注册表和代码上下文来源：区分 live buffer 与磁盘内容并报告来源和分歧，同时支持 Help、项目搜索、Imenu、xref、Eldoc/Eglot 和 Flymake。 | “Emacs 里有什么函数能完成这个任务？”“查看这个符号的文档和源码” |
 | [`emacs-gtd-assistant`](emacs-gtd-assistant/SKILL.md) | 从 Org/Agenda 任务进入 AI 会话，关联项目文档、实施子任务和接续进度；也支持常规任务管理。 | “列出今天的任务”“把这个任务标记为 DONE” |
 | [`org-blog-exporter`](org-blog-exporter/SKILL.md) | 将 `~/Dropbox/notes` 中符合条件的 Org 笔记导出为静态 HTML；支持单篇、批量和全量导出。明确要求发布时，还可更新索引、复制并重写本地资源、提交并推送博客仓库。 | “预览这篇 Org 笔记”“发布博客” |
@@ -40,7 +40,7 @@ flowchart LR
         SOURCES["agent-shell-context-sources"]
         BUFFER["live buffer<br/>光标与未保存内容"]
         CODEAPI["project / Imenu / xref<br/>Eldoc / Eglot / Flymake"]
-        ORG["Org / Denote / HyWiki<br/>Org exporter"]
+        ORG["Org / Denote<br/>Org exporter"]
         MAGIT["Magit / Git<br/>最终 Git 事实"]
     end
 
@@ -126,8 +126,7 @@ project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。它
 符合 critical template 的笔记提案，并从提取的问题中提出零至三个真正有价值、可执行的
 GTD 后续任务。确认后先创建 Denote，再把该文件作为 `file:` resource 写入每个 GTD，
 最后把返回的 GTD `id:` 链接写回 Denote 的 `Related GTD / 相关 GTD` 二级小节。跨文件
-操作不伪装成原子事务；后续步骤失败时必须报告已完成部分并提供修复。该流程不会自动创建
-HyWiki、commit 或 push。
+操作不伪装成原子事务；后续步骤失败时必须报告已完成部分并提供修复。该流程不会自动 commit 或 push。
 
 提交信息中的 `validation` 仍是 AI 必须提供的内部证据，用于判断声明是否可靠；`git-commit`
 默认不把测试命令、通过数量等 validation 内容写入 commit body，而是在操作完成后向用户
@@ -161,19 +160,19 @@ Actions 中调用 AI，也不会持久化调用内容。
 
 ## 主要工作流
 
-### Denote、AI Review 与 HyWiki
+### Denote 与 AI Review
 
-`denote-scribe` 不只是生成一个看起来像 Denote 的文件名，而是实际调用 Denote：
+`denote-scribe` 通过 Denote 创建笔记，支持中文与英文的推理笔记和 Org Babel 脚本笔记。
+项目专属的需求、架构保留在项目仓库；实施步骤与接续进度保留在 Org 项目和任务中。
+Denote 用于值得长期保存的研究、排障推理，以及具有用途、运行条件和恢复说明的脚本。
 
-1. 根据对话语言选用中英文批判性笔记模板，区分证据、推断、反证和不确定性。
-2. 创建 Denote Org 笔记，并检查距离上次 AI Review 的 Git 提交数；首次运行会进行全量 bootstrap review。
-3. 先复查未解决和已解决的问题，再评估概念。只有具备可解释模型、可追溯依据、复用价值和清晰边界的成熟概念才会进入 HyWiki；一次有效 review 可以不生成概念页。
-4. 通过共享 formatter 提交本次新建的 Denote 笔记和变更的 HyWiki 页面。skill 不会 push。
+回顾按已有 Git 提交间隔判断是否到期，首次包括全部笔记；按页读取摘要，对截断或有争议
+的证据按需读取全文。回顾结论记录笔记证据、结论和未解决问题，不再生成另一套 Wiki 页面。
+明确授权提交时，仅提交本次指定的 `notes/*.org`；回顾完成标记要求完整分页覆盖和实质评估。
+不会自动提交或推送。
 
-默认目录为 `~/Dropbox/notes/`、`~/Dropbox/hywiki/` 和 Git 仓库
-`~/Dropbox/`；默认每 5 次仓库提交触发一次 review，均可通过 Emacs
-custom variables 调整。Review 默认每页返回 8 篇笔记，每个关键章节最多 500 个字符；
-调用方应遍历所有分页，仅对截断或有争议的证据读取全文。
+默认笔记目录为 `~/Dropbox/notes/`，Git 仓库为 `~/Dropbox/`；默认每 5 次仓库提交
+到期一次 review。每页默认返回 8 篇笔记，每个关键章节最多 500 个字符，均可配置。
 
 ### Org 博客导出与发布
 
@@ -199,7 +198,7 @@ push 流程。
 
 额外依赖如下：
 
-- `denote-scribe`：Denote、HyWiki、Magit，以及包含 `notes/` 和 `hywiki/` 的 Git 仓库；
+- `denote-scribe`：Denote、Magit，以及包含 `notes/` 的 Git 仓库；
 - `emacs-code-navigator`：Emacs 的 `project`、`xref`、Imenu；Eglot 和 Flymake 为按需能力；
 - `emacs-gtd-assistant`：Org mode 和已有的 GTD 文件及目标 heading；
 - `org-blog-exporter`：Org HTML exporter；发布流程还需要 Magit、Git 仓库和远端权限；

@@ -165,7 +165,6 @@ instead."
   '(("STATUS" "Status" "状态")
     ("CREDIBILITY" "Credibility" "可信度")
     ("MATURITY" "Maturity" "成熟度")
-    ("HYWIKI_CANDIDATE" "HyWiki candidate" "HyWiki 候选")
     ("REVIEW_PERIOD" "Review period" "审查周期")
     ("QUESTION_STATUS" "Question status" "问题状态")
     ("REVIEW_DATE" "Review date" "复查日期"))

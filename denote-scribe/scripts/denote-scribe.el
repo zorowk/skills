@@ -55,13 +55,8 @@
   :type 'directory
   :group 'denote-scribe)
 
-(defcustom denote-scribe-hywiki-directory "~/Dropbox/hywiki/"
-  "Directory where Denote Scribe creates stable HyWiki concept pages."
-  :type 'directory
-  :group 'denote-scribe)
-
 (defcustom denote-scribe-git-directory "~/Dropbox/"
-  "Git repository containing Denote notes and HyWiki pages."
+  "Git repository containing Denote notes."
   :type 'directory
   :group 'denote-scribe)
 
@@ -95,11 +90,7 @@
 
 (defvar denote-directory)
 (defvar denote-save-buffers)
-(defvar hywiki-directory)
 (declare-function denote "denote")
-(declare-function hywiki-add-page "hywiki" (page-name &optional force-flag))
-(declare-function hywiki-get-existing-page-file "hywiki" (reference))
-(declare-function hywiki-word-is-p "hywiki" (word))
 (declare-function magit-git-lines "magit-git" (&rest args))
 (declare-function magit-git-string "magit-git" (&rest args))
 (declare-function skill-git-commit-paths
@@ -133,16 +124,6 @@
     "验证与恢复" "维护说明" "来源")
   "Required Chinese headings for a contextual script note, in order.")
 
-(defconst denote-scribe-hywiki-headings
-  '("Context" "Definition" "My Understanding" "Why It Matters" "Evidence"
-    "Reasoning" "Boundaries" "Related Concepts" "Open Questions" "Provenance")
-  "Required English headings for a HyWiki concept body, in order.")
-
-(defconst denote-scribe-hywiki-headings-zh
-  '("背景" "定义" "我的理解" "价值" "证据" "推理" "边界" "相关概念" "开放问题"
-    "溯源")
-  "Required Chinese headings for a HyWiki concept body, in order.")
-
 (defconst denote-scribe-review-summary-headings
   '("Question" "Evidence" "Conclusion" "Open Questions" "Extract Concepts"
     "核心问题" "证据" "结论" "开放问题" "提取概念"
@@ -151,11 +132,11 @@
   "Note headings included in compact AI-review summaries.")
 
 (defconst denote-scribe--schemas
-  '((preflight :summary "Validate Denote, HyWiki, and repository configuration."
-               :optional (:notes-dir :hywiki-dir :git-dir))
-    (template :summary "Return the exact critical-note, script-note, or HyWiki template."
+  '((preflight :summary "Validate Denote and repository configuration."
+               :optional (:notes-dir :git-dir))
+    (template :summary "Return the exact critical-note or script-note template."
               :required (:kind :language)
-              :choices ((:kind critical script hywiki) (:language en zh)))
+              :choices ((:kind critical script) (:language en zh)))
     (create :summary "Create one Denote note from a completed body file."
             :required (:title :body-file :authorization)
             :optional (:kind :keywords :notes-dir :signature :date :git-dir)
@@ -182,18 +163,13 @@
       :workflow
       (:review-due :page-offset :page-limit :items-returned :item-total
                    :next-offset :all-pages-returned :completion)
-      :knowledge-assessment (:outcome)))
+      :note-assessment (:outcome)))
     (summarize :summary "Extract bounded critical sections from one note."
                :required (:file) :optional (:section-maximum))
     (list :summary "Return a filtered page of Denote notes."
           :optional (:start :end :notes-dir :keywords :offset :limit))
-    (hywiki :summary "Create or replace one explicitly authorized HyWiki page."
-            :required (:page-name :body-file :authorization)
-            :optional (:replace :hywiki-dir)
-            :choices ((:authorization explicit))
-            :effects (:mutated))
     (commit
-     :summary "Commit run files; mark review complete only from structured evidence."
+     :summary "Commit note files; mark review complete only from structured evidence."
      :required (:title :paths :authorization)
      :optional (:review-verification :kind :git-dir)
      :closed t
@@ -202,142 +178,61 @@
       (:paths non-empty-string-list)
       (:review-verification
        (plist
-        :required (:artifact :workflow :knowledge-assessment)
+        :required (:artifact :workflow :note-assessment)
         :closed t
         :types
         ((:artifact
-          (plist
-           :required
-           (:review-files :templates-valid :provenance-valid)
-           :optional (:hywiki-files)
-           :closed t
-           :types
-           ((:review-files (list-of existing-file :min-items 1))
-            (:hywiki-files (list-of existing-file)))
-           :choices
-           ((:templates-valid valid)
-            (:provenance-valid valid))))
+          (plist :required (:review-files :templates-valid :provenance-valid)
+                 :closed t
+                 :types ((:review-files (list-of existing-file :min-items 1)))
+                 :choices ((:templates-valid valid) (:provenance-valid valid))))
          (:workflow
-          (plist
-           :required
-           (:pages-reviewed :page-total :items-reviewed :item-total
-                            :completion)
-           :optional (:review-marker-commit)
-           :closed t
-           :types
-           ((:pages-reviewed (integer :min 1))
-            (:page-total (integer :min 1))
-            (:items-reviewed (integer :min 1))
-            (:item-total (integer :min 1))
-            (:review-marker-commit string))
-           :choices ((:completion complete))))
-         (:knowledge-assessment
-          (plist
-           :required (:outcome :criteria :rationale)
-           :optional
-           (:supporting-notes :promoted-pages :evidence-basis)
-           :closed t
-           :types
-           ((:rationale non-empty-string)
-            (:supporting-notes (list-of existing-file))
-            (:promoted-pages (list-of existing-file))
-            (:criteria
-             (plist
-              :required
-              (:explainable-model :traceable-support :reuse-value
-                                  :clear-boundary :deep-stable)
-              :closed t
-              :choices
-              ((:explainable-model passed not-passed)
-               (:traceable-support passed not-passed)
-               (:reuse-value passed not-passed)
-               (:clear-boundary passed not-passed)
-               (:deep-stable passed not-passed not-applicable)))))
-           :choices
-           ((:outcome promoted no-promotion)
-            (:evidence-basis independent-notes deep-stable))))))))
+          (plist :required (:pages-reviewed :page-total :items-reviewed :item-total :completion)
+                 :optional (:review-marker-commit) :closed t
+                 :types ((:pages-reviewed (integer :min 1)) (:page-total (integer :min 1))
+                         (:items-reviewed (integer :min 1)) (:item-total (integer :min 1))
+                         (:review-marker-commit string))
+                 :choices ((:completion complete))))
+         (:note-assessment
+          (plist :required (:outcome :summary) :closed t
+                 :types ((:summary non-empty-string))
+                 :choices ((:outcome reviewed))))))))
      :validators
-     ((:review-verification
-       denote-scribe--valid-review-verification-p
-       "Review verification must prove complete pagination and a valid knowledge outcome."))
+     ((:review-verification denote-scribe--valid-review-verification-p
+                            "Review evidence must prove complete coverage and a note assessment."))
      :choices ((:authorization explicit) (:kind feat fix))
      :effects (:committed)
      :verification
-     (:artifact
-      (:review-files :hywiki-files :templates-valid :provenance-valid
-                     :committed-paths)
-      :workflow
-      (:pages-reviewed :page-total :items-reviewed :item-total
-                       :completion :review-completed)
-      :knowledge-assessment
-      (:outcome :criteria :supporting-notes :promoted-pages
-                :evidence-basis :rationale)))
+     (:artifact (:review-files :templates-valid :provenance-valid :committed-paths)
+      :workflow (:pages-reviewed :page-total :items-reviewed :item-total :completion :review-completed)
+      :note-assessment (:outcome :summary)))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `denote-scribe-run'.")
 
 (defun denote-scribe--valid-review-verification-p (verification)
-  "Return non-nil when VERIFICATION proves a complete review outcome."
+  "Return non-nil when VERIFICATION proves full note review coverage."
   (let* ((artifact (plist-get verification :artifact))
          (workflow (plist-get verification :workflow))
-         (assessment (plist-get verification :knowledge-assessment))
-         (review-files (plist-get artifact :review-files))
-         (pages-reviewed (plist-get workflow :pages-reviewed))
-         (page-total (plist-get workflow :page-total))
-         (items-reviewed (plist-get workflow :items-reviewed))
-         (item-total (plist-get workflow :item-total))
-         (outcome (plist-get assessment :outcome))
-         (criteria (plist-get assessment :criteria))
-         (supporting-notes (plist-get assessment :supporting-notes))
-         (promoted-pages (plist-get assessment :promoted-pages))
-         (evidence-basis (plist-get assessment :evidence-basis))
-         (reviewed-paths
-          (delete-dups (mapcar #'file-truename review-files)))
-         (supporting-paths
-          (delete-dups (mapcar #'file-truename supporting-notes))))
+         (assessment (plist-get verification :note-assessment))
+         (files (plist-get artifact :review-files)))
     (unless (and (eq (plist-get workflow :completion) 'complete)
-                 (= pages-reviewed page-total)
-                 (= items-reviewed item-total)
-                 (= item-total (length review-files))
-                 (= (length reviewed-paths) (length review-files)))
+                 (= (plist-get workflow :pages-reviewed) (plist-get workflow :page-total))
+                 (= (plist-get workflow :items-reviewed) (plist-get workflow :item-total))
+                 (= (plist-get workflow :item-total) (length files))
+                 (= (length (delete-dups (mapcar #'file-truename files))) (length files)))
       (error "Review pagination or item coverage is incomplete"))
-    (dolist (note supporting-notes)
-      (unless (member (file-truename note) reviewed-paths)
-        (error "Supporting note was not part of the completed review: %s"
-               note)))
-    (pcase outcome
-      ('no-promotion
-       (when promoted-pages
-         (error "No-promotion assessment cannot include promoted pages")))
-      ('promoted
-       (unless
-           (seq-every-p
-            (lambda (criterion)
-              (eq (plist-get criteria criterion) 'passed))
-            '(:explainable-model :traceable-support
-              :reuse-value :clear-boundary))
-         (error "Promotion requires every core knowledge criterion to pass"))
-       (unless promoted-pages
-         (error "Promotion requires at least one promoted HyWiki page"))
-       (pcase evidence-basis
-         ('independent-notes
-          (unless (>= (length supporting-paths) 2)
-            (error "Independent-note promotion requires two supporting notes")))
-         ('deep-stable
-          (unless (and supporting-notes
-                       (eq (plist-get criteria :deep-stable) 'passed))
-            (error "Deep-stable promotion requires one supporting note and stable depth")))
-         (_
-          (error "Promotion requires an explicit evidence basis"))))
-      (_
-       (error "Unknown knowledge assessment outcome: %S" outcome)))
+    (unless (and (eq (plist-get assessment :outcome) 'reviewed)
+                 (stringp (plist-get assessment :summary))
+                 (not (string-empty-p (string-trim (plist-get assessment :summary)))))
+      (error "Completed review requires a substantive note assessment"))
     t))
 
 ;;;###autoload
 (defun denote-scribe-template-file (kind &optional language)
   "Return the bundled template for KIND and LANGUAGE.
 
-KIND is `critical', `script', or `hywiki'.  LANGUAGE is `en' or `zh' and defaults to
+KIND is `critical' or `script'.  LANGUAGE is `en' or `zh' and defaults to
 `en'.  Signal an error if the selected template is unavailable."
   (let* ((lang (or language 'en))
          (name
@@ -346,8 +241,6 @@ KIND is `critical', `script', or `hywiki'.  LANGUAGE is `en' or `zh' and default
             (`(critical . zh) "critical-note-template-zh.org")
             (`(script . en) "script-note-template.org")
             (`(script . zh) "script-note-template-zh.org")
-            (`(hywiki . en) "hywiki-concept-template.org")
-            (`(hywiki . zh) "hywiki-concept-template-zh.org")
             (_ (error "Unknown template kind/language: %S/%S" kind lang))))
          (file (expand-file-name name
                                  (expand-file-name "assets"
@@ -447,16 +340,6 @@ SCHEMAS is a list of accepted top-level heading lists for LABEL."
     ('critical (denote-scribe--validate-critical-body body-file))
     ('script (denote-scribe--validate-script-body body-file))
     (other (error "Unknown Denote note kind: %S" other))))
-
-(defun denote-scribe--validate-hywiki-body (body-file)
-  "Validate concept-page structure in readable Org BODY-FILE."
-  (with-temp-buffer
-    (insert-file-contents body-file)
-    (delay-mode-hooks (org-mode))
-    (denote-scribe--validate-headings
-     (denote-scribe--org-tree)
-     (list denote-scribe-hywiki-headings denote-scribe-hywiki-headings-zh)
-     "HyWiki body")))
 
 (defun denote-scribe--fill-org-buffer ()
   "Fill prose paragraphs in the current Org buffer."
@@ -563,43 +446,23 @@ changing the critical template's required top-level headings."
          (save-buffer))))
     (list :file note :tasks validated)))
 
-(defun denote-scribe-preflight (&optional notes-dir hywiki-dir git-dir)
-  "Return a plist describing whether Denote, HyWiki, and Magit are available."
-  (let* ((target-dir
-          (denote-scribe--directory notes-dir denote-scribe-notes-directory))
-         (target-hywiki-dir
-          (denote-scribe--directory hywiki-dir
-                                    denote-scribe-hywiki-directory))
+(defun denote-scribe-preflight (&optional notes-dir git-dir)
+  "Describe whether Denote, Magit, notes and repository are available."
+  (let* ((target-dir (denote-scribe--directory notes-dir denote-scribe-notes-directory))
          (denote-available (require 'denote nil t))
-         (hywiki-available (require 'hywiki nil t))
          (magit-available (require 'magit nil t))
-         (target-git-dir
-          (denote-scribe--directory git-dir denote-scribe-git-directory))
+         (target-git-dir (denote-scribe--directory git-dir denote-scribe-git-directory))
          (git-root (and magit-available
                         (ignore-errors (skill-git-root target-git-dir))))
-         (errors nil))
+         errors)
     (unless (file-directory-p target-dir)
       (push (format "Notes directory does not exist: %s" target-dir) errors))
-    (unless denote-available
-      (push "Denote is not available in this Emacs session" errors))
-    (unless (file-directory-p target-hywiki-dir)
-      (push (format "HyWiki directory does not exist: %s" target-hywiki-dir)
-            errors))
-    (unless hywiki-available
-      (push "HyWiki is not available in this Emacs session" errors))
-    (unless magit-available
-      (push "Magit is not available in this Emacs session" errors))
-    (unless git-root
-      (push (format "Not inside a Git repository: %s" target-git-dir) errors))
-    (list :notes-directory target-dir
-          :notes-directory-exists (file-directory-p target-dir)
-          :denote-available (and denote-available t)
-          :hywiki-directory target-hywiki-dir
-          :hywiki-directory-exists (file-directory-p target-hywiki-dir)
-          :hywiki-available (and hywiki-available t)
-          :git-directory target-git-dir
-          :git-root git-root
-          :magit-available (and magit-available t)
+    (unless denote-available (push "Denote is not available in this Emacs session" errors))
+    (unless magit-available (push "Magit is not available in this Emacs session" errors))
+    (unless git-root (push (format "Not inside a Git repository: %s" target-git-dir) errors))
+    (list :notes-directory target-dir :notes-directory-exists (file-directory-p target-dir)
+          :denote-available (and denote-available t) :git-directory target-git-dir
+          :git-root git-root :magit-available (and magit-available t)
           :errors (nreverse errors))))
 
 (defun denote-scribe--git-root (&optional git-dir)
@@ -788,7 +651,7 @@ when a returned section is truncated or requires deeper evidence checking."
            :all-pages-returned
            (not (plist-get review :truncated))
            :completion 'pending-assessment)
-     :knowledge-assessment (list :outcome 'pending))))
+     :note-assessment (list :outcome 'pending))))
 
 ;;;###autoload
 (defun denote-scribe-create-with-review-context
@@ -818,8 +681,8 @@ review plus the newly created report."
     (title paths review-verification &optional kind git-dir)
   "Commit explicit PATHS with TITLE through noninteractive Magit APIs.
 
-REVIEW-VERIFICATION non-nil must prove complete pagination and either a valid
-promotion or no-promotion outcome.  It inserts
+REVIEW-VERIFICATION non-nil must prove complete pagination and a substantive
+note assessment.  It inserts
 `denote-scribe-review-commit-marker' in the subject.  KIND defaults to \"feat\"
 and may be \"feat\" or \"fix\".  Return the commit and separated verification."
   (unless (and (stringp title) (not (string-empty-p title))
@@ -850,40 +713,23 @@ and may be \"feat\" or \"fix\".  Return the commit and separated verification."
             :changes
             (delq nil
                   (list
-                   (format "Create or update %d path-scoped Denote or HyWiki Org file(s)."
+                   (format "Create or update %d path-scoped Denote Org file(s)."
                            (length paths))
                    (and review-completed
                         "Record that every due AI-review page was evaluated.")))
             :reason
-            "Keeping generated reasoning and promoted knowledge together preserves traceability."
+            "Keeping reasoning and its review evidence together preserves traceability."
             :validation
-            "Validated the explicit files and restricted the commit to notes/*.org or hywiki/*.org."
+            "Validated the explicit files and restricted the commit to notes/*.org."
             :boundary
             "No unrelated repository paths are staged and this workflow never pushes.")))
-         (_
-          (when review-verification
-            (let* ((promoted-pages
-                    (plist-get
-                     (plist-get
-                      review-verification :knowledge-assessment)
-                     :promoted-pages))
-                   (committed
-                    (mapcar
-                     (lambda (path)
-                       (file-truename (expand-file-name path root)))
-                     paths)))
-              (dolist (page promoted-pages)
-                (unless (member (file-truename page) committed)
-                  (error
-                   "Promoted HyWiki page is absent from commit paths: %s"
-                   page))))))
          (result
           (skill-git-commit-paths
            root message paths
            (lambda (relative)
              (string-match-p
-              "\\`\\(?:notes\\|hywiki\\)/[^/]+\\.org\\'" relative))
-           "notes/*.org or hywiki/*.org")))
+              "\\`notes/[^/]+\\.org\\'" relative))
+           "notes/*.org")))
     (let ((verification
            (if review-verification
                (list
@@ -897,15 +743,15 @@ and may be \"feat\" or \"fix\".  Return the commit and separated verification."
                  (copy-tree
                   (plist-get review-verification :workflow))
                  (list :review-completed t))
-                :knowledge-assessment
+                :note-assessment
                 (copy-tree
                  (plist-get review-verification
-                            :knowledge-assessment)))
+                            :note-assessment)))
              (list
               :artifact
               (list :committed-paths (plist-get result :paths))
               :workflow (list :review-completed nil)
-              :knowledge-assessment (list :outcome 'not-requested)))))
+              :note-assessment (list :outcome 'not-requested)))))
       (append result
               (list :review-completed review-completed
                     :verification verification)))))
@@ -1008,49 +854,6 @@ Return the created file path."
     file))
 
 ;;;###autoload
-(defun denote-scribe-hywiki-create
-    (page-name body-file &optional replace hywiki-dir)
-  "Create HyWiki PAGE-NAME from BODY-FILE and return a result plist.
-
-Refuse to replace an existing non-empty page unless REPLACE is non-nil.
-HYWIKI-DIR overrides `denote-scribe-hywiki-directory'.  PAGE-NAME must be a
-plain HyWikiWord without a section suffix."
-  (unless (and (stringp page-name) (not (string-empty-p page-name)))
-    (error "PAGE-NAME must be a non-empty string"))
-  (unless (and (stringp body-file) (file-readable-p body-file))
-    (error "BODY-FILE is not readable: %S" body-file))
-  (denote-scribe--validate-hywiki-body body-file)
-  (unless (require 'hywiki nil t)
-    (error "HyWiki is not available in this Emacs session"))
-  (unless (and (hywiki-word-is-p page-name)
-               (not (string-match-p "#" page-name)))
-    (error "Invalid HyWiki PAGE-NAME (uppercase initial and letters only): %S"
-           page-name))
-  (let* ((target-dir
-          (denote-scribe--directory hywiki-dir
-                                    denote-scribe-hywiki-directory))
-         (hywiki-directory target-dir)
-         (existing (hywiki-get-existing-page-file page-name))
-         (existing-nonempty
-          (and existing (> (file-attribute-size (file-attributes existing)) 0))))
-    (unless (file-directory-p target-dir)
-      (error "HyWiki directory does not exist: %s" target-dir))
-    (when (and existing-nonempty (not replace))
-      (error "Refusing to replace non-empty HyWiki page: %s" existing))
-    ;; Programmatic creation is already authorized by this helper call.  Binding
-    ;; `noninteractive' avoids HyWiki's special prompt for the very first page.
-    (let* ((noninteractive t)
-           (page-file (cdr (hywiki-add-page page-name (and replace t)))))
-      (unless page-file
-        (error "HyWiki did not create or return page: %s" page-name))
-      (with-current-buffer (find-file-noselect page-file)
-        (insert-file-contents body-file nil nil nil t)
-        (denote-scribe--fill-org-buffer)
-        (save-buffer))
-      (list :page-name page-name
-            :file page-file
-            :status (if existing-nonempty 'replaced 'created)))))
-
 ;;;###autoload
 (defun denote-scribe--run (request)
   "Execute Denote Scribe REQUEST through one compact public entry point.
@@ -1065,7 +868,6 @@ Use :operation `describe' to request operation schemas only when needed."
        (let ((data
               (denote-scribe-preflight
                (plist-get request :notes-dir)
-               (plist-get request :hywiki-dir)
                (plist-get request :git-dir))))
          (skill-runtime-result
           operation data 1
@@ -1142,15 +944,6 @@ Use :operation `describe' to request operation schemas only when needed."
          (skill-runtime-result
           operation (plist-get page :items) (length files) 'ok
           (plist-get page :page))))
-      ('hywiki
-       (skill-runtime-result
-        operation
-        (denote-scribe-hywiki-create
-         (plist-get request :page-name)
-         (plist-get request :body-file)
-         (plist-get request :replace)
-         (plist-get request :hywiki-dir))
-        1 nil nil (list :mutated t)))
       ('commit
        (let ((committed
               (denote-scribe-git-commit

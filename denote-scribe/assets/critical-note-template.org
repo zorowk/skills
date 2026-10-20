@@ -40,7 +40,6 @@ What is unresolved, and what evidence would resolve it?
 ** ConceptName
 :PROPERTIES:
 :MATURITY: provisional | supported | stable
-:HYWIKI_CANDIDATE: yes | no
 :END:
 - Definition:
 - Evidence:

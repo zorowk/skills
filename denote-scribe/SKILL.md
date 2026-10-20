@@ -3,21 +3,16 @@ name: denote-scribe
 description: >-
   Capture confirmed technical or research conversations as Denote reasoning notes, preserve
   executable scripts with their purpose and operating context in Org Babel notes, optionally link
-  follow-up Org GTD tasks, review existing notes, and promote mature HyWiki knowledge. Use when the
-  user explicitly asks to record, review, or promote persistent Denote knowledge or contextual scripts.
+  follow-up Org GTD tasks, and review existing notes. Use when the user explicitly asks to record
+  or review persistent Denote knowledge or contextual scripts.
 ---
 
 # Denote Scribe
 
-Treat Denote as reasoning history and HyWiki as stable knowledge.
-
-```text
-kind      := technical reasoning -> critical
-             contextual executable code -> script
-             stable reusable knowledge -> hywiki
-reusable? := useful beyond one incident AND likely to answer future questions
-promote?  := reusable? AND clear scope AND traceable evidence
-```
+Use Denote for durable reasoning notes and contextual executable scripts.
+Project-specific requirements and architecture belong in the project repository;
+implementation tasks and progress belong in Org, linked to the relevant documents.
+Capture cross-project knowledge in Denote when the user wants to preserve it.
 
 Invoke the facade with one self-loading expression:
 
@@ -28,7 +23,6 @@ Invoke the facade with one self-loading expression:
 ```
 
 The facade owns request validation, authorization, effects, and recovery metadata.
-Read `references/hywiki-denote-interface.md` only for HyWiki integration.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
@@ -54,14 +48,17 @@ conversation capture:
 Read full notes only for truncated or disputed evidence. Propose GTD candidates only
 when the conversation reveals valuable follow-up; never create unconfirmed tasks.
 
-## Promotion and review
+## Review
 
-```text
-promote? := reusable? AND user can explain it
-            AND (independent supporting notes >= 2
-                 OR investigation status is supported|stable)
-```
+Review notes for evidence, conclusions, unresolved questions, and useful links.
+Read full notes for truncated or disputed evidence. Complete every review page
+before marking a review complete; returning summaries alone is not assessment.
 
-Reject bare terms, transient fixes, reference material, and unresolved questions.
-Merge aliases, deduplicate, preserve provenance, and allow no-promotion. Never push,
-promote, commit, or create GTD tasks without explicit user intent.
+When explicitly asked to commit a completed review, supply `:review-verification`
+with artifact/template/provenance checks, complete pagination and item coverage,
+and `:note-assessment` containing `:outcome reviewed` and a substantive `:summary`.
+Use the facade's `describe` operation for the exact schema when needed.
+
+Preserve provenance and existing note links. Do not create a separate wiki or
+copy notes into another knowledge system. Never commit, push, or create GTD tasks
+without explicit user intent.

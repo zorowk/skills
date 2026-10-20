@@ -40,7 +40,6 @@
 ** 概念名
 :PROPERTIES:
 :MATURITY: 暂定 | 有支持 | 稳定
-:HYWIKI_CANDIDATE: 是 | 否
 :END:
 - 定义：
 - 证据：
