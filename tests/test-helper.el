@@ -36,6 +36,26 @@
     (error
      "Magit is required for this skill test suite; install it in an Emacs package directory")))
 
+(defun skill-tests-git (&rest args)
+  "Run Git ARGS in `default-directory', failing on any unsuccessful command."
+  (with-temp-buffer
+    (unless (zerop (apply #'process-file "git" nil (current-buffer) nil args))
+      (error "Test Git command failed: %S: %s" args (buffer-string)))
+    (string-trim-right (buffer-string))))
+
+(defmacro skill-tests-with-git-repository (&rest body)
+  "Run BODY in an isolated Git repository bound as ROOT, then remove it."
+  (declare (indent 0))
+  `(let* ((root (make-temp-file "skill-git-test-" t))
+          (default-directory (file-name-as-directory root)))
+     (unwind-protect
+         (progn
+           (skill-tests-git "init" "-q")
+           (skill-tests-git "config" "user.name" "Skill Tests")
+           (skill-tests-git "config" "user.email" "tests@example.invalid")
+           ,@body)
+       (delete-directory root t))))
+
 (defun skill-contract-tests-assert-failure (result status code)
   "Assert RESULT is a structured failure with STATUS and CODE."
   (should (= (plist-get result :protocol-version) 2))

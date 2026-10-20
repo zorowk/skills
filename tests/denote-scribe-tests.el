@@ -13,6 +13,27 @@
 (defvar denote-scribe-review-commit-marker)
 (defvar skill-git--body-label-regexp)
 
+(ert-deftest denote-incremental-review-includes-modified-notes-with-special-names ()
+  (skill-tests-require-git)
+  (skill-tests-require-magit)
+  (skill-tests-with-git-repository
+    (make-directory "notes")
+    (let ((old (expand-file-name "notes/20260101T000000--中文.org"))
+          (new (expand-file-name "notes/20260102T000000--new.org")))
+      (with-temp-file old (insert "* Old\n"))
+      (skill-tests-git "add" ".")
+      (skill-tests-git "commit" "-qm" "review")
+      (let ((marker (skill-tests-git "rev-parse" "HEAD")))
+        (with-temp-file old (insert "* Updated\n"))
+        (with-temp-file "notes/ignored.txt" (insert "not a note"))
+        (skill-tests-git "add" ".")
+        (skill-tests-git "commit" "-qm" "update")
+        (with-temp-file new (insert "* New\n"))
+        (should (equal (denote-scribe--review-files
+                        new (list :git-root root :marker-commit marker)
+                        (expand-file-name "notes"))
+                       (list old new)))))))
+
 (defun skill-contract-tests-review-verification (review-files)
   "Return completed note review evidence for tests."
   (list :artifact (list :review-files review-files :templates-valid 'valid :provenance-valid 'valid)

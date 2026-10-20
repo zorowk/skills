@@ -525,14 +525,14 @@ Denote commit that has not yet been created."
             (let ((default-directory root))
               (mapcar
                (lambda (relative) (expand-file-name relative root))
-               (magit-git-lines
-                "diff" "--name-only" "--diff-filter=ACMRT"
-                (concat marker "..HEAD") "--"
-                (concat notes-relative "*.org"))))))
+               (magit-git-items
+                "diff" "--name-only" "-z" "--diff-filter=ACMRT"
+                (concat marker "..HEAD") "--" notes-relative)))))
          (candidate-files (delete-dups (append files (list new-note)))))
     (seq-filter
      (lambda (file)
-       (and (file-regular-p file)
+       (and (string-equal (file-name-extension file) "org")
+            (file-regular-p file)
             (file-in-directory-p (file-truename file) notes-root)))
      candidate-files)))
 

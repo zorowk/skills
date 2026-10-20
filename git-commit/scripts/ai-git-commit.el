@@ -169,8 +169,8 @@ user after the operation.  It is omitted from Git history by default."
 (defun ai-git-commit--untracked-diff (&optional scope-paths)
   "Return bounded untracked diff evidence, optionally within SCOPE-PATHS."
   (let ((paths
-         (apply #'magit-git-lines
-                (append '("ls-files" "--others" "--exclude-standard")
+         (apply #'magit-git-items
+                (append '("ls-files" "-z" "--others" "--exclude-standard")
                         (and scope-paths (cons "--" scope-paths)))))
         sections
         truncated)

@@ -22,6 +22,17 @@
 (skill-tests-require-git)
 (skill-tests-require-magit)
 
+(ert-deftest git-context-preserves-untracked-special-filenames-and-content ()
+  (skill-tests-with-git-repository
+    (let ((names '("中文.el" "tab\tname.el" "line\nname.el" "quote\"name.el")))
+      (dolist (name names)
+        (with-temp-file name (insert "(message \"untracked-content\")\n")))
+      (let ((result (ai-git-commit-context root t)))
+        (should (equal (sort (copy-sequence (plist-get result :untracked-files)) #'string<)
+                       (sort (copy-sequence names) #'string<)))
+        (should (string-match-p "untracked-content" (plist-get result :diff)))
+        (should-not (string-match-p "Untracked empty file" (plist-get result :diff)))))))
+
 (ert-deftest git-message-auto-compacts-low-risk-work ()
   (let ((message (ai-git-commit-format skill-contract-tests-message-spec)))
     (should-not (string-match-p "Domain capabilities" message))
@@ -65,7 +76,7 @@
 
 (ert-deftest git-context-collects-bounded-untracked-diffs ()
   (let ((ai-git-commit-untracked-file-maximum-characters 24))
-    (cl-letf (((symbol-function 'magit-git-lines)
+    (cl-letf (((symbol-function 'magit-git-items)
                (lambda (&rest _) '("new.el")))
               ((symbol-function 'magit-git-insert)
                (lambda (&rest _)
