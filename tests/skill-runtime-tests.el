@@ -11,6 +11,34 @@
 (defvar skill-runtime-envelope-version)
 (defvar skill-runtime-metrics-version)
 
+(ert-deftest skill-runtime-rejects-improper-and-circular-list-values ()
+  (let ((cycle (list "one")))
+    (setcdr cycle cycle)
+    (dolist (type '(non-empty-string-list list-of-plists (list-of string)))
+      (dolist (value (list '("one" . "two") cycle))
+        (skill-contract-tests-assert-failure
+         (skill-runtime-measure
+          (list :operation 'test :items value)
+          (lambda ()
+            (skill-runtime-validate-request
+             `((test :required (:items) :types ((:items ,type))))
+             (list :operation 'test :items value))))
+         'needs-input 'invalid-request)))))
+
+(ert-deftest skill-runtime-explicit-recovery-overrides-defaults-without-duplicates ()
+  (let* ((result
+          (skill-runtime-measure
+           '(:operation test)
+           (lambda ()
+             (skill-runtime-signal 'skill-runtime-conflict "Cannot retry"
+                                   :status 'failed :retry 'never
+                                   :required-action 'inspect-implementation))))
+         (error-data (plist-get result :error)))
+    (should (eq (plist-get result :status) 'failed))
+    (should (eq (plist-get error-data :retry) 'never))
+    (should (eq (plist-get error-data :required-action) 'inspect-implementation))
+    (should (= (cl-count :retry error-data) 1))))
+
 (defconst skill-runtime-test-public-failures
   '((skill-runtime-invalid-request
      needs-input invalid-request after-input revise-request)

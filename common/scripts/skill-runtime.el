@@ -127,7 +127,11 @@ effects, and completed checks."
           (or (cdr (assq condition skill-runtime--public-error-defaults))
               (cdr (assq 'skill-runtime-public-error
                          skill-runtime--public-error-defaults))))
-         (combined (append defaults payload))
+         (combined (copy-sequence defaults))
+         (_ (let ((tail payload))
+              (while tail
+                (setq combined (plist-put combined (car tail) (cadr tail))
+                      tail (cddr tail)))))
          (status (plist-get combined :status))
          (data (plist-get combined :data))
          (count (plist-get combined :count))
@@ -377,7 +381,7 @@ non-nil."
           ('non-empty-string
            (and (stringp value) (not (string-empty-p value))))
           ('non-empty-string-list
-           (and (listp value)
+           (and (proper-list-p value)
                 value
                 (seq-every-p
                  (lambda (item)
@@ -396,7 +400,7 @@ non-nil."
                 (file-regular-p (expand-file-name value))))
           ('plist (skill-runtime--well-formed-plist-p value))
           ('list-of-plists
-           (and (listp value)
+           (and (proper-list-p value)
                 (seq-every-p #'skill-runtime--well-formed-plist-p value)))
           (_ (error "Unknown schema field type: %S" type)))
       (skill-runtime-reject-request
@@ -429,7 +433,7 @@ non-nil."
    ((and (listp type) (eq (car type) 'list-of))
     (let ((item-type (cadr type))
           (options (cddr type)))
-      (unless (listp value)
+      (unless (proper-list-p value)
         (skill-runtime-reject-request
          (format "%S %s must satisfy %S" operation path type)
          :field-path path :expected type :actual value))
