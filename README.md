@@ -240,6 +240,10 @@ emacs -Q --batch -l tests/run-tests.el emacs-gtd-assistant-tests.el
 
 `tests/routing-cases.el` 保存 skill 路由的正反案例，供人工评审或另行固定模型版本的评测
 使用。常规 ERT 只校验案例结构、skill 名称和边界完整性，不用关键词匹配冒充模型路由结果。
+依赖前文的案例附带合成的会话历史，恢复案例还包含工具结果，可通过
+`tests/routing-evaluation.el` 导出不含预期答案的消息。部分案例还约束 token、路径范围
+和 live 来源等关键参数。独立评测分别记录路由、调用、完成判断和授权边界，并比较整段流程成本；
+输入、记录模板及隔离要求见[评测说明](tests/routing-evaluation.org)。
 
 `emacs --batch -l tests/run-workflows.el` 单独运行三条隔离的原生流程，输出经过验证的
 检查项与真实 facade 成本：GTD 查询到授权修改、限定路径的 Git context、博客推送失败
