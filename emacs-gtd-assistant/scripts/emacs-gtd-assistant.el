@@ -931,6 +931,18 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
              (or (cdr (assq 'id item))
                  (progn
                    (skill-runtime-require-authorization request 'ensure-id)
+                   (with-current-buffer (find-file-noselect (cdr (assq 'file item)))
+                     (pcase (plist-get request :operation)
+                       ('set-state
+                        (unless (member (plist-get request :state) org-todo-keywords-1)
+                          (skill-runtime-reject-request "Unknown task state"
+                                                        :field-path '(:state))))
+                       ((or 'reschedule 'set-deadline)
+                        (emacs-gtd-normalize-timestamp (plist-get request :timestamp)))
+                       ('set-context (emacs-gtd--validate-context-notes
+                                      (plist-get request :context-notes)))
+                       ('set-links (emacs-gtd--validate-links (plist-get request :links)))
+                       ('add-note (emacs-gtd--validate-log-note (plist-get request :note)))))
                    (cdr (assq 'id
                               (emacs-gtd-ensure-id-at-line
                                (cdr (assq 'line item)) (cdr (assq 'file item)))))))))
@@ -1020,10 +1032,47 @@ Use :operation `describe' to request operation schemas only when needed."
             1 nil nil (list :mutated t)))))
       (_ (emacs-gtd-project-execute request)))))
 
+(defun emacs-gtd--file-state (file)
+  "Return native content hashes for FILE's disk and any live buffer.
+This observes managed artifacts; it does not pretend buffer rollback can undo
+an already saved file or side effects of user hooks."
+  (let* ((disk (when (file-regular-p file)
+                 (with-temp-buffer
+                   (insert-file-contents file)
+                   (secure-hash 'sha256 (current-buffer)))))
+         (buffer (get-file-buffer file)))
+    (list disk (if buffer
+                   (with-current-buffer buffer
+                     (org-with-wide-buffer (secure-hash 'sha256 (current-buffer))))
+                 disk))))
+
 ;;;###autoload
 (defun emacs-gtd-execute (request)
-  "Execute measured GTD REQUEST."
-  (skill-runtime-measure request (lambda () (emacs-gtd--execute request))))
+  "Execute measured GTD REQUEST and expose observed changes if it fails."
+  (skill-runtime-measure
+   request
+   (lambda ()
+     (let* ((operation (and (skill-runtime--well-formed-plist-p request)
+                            (plist-get request :operation)))
+            (observe (and operation (eq (plist-get request :authorization) 'explicit)
+                          (plist-get (alist-get operation emacs-gtd--schemas) :effects)))
+            (before (when observe
+                      (mapcar (lambda (file) (cons file (emacs-gtd--file-state file)))
+                              (emacs-gtd--files)))))
+       (condition-case err
+           (emacs-gtd--execute request)
+         (error
+          (let ((changed (seq-filter
+                          (lambda (entry)
+                            (not (equal (cdr entry) (emacs-gtd--file-state (car entry)))))
+                          before)))
+            (if (not changed) (signal (car err) (cdr err))
+              (skill-runtime-signal
+               'skill-runtime-partial-failure (error-message-string err)
+               :cause err :stage operation :retry 'never :required-action 'inspect-changes
+               :data (list :files (mapcar #'car changed)) :count (length changed)
+               :effects (list :mutated t :files (mapcar #'car changed))
+               :verification '(:workflow (:completed nil)))))))))))
 
 (load (expand-file-name "emacs-gtd-project.el"
                         (file-name-directory (or load-file-name buffer-file-name)))

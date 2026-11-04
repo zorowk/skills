@@ -3,6 +3,7 @@
 ;;; Code:
 
 (require 'test-helper)
+(defvar denote-after-new-note-hook)
 
 (skill-tests-load-many
  '(
@@ -11,7 +12,8 @@
    "denote-scribe/scripts/denote-scribe.el"))
 
 (ert-deftest denote-create-writes-only-to-the-selected-notes-directory ()
-  (let* ((root (make-temp-file "denote-create-" t))
+  (let* ((denote-after-new-note-hook nil)
+         (root (make-temp-file "denote-create-" t))
          (notes (expand-file-name "notes" root))
          (sentinel (expand-file-name "outside.txt" root))
          (body (make-temp-file "denote-body-" nil ".org" "A direct answer with supporting evidence.\n"))
@@ -216,6 +218,35 @@
                          (list first)))
           (should-error (denote-scribe-list-notes "20261104" nil root))
           (should-error (denote-scribe-list-notes "20261105" "20261104" root)))
+      (delete-directory root t))))
+
+(ert-deftest denote-capture-failure-exposes-the-created-buffer-without-retrying ()
+  (let* ((root (make-temp-file "denote-partial-" t))
+         (notes (expand-file-name "notes" root))
+         (body (expand-file-name "body.org" root))
+         (denote-after-new-note-hook nil))
+    (unwind-protect
+        (progn
+          (make-directory notes)
+          (with-temp-file body (insert "Completed reasoning.\n"))
+          (cl-letf (((symbol-function 'denote-scribe--fill-org-buffer)
+                     (lambda () (signal 'void-function '(missing-fill-helper)))))
+            (let* ((result (denote-scribe-run
+                            (list :operation 'capture :title "Partial note" :body-file body
+                                  :notes-dir notes :authorization 'explicit)))
+                   (file (plist-get (plist-get result :data) :file)))
+              (skill-contract-tests-assert-failure result 'partial 'partial-failure)
+              (should (eq (plist-get (plist-get result :error) :retry) 'never))
+              (should (eq (car (plist-get (plist-get result :error) :cause)) 'void-function))
+              (should (get-file-buffer file))
+              (should (plist-get (plist-get result :effects) :buffer-exists))
+              (should-not (plist-get (plist-get (plist-get result :verification) :artifact)
+                                     :body-verified)))))
+      (dolist (buffer (buffer-list))
+        (when-let* ((file (buffer-file-name buffer)))
+          (when (file-in-directory-p file root)
+            (with-current-buffer buffer (set-buffer-modified-p nil))
+            (kill-buffer buffer))))
       (delete-directory root t))))
 
 (provide 'denote-scribe-tests)

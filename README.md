@@ -132,8 +132,10 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 `needs-input`、`blocked` 或 `failed`。可预期的公共失败还返回 `:error`，至少包含稳定
 `:code`、可读 `:message`、`:retry` 和 `:required-action`，并可附带字段路径、目标、
 候选项或分页后的失败原因。部分成功保留已完成的 `:data` 与真实 `:effects`，同时用
-`partial-failure` 指示选择性重试；未知 Lisp 错误继续抛出，避免把实现缺陷伪装成可恢复
-业务状态。可选的顶层 `:verification` 按 artifact、workflow、repository 或领域判断分组
+`partial-failure` 指明未完成部分，是否可重试由 `:error :retry` 决定。
+若领域操作失败时已观察到文件、缓冲区或仓库变更，则返回 `partial`、原始
+`:cause` 和实际产物，要求先检查，避免盲目重试；未知错误在没有这些变更时继续抛出。
+可选的顶层 `:verification` 按 artifact、workflow、repository 或领域判断分组
 返回已完成检查及其证据；`:effects` 仍只描述实际发生的副作用。
 
 每次成功或结构化失败调用都返回不保留原文的 `:metrics`，包括耗时、请求字符数、请求

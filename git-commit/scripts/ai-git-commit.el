@@ -398,42 +398,60 @@ Permit regular files, symlinks, and tracked paths deleted from the worktree."
                        (ai-git-commit--normalize-paths
                         root (plist-get request :paths))))
            (message (ai-git-commit-format request))
+           (before (magit-rev-parse "HEAD"))
+           (index-before (magit-git-string "diff" "--cached" "--raw" "-z"))
            ;; A single -m value bypasses the editor.  Verbatim cleanup keeps
            ;; the formatter output intact and avoids any temporary file.
            (arguments (append (list "--cleanup=verbatim" "-m" message)
                               (and paths (append '("--only" "--") paths)))))
-      (when paths
-        (ai-git-commit--stage-paths paths))
-      ;; Keep the complete asynchronous operation headless.  In particular,
-      ;; the process sentinel runs while `accept-process-output' waits below,
-      ;; so these bindings must outlive the initial Magit call.
-      ;; Magit's Git hooks call this Emacs through emacsclient.  A synchronous
-      ;; server evaluation cannot service that nested evaluation while waiting
-      ;; for Git, so disable only Magit's injected callback hooks here.  Clear
-      ;; the cached directory too; the switch alone does not bypass that cache.
-      ;; Repository Git hooks remain enabled, and both bindings are restored.
-      (let ((magit-run-hooks-from-githooks nil)
-            (magit-githook-directory nil)
-            (magit-process-popup-time -1)
-            (magit-display-buffer-noselect t)
-            (inhibit-message t)
-            (message-log-max nil))
-        (let ((process (if amend
-                           (magit-commit-amend arguments)
-                         (magit-commit-create arguments))))
-          (ai-git-commit--wait-for-process process)
-          (let* ((expected
-                  (ai-git-commit--normalize-terminal-newline message))
-                 (actual
-                  (ai-git-commit--normalize-terminal-newline
-                   (ai-git-commit--head-message))))
-            (ai-git-commit--validate-message actual)
-            (unless (string= actual expected)
-              (error "Committed message differs from formatter output"))
-            (list :commit (magit-rev-parse "HEAD")
-                  :message actual
-                  :paths paths
-                  :amended (and amend t))))))))
+      (condition-case err
+          (progn
+            (when paths
+              (ai-git-commit--stage-paths paths))
+            ;; Keep the complete asynchronous operation headless.  In particular,
+            ;; the process sentinel runs while `accept-process-output' waits below,
+            ;; so these bindings must outlive the initial Magit call.
+            ;; Magit's Git hooks call this Emacs through emacsclient.  A synchronous
+            ;; server evaluation cannot service that nested evaluation while waiting
+            ;; for Git, so disable only Magit's injected callback hooks here.  Clear
+            ;; the cached directory too; the switch alone does not bypass that cache.
+            ;; Repository Git hooks remain enabled, and both bindings are restored.
+            (let ((magit-run-hooks-from-githooks nil)
+                  (magit-githook-directory nil)
+                  (magit-process-popup-time -1)
+                  (magit-display-buffer-noselect t)
+                  (inhibit-message t)
+                  (message-log-max nil))
+              (let ((process (if amend
+                                 (magit-commit-amend arguments)
+                               (magit-commit-create arguments))))
+                (ai-git-commit--wait-for-process process)
+                (let* ((expected
+                        (ai-git-commit--normalize-terminal-newline message))
+                       (actual
+                        (ai-git-commit--normalize-terminal-newline
+                         (ai-git-commit--head-message))))
+                  (ai-git-commit--validate-message actual)
+                  (unless (string= actual expected)
+                    (error "Committed message differs from formatter output"))
+                  (list :commit (magit-rev-parse "HEAD")
+                        :message actual
+                        :paths paths
+                        :amended (and amend t))))))
+        (error
+         (let* ((head (magit-rev-parse "HEAD"))
+                (committed (and head (not (equal head before))))
+                (staged (not (equal index-before
+                                    (magit-git-string "diff" "--cached" "--raw" "-z")))))
+           (if (not (or committed staged)) (signal (car err) (cdr err))
+             (skill-runtime-signal
+              'skill-runtime-partial-failure (error-message-string err)
+              :cause err :retry 'never :required-action 'inspect-repository
+              :data (list :commit (and committed head) :paths paths :amended (and amend t))
+              :count (if committed 1 0)
+              :effects (list :committed committed :index-changed staged :amended (and committed amend))
+              :verification (list :repository
+                                  (list :commit-created committed :message-verified nil))))))))))
 
 ;;;###autoload
 (defun ai-git-commit--run (request)

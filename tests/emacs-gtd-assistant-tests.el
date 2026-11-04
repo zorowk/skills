@@ -301,6 +301,27 @@
       (should (eq (plist-get result :status) 'ok))
       (should (= (plist-get result :count) 4)))))
 
+(ert-deftest gtd-invalid-state-does-not-create-id-and-post-save-failure-is-observable ()
+  (gtd-project-tests-with-files
+    (with-temp-file file (insert "* Personal\n** TODO Idless\n"))
+    (let ((before (with-temp-buffer (insert-file-contents file) (buffer-string))))
+      (skill-contract-tests-assert-failure
+       (emacs-gtd-execute '(:operation set-state :query "Idless" :state "BOGUS"
+                           :authorization explicit))
+       'needs-input 'invalid-request)
+      (should (equal before (with-temp-buffer (insert-file-contents file) (buffer-string))))
+      (should-not (buffer-modified-p (get-file-buffer file))))
+    (cl-letf (((symbol-function 'emacs-gtd--save)
+               (lambda () (save-buffer) (error "Injected error after saving"))))
+      (let ((result (emacs-gtd-execute
+                     '(:operation set-state :query "Idless" :state "DONE"
+                       :authorization explicit))))
+        (skill-contract-tests-assert-failure result 'partial 'partial-failure)
+        (should (member file (plist-get (plist-get result :effects) :files)))
+        (should (eq (plist-get (plist-get result :error) :retry) 'never))
+        (should (string-match-p ":ID:" (with-temp-buffer
+                                        (insert-file-contents file) (buffer-string))))))))
+
 (provide 'emacs-gtd-assistant-tests)
 
 ;;; emacs-gtd-assistant-tests.el ends here

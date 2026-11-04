@@ -257,7 +257,8 @@
   (let ((magit-run-hooks-from-githooks t)
         (magit-githook-directory "/cached/magit/githooks")
         captured)
-    (cl-letf (((symbol-function 'magit-toplevel)
+    (cl-letf (((symbol-function 'magit-git-string) (lambda (&rest _) ""))
+              ((symbol-function 'magit-toplevel)
                (lambda (&optional _) "/tmp/repository/"))
               ((symbol-function 'ai-git-commit--ensure-magit)
                (lambda () t))
@@ -300,7 +301,8 @@
 
 (ert-deftest git-commit-facade-stages-and-commits-only-explicit-paths ()
   (let (commit-arguments stage-arguments)
-    (cl-letf (((symbol-function 'magit-toplevel)
+    (cl-letf (((symbol-function 'magit-git-string) (lambda (&rest _) ""))
+              ((symbol-function 'magit-toplevel)
                (lambda (&optional _) "/tmp/repository/"))
               ((symbol-function 'ai-git-commit--ensure-magit)
                (lambda () t))
@@ -394,6 +396,37 @@
                              (skill-tests-git "--git-dir" remote "rev-parse" "refs/heads/other")))
               (should (equal "" (skill-tests-git "--git-dir" remote "tag" "--list"))))))
       (delete-directory remote t))))
+
+(ert-deftest git-failed-verification-exposes-the-real-commit-and-index-effects ()
+  (skill-tests-with-git-repository
+    (skill-tests-git "config" "commit.gpgsign" "false")
+    (let ((hook (expand-file-name ".git/hooks/commit-msg")))
+      (skill-tests-git "config" "core.hooksPath" (file-name-directory hook))
+      (with-temp-file "sample.el" (insert "base\n"))
+      (skill-tests-git "add" "--all")
+      (skill-tests-git "commit" "-qm" "base")
+      (with-temp-file "sample.el" (insert "changed\n"))
+      (with-temp-file hook
+        (insert "#!/bin/sh\n" "echo Changed-by-hook >> \"$1\"\n"))
+      (set-file-modes hook #o755)
+      ;; Keep the real Git commit and hook; only bypass with-editor's server setup in batch.
+      (cl-letf (((symbol-function 'magit-commit-create)
+                 (lambda (arguments)
+                   (apply #'start-process "skill-test-commit" nil "git" "commit" arguments))))
+        (let* ((before (skill-tests-git "rev-parse" "HEAD"))
+               (result (ai-git-commit-run
+                        (append (list :operation 'commit :directory root :paths '("sample.el")
+                                      :authorization 'explicit)
+                                skill-contract-tests-message-spec)))
+               (head (skill-tests-git "rev-parse" "HEAD")))
+          (skill-contract-tests-assert-failure result 'partial 'partial-failure)
+          (should-not (equal before head))
+          (should (string-match-p "Changed-by-hook" (skill-tests-git "log" "-1" "--format=%B")))
+          (should (string-match-p "Committed message differs"
+                                  (plist-get (plist-get result :error) :message)))
+          (should (equal (plist-get (plist-get result :data) :commit) head))
+          (should (plist-get (plist-get result :effects) :committed))
+          (should (eq (plist-get (plist-get result :error) :retry) 'never)))))))
 
 (provide 'git-commit-tests)
 

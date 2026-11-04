@@ -51,6 +51,8 @@
 
 (defvar denote-directory)
 (defvar denote-save-buffers)
+(defvar denote-kill-buffers)
+(defvar denote-after-new-note-hook)
 (declare-function denote "denote")
 (declare-function denote-directory-files "denote"
                   (&optional regexp omit-current text-only exclude-regexp has-identifier))
@@ -307,25 +309,36 @@ Return the created file path."
   (require 'denote)
   (let* ((target-dir
           (file-name-as-directory
-           (file-truename
-            (denote-scribe--directory notes-dir
-                                      denote-scribe-notes-directory))))
+           (file-truename (denote-scribe--directory notes-dir denote-scribe-notes-directory))))
          (denote-directory target-dir)
-         (denote-save-buffers t)
-         (file
-          (save-window-excursion
-            (denote title keywords 'org target-dir date nil signature nil))))
-    (unless file
-      (error "Denote did not return or visit a file"))
-    (with-current-buffer (find-file-noselect file)
-      (goto-char (point-max))
-      (unless (bolp)
-        (insert "\n"))
-      (insert "\n")
-      (insert-file-contents body-file)
-      (denote-scribe--fill-org-buffer)
-      (save-buffer))
-    file))
+         (denote-save-buffers nil)
+         (denote-kill-buffers nil)
+         created
+         (denote-after-new-note-hook
+          (cons (lambda () (setq created buffer-file-name)) denote-after-new-note-hook)))
+    (condition-case err
+        (let ((file (save-window-excursion
+                      (denote title keywords 'org target-dir date nil signature nil))))
+          (unless file (error "Denote did not return a file"))
+          (setq created file)
+          (with-current-buffer (find-file-noselect file)
+            (goto-char (point-max))
+            (unless (bolp) (insert "\n"))
+            (insert "\n")
+            (insert-file-contents body-file)
+            (denote-scribe--fill-org-buffer)
+            (save-buffer))
+          file)
+      (error
+       (if (not created) (signal (car err) (cdr err))
+         (skill-runtime-signal
+          'skill-runtime-partial-failure (error-message-string err)
+          :cause err :retry 'never :required-action 'inspect-note
+          :data (list :file created) :count (if (file-exists-p created) 1 0)
+          :effects (list :created (file-exists-p created)
+                         :buffer-exists (and (get-file-buffer created) t))
+          :verification (list :artifact
+                              (list :file-exists (file-exists-p created) :body-verified nil))))))))
 
 ;;;###autoload
 (defun denote-scribe--run (request)
