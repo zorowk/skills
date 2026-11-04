@@ -25,6 +25,47 @@
              (list :operation 'test :items value))))
          'needs-input 'invalid-request)))))
 
+(ert-deftest skill-runtime-rejects-duplicate-keys-before-operation-selection ()
+  (dolist (request '((:operation sample :operation other)
+                     (:operation sample :authorization explicit :authorization nil)
+                     (:operation sample :name "first" :name "second")))
+    (let* ((result (skill-runtime-measure
+                    request
+                    (lambda () (skill-runtime-validate-request '((sample)) request))))
+           (failure (plist-get result :error)))
+      (skill-contract-tests-assert-failure result 'needs-input 'invalid-request)
+      (should (eq (plist-get failure :expected) 'unique-key))
+      (should (= (length (plist-get failure :field-path)) 1)))))
+
+(ert-deftest skill-runtime-rejects-duplicate-keys-in-nested-request-plists ()
+  (dolist (type '(plist (plist :optional (:title)) list-of-plists
+                       (list-of (plist :required (:title)))))
+    (let* ((value (if (memq type '(plist))
+                      '(:title "first" :title "second")
+                    (if (eq (car-safe type) 'plist)
+                        '(:title "first" :title "second")
+                      '((:title "first" :title "second")))))
+           (request (list :operation 'sample :tasks value))
+           (result (skill-runtime-measure
+                    request
+                    (lambda ()
+                      (skill-runtime-validate-request
+                       `((sample :types ((:tasks ,type)))) request)))))
+      (skill-contract-tests-assert-failure result 'needs-input 'invalid-request)
+      (should (eq (car (last (plist-get (plist-get result :error) :field-path)))
+                  :title)))))
+
+(ert-deftest skill-runtime-rejects-malformed-request-keys ()
+  (let ((cycle (list :operation 'sample)))
+    (setcdr (cdr cycle) cycle)
+    (dolist (request (list '(:operation sample name "value")
+                           '(:operation sample :name)
+                           '(:operation sample . value) cycle))
+      (skill-contract-tests-assert-failure
+       (skill-runtime-measure
+        request (lambda () (skill-runtime-validate-request '((sample)) request)))
+       'needs-input 'invalid-request))))
+
 (ert-deftest skill-runtime-explicit-recovery-overrides-defaults-without-duplicates ()
   (let* ((result
           (skill-runtime-measure

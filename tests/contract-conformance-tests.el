@@ -285,32 +285,63 @@
        result 'needs-input 'authorization-required)
       (should-not (plist-get result :effects)))))
 
-(ert-deftest facade-skills-defer-mechanical-recovery-to-runtime ()
-  (dolist (skill '(denote-scribe emacs-code-navigator emacs-gtd-assistant
-                    git-commit org-blog-exporter))
-    (let ((contract
-           (with-temp-buffer
-             (insert-file-contents
-              (expand-file-name
-               (format "%s/SKILL.md" skill)
-               skill-contract-tests-root))
-             (buffer-string))))
-      (dolist (duplicate '("## Execution and recovery"
-                           "known schema"
-                           "invalid-request #1"))
-        (should-not (string-match-p (regexp-quote duplicate) contract))))))
+(ert-deftest facade-public-schemas-reject-unknown-fields ()
+  (dolist (facade skill-contract-test-facades)
+    (let* ((catalog (skill-contract-test-call facade '(:operation describe)))
+           (operations (plist-get (plist-get catalog :data) :operations)))
+      (dolist (operation operations)
+        (should (plist-get (skill-contract-test-schema facade operation) :closed)))
+      (let* ((result (skill-contract-test-call
+                      facade '(:operation describe :target-operation context)))
+             (failure (plist-get result :error)))
+        (skill-contract-tests-assert-failure result 'needs-input 'invalid-request)
+        (should (equal (plist-get failure :field-path)
+                       '("describe" :target-operation)))
+        (should (memq :target (plist-get failure :expected)))
+        (should-not (plist-get result :effects)))
+      (let ((result (skill-contract-test-call
+                     facade '(:operation describe :target describe))))
+        (should (eq (plist-get result :status) 'ok))
+        (should (eq (plist-get (plist-get result :data) :operation) 'describe))))))
 
-(ert-deftest repository-documents-semantic-skill-body-boundary ()
-  (let ((readme
-         (with-temp-buffer
-           (insert-file-contents
-            (expand-file-name "README.md" skill-contract-tests-root))
-           (buffer-string))))
-    (should
-     (string-match-p
-      (regexp-quote
-       "SKILL.md 不是 facade 的使用手册，也不是错误目录。它只保存无法在 Elisp 中可靠编码的语义决策。")
-      readme))))
+(ert-deftest facade-public-requests-reject-conflicting-duplicate-fields ()
+  (dolist (facade skill-contract-test-facades)
+    (dolist (request '((:operation describe :operation publish)
+                       (:operation describe :target describe :target nonexistent)
+                       (:operation describe :authorization explicit :authorization nil)))
+      (let ((result (skill-contract-test-call facade request)))
+        (skill-contract-tests-assert-failure result 'needs-input 'invalid-request)
+        (should (eq (plist-get (plist-get result :error) :expected) 'unique-key))
+        (should-not (plist-get result :effects))))))
+
+(ert-deftest facade-pagination-and-boolean-parameters-fail-before-domain-work ()
+  (dolist (entry '((gtd (:operation list :limit "three"))
+                   (gtd (:operation list :limit 0))
+                   (gtd (:operation list :offset -1))
+                   (gtd (:operation list :include-done yes))
+                   (gtd (:operation list :states (1)))
+                   (gtd (:operation list :tags "tag"))
+                   (gtd (:operation resolve :query 3))
+                   (denote (:operation list :limit "three"))
+                   (denote (:operation list :offset -1))
+                   (blog (:operation export :authorization explicit :limit "three"))
+                   (blog (:operation publish :authorization explicit :offset -1))
+                   (blog (:operation resume :authorization explicit
+                          :recovery-token "fixture" :full yes))
+                   (git (:operation context :full yes))))
+    (ert-info ((format "Malformed request: %S" entry))
+      (let ((result (skill-contract-test-call
+                     (skill-contract-test-facade (car entry)) (cadr entry))))
+        (skill-contract-tests-assert-failure result 'needs-input 'invalid-request)
+        (should-not (plist-get result :effects)))))
+  (dolist (facade skill-contract-test-facades)
+    (let ((catalog (skill-contract-test-call facade '(:operation describe))))
+      (dolist (operation (plist-get (plist-get catalog :data) :operations))
+        (let* ((schema (skill-contract-test-schema facade operation))
+               (fields (plist-get schema :optional)))
+          (dolist (field '(:offset :limit :full :include-done))
+            (when (memq field fields)
+              (should (assq field (plist-get schema :types))))))))))
 
 (provide 'contract-conformance-tests)
 

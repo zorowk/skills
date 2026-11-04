@@ -141,6 +141,10 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 历史比较。字符数是可重复的本地代理，不冒充模型服务的精确 Token usage。截断和下一页
 位置均为机器可读字段。仅在调用参数不明确时请求 `describe` schema，无需读取实现源码。
 
+公共操作 schema 拒绝未知字段；拼错参数会返回字段位置和允许字段，不会静默忽略。
+请求及嵌套任务 plist 同时拒绝重复字段，避免授权和目标选择依赖字段出现顺序；分页参数
+和布尔开关按 schema 校验，输入错误返回结构化的 `invalid-request`。
+
 ## 主要工作流
 
 ### Denote 笔记

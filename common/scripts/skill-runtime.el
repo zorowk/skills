@@ -271,21 +271,30 @@ non-nil."
 
 (defun skill-runtime--well-formed-plist-p (value)
   "Return non-nil when VALUE is an even plist with keyword keys."
-  (and
-   (listp value)
-   (condition-case nil
-       (and
-        (zerop (% (length value) 2))
-        (let ((tail value)
-              (valid t))
-          (while tail
-            (unless (keywordp (car tail))
-              (setq valid nil
-                    tail nil))
-            (when tail
-              (setq tail (cddr tail))))
-          valid))
-     (error nil))))
+  (and (proper-list-p value)
+       (zerop (% (length value) 2))
+       (let ((tail value))
+         (while (and tail (keywordp (car tail))) (setq tail (cddr tail)))
+         (null tail))))
+
+(defun skill-runtime--validate-plist-keys (value path)
+  "Reject malformed VALUE or duplicate request keys at PATH.
+Native plist lookup uses the first occurrence; public requests must not depend
+on that precedence for authorization, operation or target selection."
+  (unless (skill-runtime--well-formed-plist-p value)
+    (skill-runtime-reject-request
+     "Request must be a keyword plist" :field-path path
+     :expected 'keyword-plist :actual value))
+  (let ((tail value) seen)
+    (while tail
+      (let ((key (car tail)))
+        (when (memq key seen)
+          (skill-runtime-reject-request
+           (format "Duplicate request field %S" key)
+           :field-path (if path (list path key) (list key))
+           :expected 'unique-key :actual key))
+        (push key seen))
+      (setq tail (cddr tail)))))
 
 (defun skill-runtime--field-active-p (value field)
   "Return non-nil when FIELD is present and non-nil in plist VALUE."
@@ -391,10 +400,13 @@ non-nil."
           ('existing-file
            (and (stringp value) (not (string-empty-p value))
                 (file-regular-p (expand-file-name value))))
-          ('plist (skill-runtime--well-formed-plist-p value))
+          ('plist (progn (skill-runtime--validate-plist-keys value path) t))
           ('list-of-plists
            (and (proper-list-p value)
-                (seq-every-p #'skill-runtime--well-formed-plist-p value)))
+                (progn
+                  (mapc (lambda (item)
+                          (skill-runtime--validate-plist-keys item path)) value)
+                  t)))
           (_ (error "Unknown schema field type: %S" type)))
       (skill-runtime-reject-request
        (format "%S %s must be %S" operation path type)
@@ -518,6 +530,7 @@ non-nil."
 
 (defun skill-runtime--validate-plist-schema (operation schema value path)
   "Validate plist VALUE against SCHEMA for OPERATION at PATH."
+  (skill-runtime--validate-plist-keys value path)
   (dolist (field (plist-get schema :required))
     (unless (skill-runtime--field-active-p value field)
       (if (eq field :authorization)
@@ -563,13 +576,7 @@ Require a known :operation and validate the selected declarative contract.
 Schemas may declare required fields, structural types, choices, cross-field
 cardinality, dependencies, closed plists, and named custom validators.  Other
 operation-specific validation remains the facade's responsibility."
-  (unless (and (listp request)
-               (condition-case nil
-                   (zerop (% (length request) 2))
-                 (error nil)))
-    (skill-runtime-reject-request
-     "REQUEST must be a well-formed plist"
-     :field-path nil :expected 'plist :actual request))
+  (skill-runtime--validate-plist-keys request nil)
   (let* ((operation (plist-get request :operation))
          (schema (alist-get operation schemas)))
     (unless schema

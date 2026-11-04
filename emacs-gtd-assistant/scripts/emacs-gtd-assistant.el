@@ -95,18 +95,22 @@
   :group 'emacs-gtd-assistant)
 
 (defconst emacs-gtd--schemas
-  '((preflight :summary "Validate the configured GTD file without mutation.")
-    (list :summary "Return a filtered page with explicit continuation metadata."
-          :optional (:query :states :tags :include-done :offset :limit))
-    (resolve :summary "Resolve a title query and expose ambiguity without guessing."
-             :required (:query) :optional (:include-done))
-    (add :summary "Add one task through Org and return its compact identity."
+  '((preflight :closed t :summary "Validate the configured GTD file without mutation.")
+    (list :closed t :summary "Return a filtered page with explicit continuation metadata."
+          :optional (:query :states :tags :include-done :offset :limit)
+          :types ((:query non-empty-string) (:states (list-of string))
+                  (:tags (list-of string)) (:include-done boolean)
+                  (:offset (integer :min 0)) (:limit (integer :min 1))))
+    (resolve :closed t :summary "Resolve a title query and expose ambiguity without guessing."
+             :required (:query) :optional (:include-done)
+             :types ((:query non-empty-string) (:include-done boolean)))
+    (add :closed t :summary "Add one task through Org and return its compact identity."
          :required (:title :authorization)
-         :optional (:headline :context :scheduled :deadline :priority :tags
-                              :body :context-notes :links :properties)
+         :optional (:headline :context :todo :scheduled :deadline :priority :tags
+                              :body :context-notes :links :properties :task)
          :choices ((:context personal work) (:authorization explicit))
          :effects (:mutated))
-    (add-many
+    (add-many :closed t
      :summary "Atomically add confirmed structured tasks from a conversation."
      :required (:tasks :authorization)
      :types
@@ -160,50 +164,87 @@
               "Task count is bounded by emacs-gtd-capture-task-limit."))
      :choices ((:authorization explicit))
      :effects (:mutated))
-    (set-state :summary "Resolve an ID or unique query, then update its state."
+    (set-state :closed t :summary "Resolve an ID or unique query, then update its state."
                :required-one-of (:id :query) :required (:state :authorization)
+               :optional (:include-done)
+               :types ((:id non-empty-string) (:query non-empty-string)
+                       (:include-done boolean))
                :choices ((:authorization explicit))
                :effects (:mutated))
-    (reschedule :summary "Resolve an ID or unique query, then update scheduling."
+    (reschedule :closed t :summary "Resolve an ID or unique query, then update scheduling."
                 :required-one-of (:id :query)
                 :required (:timestamp :authorization)
+                :optional (:include-done)
+                :types ((:id non-empty-string) (:query non-empty-string)
+                        (:include-done boolean))
                 :choices ((:authorization explicit))
                 :effects (:mutated))
-    (set-deadline :summary "Resolve an ID or unique query, then update its deadline."
+    (set-deadline :closed t :summary "Resolve an ID or unique query, then update its deadline."
                   :required-one-of (:id :query)
                   :required (:timestamp :authorization)
+                  :optional (:include-done)
+                  :types ((:id non-empty-string) (:query non-empty-string)
+                          (:include-done boolean))
                   :choices ((:authorization explicit))
                   :effects (:mutated))
-    (set-context :summary "Replace one resolved task's bounded context note."
+    (set-context :closed t :summary "Replace one resolved task's bounded context note."
                  :required-one-of (:id :query)
                  :required (:context-notes :authorization)
+                 :optional (:include-done)
+                 :types ((:id non-empty-string) (:query non-empty-string)
+                         (:include-done boolean))
                  :choices ((:authorization explicit))
                  :effects (:mutated))
-    (set-links :summary "Replace one resolved task's structured resource links."
+    (set-links :closed t :summary "Replace one resolved task's structured resource links."
                :required-one-of (:id :query)
                :required (:links :authorization)
+               :optional (:include-done)
                :types
-               ((:links
+               ((:id non-empty-string) (:query non-empty-string)
+                (:include-done boolean)
+                (:links
                  (custom emacs-gtd--validate-links
                          :description
                          "Safe HTTP, file, id, or Denote identifier resource links.")))
                :choices ((:authorization explicit))
                :effects (:mutated))
-    (add-note :summary "Append one timestamped multiline note to a task LOGBOOK."
+    (add-note :closed t :summary "Append one timestamped multiline note to a task LOGBOOK."
               :required-one-of (:id :query) :required (:note :authorization)
+              :optional (:include-done)
+              :types ((:id non-empty-string) (:query non-empty-string)
+                      (:include-done boolean))
               :choices ((:authorization explicit))
               :effects (:mutated))
-    (delete :summary "Delete one resolved task after explicit authorization."
+    (delete :closed t :summary "Delete one resolved task after explicit authorization."
             :required-one-of (:id :query) :required (:authorization)
+            :optional (:include-done)
+            :types ((:id non-empty-string) (:query non-empty-string)
+                    (:include-done boolean))
             :choices ((:authorization explicit))
             :effects (:mutated))
-    (archive :summary "Archive one resolved task after explicit authorization."
+    (archive :closed t :summary "Archive one resolved task after explicit authorization."
              :required-one-of (:id :query) :required (:authorization)
+             :optional (:include-done)
+             :types ((:id non-empty-string) (:query non-empty-string)
+                     (:include-done boolean))
              :choices ((:authorization explicit))
              :effects (:mutated))
-    (describe :summary "Return operation names or one complete schema."
+    (describe :closed t :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `emacs-gtd-execute'.")
+
+;; Single capture and batch capture accept the same task fields.  The legacy
+;; :task form inherits TITLE from the outer request, so its own title is optional.
+(let* ((task-type (cadr (assq :tasks
+                             (plist-get (alist-get 'add-many emacs-gtd--schemas)
+                                        :types))))
+       (task-schema (cdr (cadr task-type)))
+       (nested (plist-put (copy-tree task-schema) :required nil))
+       (add (alist-get 'add emacs-gtd--schemas)))
+  (setf (alist-get 'add emacs-gtd--schemas)
+        (plist-put add :types
+                   (append (copy-tree (plist-get task-schema :types))
+                           (list (list :task (cons 'plist nested)))))))
 
 (defun emacs-gtd--file ()
   "Return the absolute GTD file path."

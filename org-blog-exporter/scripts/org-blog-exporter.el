@@ -138,23 +138,27 @@ instead."
   '("BLOG_REPOSITORY_URL" "BLOG_REPO_URL"))
 
 (defconst org-blog-exporter--schemas
-  '((preflight :summary "Validate configured notes, output, and setup files."
+  '((preflight :closed t :summary "Validate configured notes, output, and setup files."
                :optional (:notes-dir :output-dir :setupfile))
-    (export :summary "Export public Org notes and verify every source-to-output artifact."
+    (export :closed t :summary "Export public Org notes and verify every source-to-output artifact."
             :required (:authorization)
             :optional (:files :notes-dir :output-dir :setupfile
                               :offset :limit :full)
+            :types ((:offset (integer :min 0)) (:limit (integer :min 1))
+                    (:full boolean))
             :choices ((:authorization explicit))
             :effects (:exported-count)
             :verification
             (:artifact
              (:source-output-map :outputs-exist :public-policy-passed
                                  :asset-links-verified)))
-    (publish
+    (publish :closed t
      :summary "Export, verify, commit, and confirm the configured upstream push."
      :required (:authorization)
      :optional (:files :title :notes-dir :repository-dir :setupfile
                        :offset :limit :full)
+     :types ((:offset (integer :min 0)) (:limit (integer :min 1))
+             (:full boolean))
      :choices ((:authorization explicit))
      :effects (:exported-count :changed :commit :push)
      :verification
@@ -166,14 +170,16 @@ instead."
       (:generated-files-committed :commit-exists :committed-paths
                                   :push-succeeded :branch :upstream
                                   :commit :upstream-commit)))
-    (resume
+    (resume :closed t
      :summary "Resume an unchanged partial publish using its session-local recovery token."
      :required (:recovery-token :authorization)
      :optional (:offset :limit :full)
-     :types ((:recovery-token non-empty-string))
+     :types ((:recovery-token non-empty-string)
+             (:offset (integer :min 0)) (:limit (integer :min 1))
+             (:full boolean))
      :choices ((:authorization explicit))
      :effects (:exported-count :changed :commit :push))
-    (describe :summary "Return operation names or one complete schema."
+    (describe :closed t :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `org-blog-exporter-run'.")
 

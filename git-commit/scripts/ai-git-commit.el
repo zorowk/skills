@@ -90,12 +90,12 @@ user after the operation.  It is omitted from Git history by default."
   :group 'ai-git-commit)
 
 (defconst ai-git-commit--schemas
-  '((context :summary "Collect bounded staged and unstaged evidence; compact by default."
+  '((context :closed t :summary "Collect bounded staged and unstaged evidence; compact by default."
              :optional (:directory :full :paths)
              :types ((:directory non-empty-string)
-                     (:paths non-empty-string-list))
+                     (:paths non-empty-string-list) (:full boolean))
              :effects nil)
-    (format :summary "Generate and validate one evidence-backed message."
+    (format :closed t :summary "Generate and validate one evidence-backed message."
             :required (:type :summary :context :changes :reason :validation
                             :boundary)
             :optional (:scope :risk :detail :log :pms :influence)
@@ -107,7 +107,7 @@ user after the operation.  It is omitted from Git history by default."
             :choices ((:risk low medium high) (:detail auto compact full))
             :output-constraints (:maximum-line-width 100)
             :effects nil)
-    (commit
+    (commit :closed t
      :summary "Commit through headless Magit, then verify the complete HEAD message."
      :required (:type :summary :context :changes :reason :validation
                 :boundary :authorization)
@@ -121,7 +121,7 @@ user after the operation.  It is omitted from Git history by default."
                (:authorization explicit))
      :output-constraints (:maximum-line-width 100)
      :effects (:committed))
-    (amend
+    (amend :closed t
      :summary "Amend through headless Magit, then verify the complete HEAD message."
      :required (:type :summary :context :changes :reason :validation
                 :boundary :authorization)
@@ -135,7 +135,7 @@ user after the operation.  It is omitted from Git history by default."
                (:authorization explicit))
      :output-constraints (:maximum-line-width 100)
      :effects (:committed :amended))
-    (describe :summary "Return operation names or one complete schema."
+    (describe :closed t :summary "Return operation names or one complete schema."
               :optional (:target) :effects nil))
   "Compact request schemas for `ai-git-commit-run'.")
 

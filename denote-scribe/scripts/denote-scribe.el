@@ -59,28 +59,29 @@
 (declare-function denote-extract-keywords-from-path "denote" (path))
 (declare-function denote-date-identifier-p "denote" (identifier))
 (defconst denote-scribe--schemas
-  '((preflight :summary "Validate Denote and the notes directory."
+  '((preflight :closed t :summary "Validate Denote and the notes directory."
                :optional (:notes-dir))
-    (create :summary "Create one Denote note from a completed body file."
+    (create :closed t :summary "Create one Denote note from a completed body file."
             :required (:title :body-file :authorization)
             :optional (:kind :keywords :notes-dir :signature :date)
             :choices ((:kind critical) (:authorization explicit))
             :effects (:created))
-    (capture
+    (capture :closed t
      :summary "Create one confirmed conversation note with explicit authorization."
      :required (:title :body-file :authorization)
      :optional (:kind :keywords :notes-dir :signature :date)
      :choices ((:kind critical) (:authorization explicit))
      :effects (:created))
-    (link-gtd
+    (link-gtd :closed t
      :summary "Add confirmed GTD id links below the note's open questions."
      :required (:file :tasks :authorization)
      :optional (:notes-dir)
      :choices ((:authorization explicit))
      :effects (:mutated))
-    (list :summary "Return a filtered page of Denote notes."
-          :optional (:start :end :notes-dir :keywords :offset :limit))
-    (describe :summary "Return operation names or one complete schema."
+    (list :closed t :summary "Return a filtered page of Denote notes."
+          :optional (:start :end :notes-dir :keywords :offset :limit)
+          :types ((:offset (integer :min 0)) (:limit (integer :min 1))))
+    (describe :closed t :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `denote-scribe-run'.")
 

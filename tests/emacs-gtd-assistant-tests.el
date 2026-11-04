@@ -51,6 +51,38 @@
       (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
       (delete-directory root t))))
 
+(ert-deftest gtd-closed-schema-preserves-single-task-and-completed-query-options ()
+  (let* ((root (make-temp-file "gtd-request-options-" t))
+         (file (expand-file-name "gtd.org" root))
+         (emacs-gtd-directory root)
+         (emacs-gtd-file "gtd.org")
+         (org-id-locations-file (expand-file-name "org-id-locations" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "* Personal\n"))
+          (with-temp-file org-id-locations-file (insert "()\n"))
+          (let ((added (emacs-gtd-execute
+                        '(:operation add :title "Completed task" :authorization explicit
+                          :task (:headline "Personal" :todo "DONE")))))
+            (should (eq (plist-get added :status) 'ok))
+            (should (equal (plist-get (plist-get added :data) :todo) "DONE")))
+          (let ((reopened (emacs-gtd-execute
+                           '(:operation set-state :query "Completed task"
+                             :state "TODO" :include-done t :authorization explicit))))
+            (should (eq (plist-get reopened :status) 'ok))
+            (should (equal (plist-get (plist-get reopened :data) :todo) "TODO")))
+          (let ((before (with-temp-buffer
+                          (insert-file-contents file) (buffer-string)))
+                (result (emacs-gtd-execute
+                         '(:operation add :title "Rejected" :authorization explicit
+                           :task (:headline "Personal" :headline "Work")))))
+            (skill-contract-tests-assert-failure result 'needs-input 'invalid-request)
+            (should-not (plist-get result :effects))
+            (should (equal before (with-temp-buffer
+                                    (insert-file-contents file) (buffer-string))))))
+      (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
+      (delete-directory root t))))
+
 (ert-deftest gtd-mutations-structure-missing-and-ambiguous-targets ()
   (let* ((root (make-temp-file "gtd-target-failures-" t))
          (file (expand-file-name "gtd.org" root))

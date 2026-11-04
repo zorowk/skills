@@ -79,7 +79,7 @@ creates live semantic buffers and therefore uses text search fallbacks."
   "Symbol kinds accepted by Emacs introspection entry points.")
 
 (defconst emacs-code-navigator--schemas
-  '((capability :summary "Discover Emacs APIs with bounded Help by default."
+  '((capability :closed t :summary "Discover Emacs APIs with bounded Help by default."
                 :required (:pattern)
                 :optional (:kind :limit :documentation :full)
                 :types ((:pattern non-empty-string)
@@ -87,48 +87,48 @@ creates live semantic buffers and therefore uses text search fallbacks."
                         (:documentation boolean)
                         (:full boolean))
                 :choices ((:kind function command macro variable user-option)))
-    (symbol :summary "Inspect one known Emacs symbol; compact by default."
+    (symbol :closed t :summary "Inspect one known Emacs symbol; compact by default."
             :required (:name) :optional (:full)
             :types ((:full boolean)))
-    (symbols :summary "Inspect several known Emacs symbols in one compact response."
+    (symbols :closed t :summary "Inspect several known Emacs symbols in one compact response."
              :required (:names) :optional (:full)
              :types ((:full boolean)))
-    (library :summary "Locate and describe one Emacs library."
+    (library :closed t :summary "Locate and describe one Emacs library."
              :required (:name))
-    (search :summary "Run bounded project text or literal search."
+    (search :closed t :summary "Run bounded project text or literal search."
             :required (:directory :regexp)
             :optional (:limit :glob :literal)
             :types ((:directory path) (:regexp string)
                     (:limit (integer :min 1)) (:literal boolean)))
-    (files :summary "List bounded project files."
+    (files :closed t :summary "List bounded project files."
            :required (:directory) :optional (:limit)
            :types ((:directory path) (:limit (integer :min 1))))
-    (region :summary "Read an exact region from a live or visited file buffer."
+    (region :closed t :summary "Read an exact region from a live or visited file buffer."
             :required (:file :start-line) :optional (:end-line :source)
             :types ((:file path) (:start-line (integer :min 1))
                     (:end-line (integer :min 1)))
             :choices ((:source auto live disk)))
-    (imenu :summary "Return the structural index for a file."
+    (imenu :closed t :summary "Return the structural index for a file."
            :required (:file) :optional (:source)
            :types ((:file path))
            :choices ((:source auto live disk)))
-    (file-state
+    (file-state :closed t
      :summary "Compare a live file buffer with its saved disk contents."
      :required (:file)
      :types ((:file path)))
-    (workspace-symbol
+    (workspace-symbol :closed t
      :summary "Query the active Eglot/LSP workspace symbol provider."
      :required (:file :pattern) :optional (:limit :source)
      :types ((:file path) (:pattern non-empty-string)
              (:limit (integer :min 1)))
      :choices ((:source auto live disk)))
-    (xref :summary "Resolve exact definitions or references through xref."
+    (xref :closed t :summary "Resolve exact definitions or references through xref."
           :required (:file) :required-one-of (:identifier :line)
           :optional (:kind :identifier :line :source)
           :types ((:file path) (:identifier non-empty-string)
                   (:line (integer :min 1)))
           :choices ((:kind definitions references) (:source auto live disk)))
-    (locate
+    (locate :closed t
      :summary "Prefer file Imenu, then project symbols, then bounded text search."
      :required (:query) :required-one-of (:file :directory)
      :optional (:line :kind :limit :glob :regexp :source)
@@ -137,7 +137,7 @@ creates live semantic buffers and therefore uses text search fallbacks."
              (:regexp boolean))
      :choices ((:kind auto text symbol definitions references)
                (:source auto live disk)))
-    (locate-many
+    (locate-many :closed t
      :summary "Locate one query across bounded project roots with isolated results."
      :required (:query :directories)
      :optional (:kind :limit-per-directory :glob :regexp :source)
@@ -147,7 +147,7 @@ creates live semantic buffers and therefore uses text search fallbacks."
              (:limit-per-directory (integer :min 1 :max 10))
              (:regexp boolean))
      :choices ((:kind auto text symbol) (:source auto live disk)))
-    (diagnostics
+    (diagnostics :closed t
      :summary "Read Flymake/Eglot diagnostics only when explicitly requested."
      :exactly-one-of (:file :directory)
      :optional (:line :radius :limit :file-limit :source)
@@ -155,7 +155,7 @@ creates live semantic buffers and therefore uses text search fallbacks."
              (:radius (integer :min 0)) (:limit (integer :min 1))
              (:file-limit (integer :min 1)))
      :choices ((:source auto live disk)))
-    (context
+    (context :closed t
      :summary "Return bounded live context at an exact position; semantic facets are opt-in."
      :required (:file :line)
      :optional (:column :radius :defun :eldoc :definitions :definition-limit
@@ -168,7 +168,7 @@ creates live semantic buffers and therefore uses text search fallbacks."
              (:diagnostics boolean)
              (:diagnostic-radius (integer :min 0)))
      :choices ((:source auto live disk)))
-    (describe :summary "Return operation names or one complete schema."
+    (describe :closed t :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `emacs-code-navigator-query'.")
 

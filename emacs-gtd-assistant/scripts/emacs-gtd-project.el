@@ -25,24 +25,24 @@
 
 (setq emacs-gtd--schemas
       (append emacs-gtd--schemas
-              '((get :summary "Read a managed entry, nearest project and session history without mutation."
+              '((get :closed t :summary "Read a managed entry, nearest project and session history without mutation."
                      :required (:id))
-                (ensure-id :summary "Give the heading at FILE and LINE its own identity."
+                (ensure-id :closed t :summary "Give the heading at FILE and LINE its own identity."
                            :required (:file :line :authorization)
                            :types ((:file string) (:line (integer :min 1)))
                            :choices ((:authorization explicit)) :effects (:mutated))
-                (create-project :summary "Create a project container with directory and document resources."
+                (create-project :closed t :summary "Create a project container with directory and document resources."
                                 :required (:title :directory :authorization)
                                 :optional (:headline :links)
                                 :choices ((:authorization explicit)) :effects (:mutated))
-                (configure-project :summary "Set an existing heading's project directory and optionally resources."
+                (configure-project :closed t :summary "Set an existing heading's project directory and optionally resources."
                                    :required (:id :directory :authorization)
                                    :optional (:links)
                                    :choices ((:authorization explicit)) :effects (:mutated))
-                (add-children :summary "Atomically append unscheduled tasks below an explicit parent ID; supports up to 50 tasks."
+                (add-children :closed t :summary "Atomically append unscheduled tasks below an explicit parent ID; supports up to 50 tasks."
                               :required (:parent-id :tasks :authorization)
                               :choices ((:authorization explicit)) :effects (:mutated))
-                (attach-session :summary "Record agent, session ID, cwd and transcript under a task; leaves task state unchanged."
+                (attach-session :closed t :summary "Record agent, session ID, cwd and transcript under a task; leaves task state unchanged."
                                 :required (:id :agent :session-id :cwd :authorization)
                                 :optional (:transcript)
                                 :choices ((:authorization explicit)) :effects (:mutated)))))
