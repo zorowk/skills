@@ -285,6 +285,33 @@
        result 'needs-input 'authorization-required)
       (should-not (plist-get result :effects)))))
 
+(ert-deftest facade-skills-defer-mechanical-recovery-to-runtime ()
+  (dolist (skill '(denote-scribe emacs-code-navigator emacs-gtd-assistant
+                    git-commit org-blog-exporter))
+    (let ((contract
+           (with-temp-buffer
+             (insert-file-contents
+              (expand-file-name
+               (format "%s/SKILL.md" skill)
+               skill-contract-tests-root))
+             (buffer-string))))
+      (dolist (duplicate '("## Execution and recovery"
+                           "known schema"
+                           "invalid-request #1"))
+        (should-not (string-match-p (regexp-quote duplicate) contract))))))
+
+(ert-deftest repository-documents-semantic-skill-body-boundary ()
+  (let ((readme
+         (with-temp-buffer
+           (insert-file-contents
+            (expand-file-name "README.md" skill-contract-tests-root))
+           (buffer-string))))
+    (should
+     (string-match-p
+      (regexp-quote
+       "SKILL.md 不是 facade 的使用手册，也不是错误目录。它只保存无法在 Elisp 中可靠编码的语义决策。")
+      readme))))
+
 (provide 'contract-conformance-tests)
 
 ;;; contract-conformance-tests.el ends here

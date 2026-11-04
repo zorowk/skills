@@ -4,6 +4,15 @@
 
 ;; These cases are inputs for human review or a separately versioned model
 ;; evaluation.  They do not claim that ERT can predict a model router.
+;; :expected selects skills; :expected-operations maps skills to their next
+;; facade call, not the eventual user goal.  Nil means no call at this decision.
+;; :control describes the continuation policy; ask-and-stop makes no call.
+;; :mutation bounds the whole continuation, including an authorized retry.
+;; :completion concerns claiming the whole request complete: allowed permits
+;; an answer after the next call, forbidden requires stopping with it incomplete,
+;; and conditional requires the explicit :completion-condition to be verified.
+;; Recovery prompts assume the previous facade result is available in session;
+;; actual authorization, scope and recovery checks remain in the facades.
 
 ;;; Code:
 
@@ -13,7 +22,7 @@
      :request "Why is this function failing? The buffer has not been saved yet."
      :expected (emacs-code-navigator)
      :excluded ()
-     :expected-operation context
+     :expected-operations ((emacs-code-navigator . context))
      :mutation forbidden
      :control execute
      :completion allowed
@@ -23,7 +32,7 @@
      :request "Explain what xref is."
      :expected ()
      :excluded (emacs-code-navigator)
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control answer-without-skill
      :completion allowed
@@ -33,7 +42,7 @@
      :request "We could investigate Eglot next."
      :expected ()
      :excluded (emacs-gtd-assistant)
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control answer-without-skill
      :completion allowed
@@ -43,27 +52,29 @@
      :request "Add the three items we just discussed to my task list."
      :expected (emacs-gtd-assistant)
      :excluded ()
-     :expected-operation add-many
+     :expected-operations ((emacs-gtd-assistant . add-many))
      :mutation allowed
      :control execute
      :completion conditional
+     :completion-condition "All three requested tasks were created and verified."
      :reason "The user explicitly confirms persistent task capture.")
     (:id blog-explicit-publish
      :case-class positive
      :request "Publish this Org note to the blog."
      :expected (org-blog-exporter)
      :excluded (denote-scribe)
-     :expected-operation publish
+     :expected-operations ((org-blog-exporter . publish))
      :mutation allowed
      :control execute
      :completion conditional
+     :completion-condition "Publication and its requested repository effects were verified."
      :reason "The request explicitly asks for blog publication.")
     (:id blog-possible-future-writing
      :case-class negative
      :request "Maybe we could turn this into a blog post someday."
      :expected ()
      :excluded (org-blog-exporter)
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control answer-without-skill
      :completion allowed
@@ -73,27 +84,29 @@
      :request "Save the research we just completed as a Denote reasoning note."
      :expected (denote-scribe)
      :excluded ()
-     :expected-operation capture
+     :expected-operations ((denote-scribe . capture))
      :mutation allowed
      :control execute
      :completion conditional
+     :completion-condition "The requested Denote note was created and verified."
      :reason "The user explicitly requests persistent conversation capture as a note.")
     (:id git-explicit-commit
      :case-class positive
      :request "Commit these three validated files."
      :expected (git-commit)
      :excluded ()
-     :expected-operation context
+     :expected-operations ((git-commit . context))
      :mutation allowed
      :control execute
      :completion conditional
+     :completion-condition "The commit contains exactly the authorized files and was verified."
      :reason "The request explicitly asks for a Git commit over a bounded file set.")
     (:id git-explicit-review
      :case-class positive
      :request "Review this round of Git changes for problems."
      :expected (git-commit)
      :excluded ()
-     :expected-operation context
+     :expected-operations ((git-commit . context))
      :mutation forbidden
      :control execute
      :completion allowed
@@ -103,7 +116,7 @@
      :request "The code changes are complete."
      :expected ()
      :excluded (git-commit)
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control answer-without-skill
      :completion allowed
@@ -113,7 +126,7 @@
      :request "Summarize what we just discussed."
      :expected ()
      :excluded (denote-scribe)
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control answer-without-skill
      :completion allowed
@@ -123,7 +136,7 @@
      :request "Commit this round of changes; the repository also contains unrelated changes."
      :expected (git-commit)
      :excluded ()
-     :expected-operation context
+     :expected-operations nil
      :mutation forbidden
      :control ask-and-stop
      :completion forbidden
@@ -133,7 +146,7 @@
      :request "Review the changes and suggest a commit message, but do not commit."
      :expected (git-commit)
      :excluded ()
-     :expected-operation context
+     :expected-operations ((git-commit . context))
      :mutation forbidden
      :control execute
      :completion allowed
@@ -143,7 +156,7 @@
      :request "Mark the task with the duplicated name as done."
      :expected (emacs-gtd-assistant)
      :excluded ()
-     :expected-operation set-state
+     :expected-operations nil
      :mutation forbidden
      :control ask-and-stop
      :completion forbidden
@@ -153,17 +166,18 @@
      :request "Publish returned partial: HTML was generated, but asset copying failed. Continue."
      :expected (org-blog-exporter)
      :excluded ()
-     :expected-operation resume
+     :expected-operations ((org-blog-exporter . resume))
      :mutation conditional
      :control inspect-and-retry-selectively
-     :completion forbidden
+     :completion conditional
+     :completion-condition "Resume succeeded and all remaining publication postconditions were verified."
      :reason "Use the returned session recovery token to resume verified remaining work.")
     (:id navigator-chinese-unsaved-buffer
      :case-class positive
      :request "分析当前光标所在函数，缓冲区里有尚未保存的修改。"
      :expected (emacs-code-navigator)
      :excluded (denote-scribe emacs-gtd-assistant)
-     :expected-operation context
+     :expected-operations ((emacs-code-navigator . context))
      :mutation forbidden
      :control execute
      :completion allowed
@@ -173,7 +187,7 @@
      :request "总结刚才的分析，以后可以继续研究 Eglot。"
      :expected ()
      :excluded (denote-scribe emacs-gtd-assistant org-blog-exporter)
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control answer-without-skill
      :completion allowed
@@ -183,7 +197,6 @@
      :request "结合当前未保存的函数和 Git diff 审查问题，并说明哪些改动尚未进入磁盘。"
      :expected (emacs-code-navigator git-commit)
      :excluded (denote-scribe emacs-gtd-assistant)
-     :expected-operation nil
      :expected-operations ((emacs-code-navigator . context) (git-commit . context))
      :mutation forbidden
      :control execute
@@ -194,17 +207,18 @@
      :request "The first publish call returned invalid-request, and the current operation schema is uncertain."
      :expected (org-blog-exporter)
      :excluded ()
-     :expected-operation describe
-     :mutation forbidden
+     :expected-operations ((org-blog-exporter . describe))
+     :mutation conditional
      :control describe-and-retry-once
-     :completion forbidden
-     :reason "One describe-guided retry is allowed before stopping.")
+     :completion conditional
+     :completion-condition "The single schema-guided retry succeeded and publication was verified."
+     :reason "Describe first; retry once only with valid arguments and publication authorization, then report the actual outcome.")
     (:id denote-link-partial-is-not-complete
      :case-class false-completion
      :request "The Denote note was created, but link-gtd failed. Is the request complete?"
      :expected (denote-scribe)
      :excluded ()
-     :expected-operation nil
+     :expected-operations nil
      :mutation forbidden
      :control report-incomplete
      :completion forbidden
