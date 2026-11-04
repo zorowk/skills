@@ -12,7 +12,6 @@ Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流�
 | [`emacs-gtd-assistant`](emacs-gtd-assistant/SKILL.md) | 从 Org/Agenda 任务进入 AI 会话，关联项目文档、实施子任务和接续进度；也支持常规任务管理。 | “列出今天的任务”“把这个任务标记为 DONE” |
 | [`org-blog-exporter`](org-blog-exporter/SKILL.md) | 将 `~/Dropbox/notes` 中符合条件的 Org 笔记导出为静态 HTML；支持单篇、批量和全量导出。明确要求发布时，还可更新索引、复制并重写本地资源、提交并推送博客仓库。 | “预览这篇 Org 笔记”“发布博客” |
 | [`git-commit`](git-commit/SKILL.md) | 为任意仓库生成便于 AI 和人理解的提交信息；读取含未跟踪文件的实际 diff，按风险选择详细度，并可暂存和提交明确的文件集合。 | “生成 commit message”“提交这些修改” |
-| [`skill-usage-review`](skill-usage-review/SKILL.md) | 根据当前对话中的实际调用和本地 metrics，独立评价正确性、证据充分性、安全性与经济性，并诊断恢复成本。 | “评价本轮 skills 使用情况” |
 
 每个目录中的 `SKILL.md` 只保留触发条件、需要模型判断的规则和授权边界；可确定执行的
 流程由 `scripts/*.el` 的公共函数、docstring 与校验错误构成。正常使用时无需让助手通读
@@ -58,7 +57,6 @@ flowchart LR
         GTD["emacs-gtd-assistant"]
         SCRIBE["denote-scribe"]
         BLOG["org-blog-exporter"]
-        USAGE["skill-usage-review"]
     end
 
     USER -->|"提问、选择、明确授权"| AS
@@ -96,8 +94,6 @@ flowchart LR
     COMMIT --> MAGIT
     GITCORE --> MAGIT
 
-    RUNTIME -.->|"privacy-safe metrics"| USAGE
-    AGENT -->|"用户要求评价 skill 使用"| USAGE
 ```
 
 代码上下文 adapter 仍由 `emacs-code-navigator` 负责：读取 live buffer、光标、未保存状态、
@@ -141,18 +137,6 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 字段数、payload 字符数、基础响应字符数、结果数、截断、降级和来源，并用版本号保护
 历史比较。字符数是可重复的本地代理，不冒充模型服务的精确 Token usage。截断和下一页
 位置均为机器可读字段。仅在调用参数不明确时请求 `describe` schema，无需读取实现源码。
-
-任务完成后可要求“评价本轮 skills 使用情况”。`skill-usage-review` 会以正确完成为门槛，
-结合当前对话中的失败重试和各调用的 `:metrics`，区分必要信息、安全信息与冗余信息；
-分别给出正确性、证据充分性、安全性和经济性的 0–3 评级，不求和、加权或输出可相互抵消
-的综合分。字符数与有效上下文比例只作为诊断证据，不作为优化目标。恢复诊断会区分可见的
-失败、重试和修复成本，与因缺少证据或跳过验证而推断的潜在返工风险。它不会在 GitHub
-Actions 中调用 AI，也不会持久化调用内容。
-
-用户在 agent-shell 对话中要求审阅本轮 skill 使用时，Agent 直接触发
-`skill-usage-review`，使用对话中已经可见的调用和 metrics 评价质量、效率和恢复成本
-诊断；它不重新运行任务、不把 tool 输出复制进 Emacs，也不增加自动上下文。评价得到的
-具体工作或长期经验仍由用户显式选择 GTD 或 Denote 捕获，不会自动写入。
 
 ## 主要工作流
 
@@ -201,7 +185,6 @@ token 仅在当前 Emacs 会话有效，最多保留最近 16 个，开始恢复
 - `org-blog-exporter`：Org HTML exporter；发布流程还需要 Magit、Git 仓库和远端权限；
 - `git-commit`：Magit（用于从任意当前仓库收集提交证据）；
 - agent-shell 自动上下文：agent-shell 支持 `agent-shell-context-sources`；
-- `skill-usage-review`：无额外运行时依赖；
 
 ## Install
 
@@ -218,8 +201,7 @@ skills/
 ├── emacs-code-navigator/
 ├── emacs-gtd-assistant/
 ├── org-blog-exporter/
-├── git-commit/
-└── skill-usage-review/
+└── git-commit/
 ```
 
 如果客户端支持导入压缩包，可按需打包。下面的示例包含全部 skills：
@@ -227,7 +209,7 @@ skills/
 ```bash
 zip -r ai-skills.zip \
   common denote-scribe emacs-code-navigator \
-  emacs-gtd-assistant org-blog-exporter git-commit skill-usage-review
+  emacs-gtd-assistant org-blog-exporter git-commit
 ```
 
 启用或重新加载 skills 后，直接用自然语言提出表格中的请求即可。涉及删除、归档、
@@ -254,5 +236,5 @@ emacs -Q --batch -l tests/run-tests.el emacs-gtd-assistant-tests.el
 (emacs-code-navigator-agent-shell-enable)
 ```
 
-Git Review、Denote、独立 GTD 捕获和 skill 使用审阅都不注册回合动作；用户在 agent-shell
+Git Review、Denote、独立 GTD 捕获都不注册回合动作；用户在 agent-shell
 对话中表达相应意图后，由 Agent 依据 skill 元数据直接触发并执行。

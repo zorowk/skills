@@ -118,16 +118,6 @@
      :control answer-without-skill
      :completion allowed
      :reason "A conversational summary is not a request to persist a Denote note.")
-    (:id usage-review-after-tools
-     :case-class positive
-     :request "Evaluate how the skills were used in this turn."
-     :expected (skill-usage-review)
-     :excluded ()
-     :expected-operation nil
-     :mutation forbidden
-     :control execute
-     :completion allowed
-     :reason "The user asks for a post-task review of visible skill calls.")
     (:id git-unrelated-changes-ambiguous
      :case-class ambiguous
      :request "Commit this round of changes; the repository also contains unrelated changes."
