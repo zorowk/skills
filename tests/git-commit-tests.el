@@ -360,6 +360,41 @@
     (should (equal (ai-git-commit--head-message)
                    "subject\n\nbody\n"))))
 
+(ert-deftest git-push-ignores-broad-refspecs-and-implicit-tag-settings ()
+  (let ((remote (make-temp-file "git-push-scope-" t)))
+    (unwind-protect
+        (skill-tests-with-git-repository
+          (skill-tests-git "init" "--bare" "-q" remote)
+          (skill-tests-git "config" "commit.gpgsign" "false")
+          (skill-tests-git "branch" "-M" "main")
+          (with-temp-file "page.txt" (insert "base\n"))
+          (skill-tests-git "add" "--all")
+          (skill-tests-git "commit" "-qm" "base")
+          (skill-tests-git "branch" "other")
+          (skill-tests-git "remote" "add" "origin" remote)
+          (skill-tests-git "push" "-qu" "origin" "main:site")
+          (skill-tests-git "push" "-q" "origin" "other")
+          (let ((old-other (skill-tests-git "rev-parse" "other")))
+            (skill-tests-git "checkout" "-q" "other")
+            (with-temp-file "page.txt" (insert "unrelated\n"))
+            (skill-tests-git "commit" "-qam" "other work")
+            (skill-tests-git "checkout" "-q" "main")
+            (with-temp-file "page.txt" (insert "publish\n"))
+            (skill-tests-git "commit" "-qam" "publish")
+            (skill-tests-git "tag" "-am" "private tag" "private-tag")
+            (skill-tests-git "config" "push.default" "matching")
+            (skill-tests-git "config" "remote.origin.push" "refs/heads/other:refs/heads/other")
+            (skill-tests-git "config" "push.followTags" "true")
+            (let ((result (skill-git-push root)))
+              (should (plist-get result :verified))
+              (should (equal (plist-get result :target-ref) "refs/heads/site"))
+              (should (equal (skill-tests-git "rev-parse" "HEAD")
+                             (skill-tests-git "--git-dir" remote "rev-parse" "refs/heads/site")))
+              (should (equal old-other
+                             (skill-tests-git "--git-dir" remote "rev-parse" "refs/heads/other")))
+              (should (equal "" (skill-tests-git "--git-dir" remote "tag" "--list"))))))
+      (delete-directory remote t))))
+
 (provide 'git-commit-tests)
 
 ;;; git-commit-tests.el ends here

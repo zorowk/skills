@@ -30,6 +30,8 @@
 (declare-function magit-git-string "magit-git" (&rest args))
 (declare-function magit-git-success "magit-git" (&rest args))
 (declare-function magit-toplevel "magit-git" (&optional directory))
+(declare-function magit-get "magit-git" (&rest keys))
+(declare-function magit-get-upstream-remote "magit-git" (&optional branch allow-unnamed))
 
 (defun skill-git-directory (directory)
   "Return DIRECTORY expanded as an absolute directory name."
@@ -326,22 +328,28 @@ it out of the rendered message while still validating that it was supplied."
          (branch (magit-git-string "branch" "--show-current"))
          (upstream
           (magit-git-string
-           "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{upstream}")))
+           "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{upstream}"))
+         (remote (and branch (magit-get-upstream-remote branch)))
+         (target (and branch (magit-get "branch" branch "merge")))
+         (commit (magit-git-string "rev-parse" "HEAD")))
     (unless (and branch (not (string-empty-p branch))
-                 upstream (not (string-empty-p upstream)))
+                 upstream (not (string-empty-p upstream))
+                 remote target (string-prefix-p "refs/heads/" target) commit)
       (error "Current branch has no usable Git upstream in %s"
              default-directory))
-    (unless (zerop (magit-call-git "push" "--porcelain"))
+    (unless (zerop (magit-call-git "push" "--porcelain" "--no-mirror"
+                                  "--no-follow-tags" remote (concat commit ":" target)))
       (error "Git push failed in %s" default-directory))
-    (let ((commit (magit-git-string "rev-parse" "HEAD"))
+    (let ((head (magit-git-string "rev-parse" "HEAD"))
           (upstream-commit
            (magit-git-string "rev-parse" "@{upstream}")))
-      (unless (and commit upstream-commit
+      (unless (and (equal commit head) upstream-commit
                    (string= commit upstream-commit))
         (error "Git upstream does not match HEAD after push in %s"
                default-directory))
       (list :git-root default-directory
             :branch branch
+            :remote remote :target-ref target
             :upstream upstream
             :commit commit
             :upstream-commit upstream-commit
