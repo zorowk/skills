@@ -55,7 +55,8 @@
 (ert-deftest blog-push-failure-retains-commit-and-resumes-without-another-commit ()
   (blog-tests--with-repository
    (lambda (notes blog source setup)
-     (let ((push-function (symbol-function 'skill-git-push))
+     (let ((skill-tests-workflow-metrics nil)
+           (push-function (symbol-function 'skill-git-push))
            (export-function (symbol-function 'org-blog-exporter--export-file-artifact))
            (push-count 0) (export-count 0))
        (cl-letf (((symbol-function 'skill-git-push)
@@ -67,7 +68,10 @@
                   (lambda (&rest args)
                     (setq export-count (1+ export-count))
                     (apply export-function args))))
-         (let* ((first (org-blog-exporter-run
+         (let* ((description (skill-tests-workflow-call
+                              #'org-blog-exporter-run '(:operation describe :target resume)))
+                (template (plist-get (plist-get description :data) :request-template))
+                (first (skill-tests-workflow-call #'org-blog-exporter-run
                         (list :operation 'publish :authorization 'explicit
                               :files (list source) :notes-dir notes
                               :repository-dir blog :setupfile setup)))
@@ -82,9 +86,9 @@
            (should (plist-get (plist-get (plist-get first :verification) :repository)
                               :commit-exists))
            (skill-contract-tests-assert-failure
-            (org-blog-exporter-run (list :operation 'resume :recovery-token token))
+            (skill-tests-workflow-call #'org-blog-exporter-run (list :operation 'resume :recovery-token token))
             'needs-input 'authorization-required)
-           (let* ((retry (org-blog-exporter-run
+           (let* ((retry (skill-tests-workflow-call #'org-blog-exporter-run
                           (list :operation 'resume :authorization 'explicit
                                 :recovery-token token)))
                   (next-token (plist-get (plist-get retry :error) :recovery-token)))
@@ -92,9 +96,10 @@
              (should next-token)
              (should-not (equal next-token token))
              (setq token next-token))
-           (let ((resumed (org-blog-exporter-run
-                           (list :operation 'resume :authorization 'explicit
-                                 :recovery-token token))))
+           (let ((resumed (skill-tests-workflow-call
+                           #'org-blog-exporter-run
+                           (plist-put (plist-put (copy-tree template) :recovery-token token)
+                                      :authorization 'explicit))))
              (should (eq (plist-get resumed :status) 'ok))
              (should (plist-get (plist-get (plist-get resumed :effects) :push) :verified))
              (should (equal head (skill-tests-git "rev-parse" "HEAD")))
@@ -102,9 +107,13 @@
              (should (= export-count 1))
              (should (= push-count 3)))
            (skill-contract-tests-assert-failure
-            (org-blog-exporter-run (list :operation 'resume :authorization 'explicit
+            (skill-tests-workflow-call #'org-blog-exporter-run (list :operation 'resume :authorization 'explicit
                                          :recovery-token token))
-            'needs-input 'not-found)))))))
+            'needs-input 'not-found)
+           (should (= (length skill-tests-workflow-metrics) 6))
+           (skill-tests-record-workflow
+            'blog-push-recovery
+            '(:commit-reused t :export-not-repeated t :push-verified t :token-consumed t))))))))
 
 (ert-deftest blog-asset-recovery-preserves-artifacts-and-rejects-stale-inputs ()
   (blog-tests--with-repository

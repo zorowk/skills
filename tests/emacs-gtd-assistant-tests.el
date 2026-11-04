@@ -376,24 +376,35 @@
 (ert-deftest gtd-query-mutation-creates-id-only-after-authorization ()
   (gtd-project-tests-with-files
     (with-temp-file file (insert "* Personal\n** TODO Idless task\n"))
-    (let* ((disk (with-temp-buffer (insert-file-contents file) (buffer-string)))
-           (resolved (emacs-gtd-execute '(:operation resolve :query "Idless task")))
+    (let* ((skill-tests-workflow-metrics nil)
+           (description (skill-tests-workflow-call
+                         #'emacs-gtd-execute '(:operation describe :target resolve)))
+           (request (copy-tree (plist-get (plist-get description :data) :request-template)))
+           (disk (with-temp-buffer (insert-file-contents file) (buffer-string)))
+           (resolved (skill-tests-workflow-call
+                      #'emacs-gtd-execute (plist-put request :query "Idless task")))
            (item (plist-get (plist-get resolved :data) :item)))
       (should-not (plist-get item :id))
       (should (equal (plist-get item :file) file))
       (skill-contract-tests-assert-failure
-       (emacs-gtd-execute '(:operation set-state :query "Idless task" :state "DONE"))
+       (skill-tests-workflow-call
+        #'emacs-gtd-execute '(:operation set-state :query "Idless task" :state "DONE"))
        'needs-input 'authorization-required)
       (should (equal disk (with-temp-buffer
                             (insert-file-contents file) (buffer-string))))
-      (let* ((changed (emacs-gtd-execute
+      (let* ((changed (skill-tests-workflow-call
+                       #'emacs-gtd-execute
                        '(:operation set-state :query "Idless task" :state "DONE"
                          :authorization explicit)))
              (updated (plist-get changed :data)))
         (should (eq (plist-get changed :status) 'ok))
         (should (stringp (plist-get updated :id)))
         (should (equal (plist-get updated :todo) "DONE"))
-        (should (plist-get (plist-get changed :effects) :mutated))))))
+        (should (plist-get (plist-get changed :effects) :mutated)))
+      (should (= (length skill-tests-workflow-metrics) 4))
+      (skill-tests-record-workflow
+       'gtd-query-then-authorized-mutation
+       '(:readonly-idless-query t :unauthorized-write-rejected t :authorized-change-verified t)))))
 
 (ert-deftest gtd-project-read-is-nonmutating-and-uses-nearest-project ()
   (gtd-project-tests-with-files

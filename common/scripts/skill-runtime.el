@@ -199,6 +199,40 @@ retaining request or result content."
                   (skill-runtime--plist-value provenance :resolved-source))))
       (append result (list :metrics metrics)))))
 
+(defun skill-runtime-summarize-metrics (metrics)
+  "Summarize a workflow's chronological list of call METRICS without content.
+Count every call, including describe, failed calls, paging and retries.  Totals
+are character proxies, not token counts; payload is part of the base response
+and must not be added to it.  Reject absent or incompatible measurements."
+  (unless (proper-list-p metrics) (error "METRICS must be a proper list"))
+  (let ((fields '(:elapsed-ms :request-characters :base-response-characters
+                  :payload-characters))
+        (summary (list :metrics-version skill-runtime-metrics-version
+                       :call-count (length metrics)
+                       :truncated-call-count 0 :degraded-call-count 0)))
+    (dolist (field fields) (setq summary (plist-put summary field 0)))
+    (dolist (call metrics)
+      (unless (and (skill-runtime--well-formed-plist-p call)
+                   (equal (plist-get call :metrics-version)
+                          skill-runtime-metrics-version))
+        (error "Missing or incompatible call metrics"))
+      (dolist (field fields)
+        (let ((value (plist-get call field)))
+          (unless (natnump value) (error "Invalid metric %S: %S" field value))
+          (setq summary (plist-put summary field
+                                   (+ (plist-get summary field) value)))))
+      (dolist (field '(:truncated :degraded))
+        (unless (and (plist-member call field)
+                     (memq (plist-get call field) '(nil t)))
+          (error "Missing or invalid boolean metric %S" field)))
+      (when (plist-get call :truncated)
+        (setq summary (plist-put summary :truncated-call-count
+                                 (1+ (plist-get summary :truncated-call-count)))))
+      (when (plist-get call :degraded)
+        (setq summary (plist-put summary :degraded-call-count
+                                 (1+ (plist-get summary :degraded-call-count))))))
+    summary))
+
 (defun skill-runtime-result
     (operation data &optional count status page effects error verification)
   "Return a compact standard envelope for OPERATION and DATA.

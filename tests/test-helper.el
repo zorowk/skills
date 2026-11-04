@@ -78,6 +78,25 @@
     "Domain capabilities remain available and external actions still require authorization.")
   "Reusable structured evidence for formatter and conformance tests.")
 
+(defvar skill-tests-workflow-metrics nil
+  "Call metrics dynamically bound by a real workflow smoke test.")
+
+(defvar skill-tests-workflow-observations nil
+  "Privacy-safe observations from completed workflow smoke tests.")
+
+(defun skill-tests-workflow-call (facade request)
+  "Call FACADE with REQUEST and collect its actual metrics for this workflow."
+  (let ((result (funcall facade request)))
+    (push (plist-get result :metrics) skill-tests-workflow-metrics)
+    result))
+
+(defun skill-tests-record-workflow (name checks)
+  "Record NAME's completed CHECKS and actual facade cost without request text."
+  (push (list :workflow name :checks checks
+              :cost (skill-runtime-summarize-metrics
+                     (reverse skill-tests-workflow-metrics)))
+        skill-tests-workflow-observations))
+
 (provide 'test-helper)
 
 ;;; test-helper.el ends here

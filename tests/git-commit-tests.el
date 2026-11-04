@@ -119,7 +119,8 @@
 (ert-deftest git-context-paths-exclude-unrelated-untracked-content ()
   (unless (require 'magit nil t)
     (ert-skip "Magit is unavailable in the pure -Q contract environment"))
-  (let* ((root (make-temp-file "git-context-scope-" t))
+  (let* ((skill-tests-workflow-metrics nil)
+         (root (make-temp-file "git-context-scope-" t))
          (default-directory root)
          (target (expand-file-name "target.el" root))
          (new (expand-file-name "new.el" root))
@@ -138,10 +139,13 @@
           (with-temp-file target (insert "changed target\n"))
           (with-temp-file new (insert "new scoped content\n"))
           (with-temp-file unrelated (insert "UNRELATED-SECRET-CONTENT\n"))
-          (let* ((result
-                  (ai-git-commit-run
-                   (list :operation 'context :directory root
-                         :paths '("target.el" "new.el"))))
+          (let* ((description (skill-tests-workflow-call
+                               #'ai-git-commit-run '(:operation describe :target context)))
+                 (request (copy-tree (plist-get (plist-get description :data) :request-template)))
+                 (result
+                  (skill-tests-workflow-call
+                   #'ai-git-commit-run
+                   (append request (list :directory root :paths '("target.el" "new.el")))))
                  (data (plist-get result :data))
                  (diff (plist-get data :diff)))
             (should (equal (plist-get data :diff-scope)
@@ -154,7 +158,10 @@
                                         (plist-get data :status)))
             (should-not (string-match-p "UNRELATED-SECRET-CONTENT" diff))
             (should (string-match-p "changed target" diff))
-            (should (string-match-p "new scoped content" diff))))
+            (should (string-match-p "new scoped content" diff))
+            (should (= (length skill-tests-workflow-metrics) 2))
+            (skill-tests-record-workflow
+             'git-scoped-context '(:scope-preserved t :unrelated-content-hidden t))))
       (delete-directory root t))))
 
 (ert-deftest git-path-validation-allows-tracked-deletions-and-rejects-escape ()

@@ -166,6 +166,41 @@
                      "private"
                      (prin1-to-string metrics)))))))
 
+(ert-deftest skill-runtime-workflow-cost-includes-failures-and-retries ()
+  (let* ((results
+          (list
+           (skill-runtime-measure
+            '(:operation publish :private "not retained")
+            (lambda () (skill-runtime-reject-request "Bad request")))
+           (skill-runtime-measure
+            '(:operation describe)
+            (lambda () (skill-runtime-result 'describe '(:schema "private"))))
+           (skill-runtime-measure
+            '(:operation publish)
+            (lambda () (skill-runtime-result 'publish '(:done t) 1 'ok
+                                             '(:truncated t))))))
+         (metrics (mapcar (lambda (result) (plist-get result :metrics)) results))
+         (summary (skill-runtime-summarize-metrics metrics)))
+    (should (= (plist-get summary :call-count) 3))
+    (should (= (plist-get summary :truncated-call-count) 1))
+    (should (= (plist-get summary :degraded-call-count) 0))
+    (should (= (plist-get summary :request-characters)
+               (apply #'+ (mapcar (lambda (call) (plist-get call :request-characters))
+                                 metrics))))
+    (should (= (plist-get summary :base-response-characters)
+               (apply #'+ (mapcar (lambda (call)
+                                   (plist-get call :base-response-characters))
+                                 metrics))))
+    (should-not (string-match-p "private\\|not retained" (prin1-to-string summary)))
+    (dolist (replacement '((:metrics-version 999) (:request-characters nil)
+                           (:elapsed-ms -1) (:truncated unknown)))
+      (should-error
+       (skill-runtime-summarize-metrics
+        (list (plist-put (copy-sequence (car metrics))
+                         (car replacement) (cadr replacement))))))
+    (should-error (skill-runtime-summarize-metrics '(nil)))
+    (should (= (plist-get (skill-runtime-summarize-metrics nil) :call-count) 0))))
+
 (ert-deftest skill-runtime-keeps-temporary-output-buffers-in-background ()
   (let ((buffer-name "*skill-runtime-background-test*")
         (show-count 0)

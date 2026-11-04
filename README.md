@@ -147,6 +147,8 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 公共操作 schema 拒绝未知字段；拼错参数会返回字段位置和允许字段，不会静默忽略。
 请求及嵌套任务 plist 同时拒绝重复字段，避免授权和目标选择依赖字段出现顺序；分页参数
 和布尔开关按 schema 校验，输入错误返回结构化的 `invalid-request`。
+`skill-runtime-summarize-metrics` 可汇总一次流程的全部 facade 调用，包括失败、分页和
+重试；它不保留原文，也不把 payload 和基础响应字符数重复相加。
 
 ## 主要工作流
 
@@ -238,6 +240,10 @@ emacs -Q --batch -l tests/run-tests.el emacs-gtd-assistant-tests.el
 
 `tests/routing-cases.el` 保存 skill 路由的正反案例，供人工评审或另行固定模型版本的评测
 使用。常规 ERT 只校验案例结构、skill 名称和边界完整性，不用关键词匹配冒充模型路由结果。
+
+`emacs --batch -l tests/run-workflows.el` 单独运行三条隔离的原生流程，输出经过验证的
+检查项与真实 facade 成本：GTD 查询到授权修改、限定路径的 Git context、博客推送失败
+后的恢复。它们使用临时文件与本地 Git remote，不代表固定模型版本的路由评测结果。
 
 在 Emacs 配置中启用公共代码上下文：
 
