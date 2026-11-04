@@ -103,20 +103,23 @@
 
 (defun emacs-gtd-project-context (id)
   "Read entry ID and nearest project context from managed files."
-  (save-current-buffer
-    (emacs-gtd--find-id id)
-    (save-excursion
-      (let ((task (emacs-gtd-project--snapshot))
-            (sessions (emacs-gtd-project--sessions))
-            project)
-        (while (and (not project) (org-at-heading-p))
-          (when (org-entry-get nil "PROJECT_DIR" nil)
-            (setq project (emacs-gtd-project--snapshot)))
-          (unless (or project (org-up-heading-safe))
-            (goto-char (point-min))
-            (unless project (setq project 'absent))))
-        (list :task task :project (unless (eq project 'absent) project)
-              :sessions sessions)))))
+  (let ((marker (emacs-gtd--id-marker id)))
+    (unwind-protect
+        (with-current-buffer (marker-buffer marker)
+          (org-with-wide-buffer
+           (goto-char marker)
+           (let ((task (emacs-gtd-project--snapshot))
+                 (sessions (emacs-gtd-project--sessions))
+                 project)
+             (while (and (not project) (org-at-heading-p))
+               (when (org-entry-get nil "PROJECT_DIR" nil)
+                 (setq project (emacs-gtd-project--snapshot)))
+               (unless (or project (org-up-heading-safe))
+                 (goto-char (point-min))
+                 (unless project (setq project 'absent))))
+             (list :task task :project (unless (eq project 'absent) project)
+                   :sessions sessions))))
+      (set-marker marker nil))))
 
 (defun emacs-gtd-project--directory (directory)
   "Validate and canonicalize a local existing DIRECTORY."

@@ -597,9 +597,9 @@ Create an ID only when CREATE-ID is non-nil."
           (setq result (append result (list (cdr mapping) value))))))
     result))
 
-(defun emacs-gtd--find-id (id)
-  "Move to the unique local ID in the configured managed files.
-Reading an identity does not require writable access or create an ID."
+(defun emacs-gtd--id-marker (id)
+  "Return a marker for the unique managed ID without moving buffer points.
+The caller owns the marker and must release it.  No ID is created."
   (emacs-gtd--single-line id "ID")
   (let (matches)
     (dolist (file (emacs-gtd--files))
@@ -617,12 +617,18 @@ Reading an identity does not require writable access or create an ID."
        (format "Expected one managed Org entry with ID %s; found %d"
                id (length matches))
        :target-type 'gtd-id :target id))
-    (let ((marker (car matches)))
-      (set-buffer (marker-buffer marker))
-      (widen)
-      (goto-char marker)
-      (set-marker marker nil)
-      (org-back-to-heading t))))
+    (car matches)))
+
+(defun emacs-gtd--find-id (id)
+  "Move to the unique managed ID without creating it."
+  (let ((marker (emacs-gtd--id-marker id)))
+    (unwind-protect
+        (progn
+          (set-buffer (marker-buffer marker))
+          (widen)
+          (goto-char marker)
+          (org-back-to-heading t))
+      (set-marker marker nil))))
 
 (defun emacs-gtd--ensure-id-at-point ()
   "Ensure current heading has an ID and return it."
@@ -675,25 +681,19 @@ QUERY is treated as a regular expression.  This function does not create IDs."
 
 ;;;###autoload
 (defun emacs-gtd-resolve-title (query &optional include-done)
-  "Resolve QUERY to one mutable GTD item and ensure that item has an ID.
+  "Resolve QUERY without creating IDs, saving files or moving buffer points.
 
 QUERY is the regular expression accepted by `emacs-gtd-find-by-title'.  Return
 a plist whose :status is `resolved', `not-found', or `ambiguous'.  A resolved
-result contains one :item with a persistent ID.  Other results contain
-:matches for caller-visible disambiguation and do not modify the GTD file."
+result contains one :item, whose ID may be nil.  Other results contain
+:matches for caller-visible disambiguation."
   (let ((matches (emacs-gtd-find-by-title query include-done)))
     (cond
      ((null matches)
       (list :status 'not-found :matches nil))
      ((cdr matches)
       (list :status 'ambiguous :matches matches))
-     (t
-      (let ((item (car matches)))
-        (list :status 'resolved
-              :item
-              (or (and (cdr (assq 'id item)) item)
-                  (emacs-gtd-ensure-id-at-line
-                   (cdr (assq 'line item)) (cdr (assq 'file item))))))))))
+     (t (list :status 'resolved :item (car matches))))))
 
 ;;;###autoload
 (defun emacs-gtd-add-task (title &optional plist defer-save)
@@ -903,16 +903,17 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
 
 (defun emacs-gtd--compact-resolution (resolution)
   "Return compact RESOLUTION from `emacs-gtd-resolve-title'."
-  (pcase (plist-get resolution :status)
-    ('resolved
-     (list :status 'resolved
-           :item (emacs-gtd--compact-item
-                  (plist-get resolution :item))))
-    (status
-     (list :status status
-           :matches
-           (mapcar #'emacs-gtd--compact-item
-                   (plist-get resolution :matches))))))
+  (let ((compact
+         (lambda (item)
+           (append (emacs-gtd--compact-item item)
+                   (unless (cdr (assq 'id item))
+                     (list :file (cdr (assq 'file item))
+                           :line (cdr (assq 'line item))))))))
+    (pcase (plist-get resolution :status)
+      ('resolved (list :status 'resolved
+                       :item (funcall compact (plist-get resolution :item))))
+      (status (list :status status
+                    :matches (mapcar compact (plist-get resolution :matches)))))))
 
 (defun emacs-gtd--request-id (request)
   "Return REQUEST ID string or signal a structured resolution failure."
@@ -926,7 +927,13 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
              (compact (emacs-gtd--compact-resolution resolution)))
         (pcase status
           ('resolved
-           (cdr (assq 'id (plist-get resolution :item))))
+           (let ((item (plist-get resolution :item)))
+             (or (cdr (assq 'id item))
+                 (progn
+                   (skill-runtime-require-authorization request 'ensure-id)
+                   (cdr (assq 'id
+                              (emacs-gtd-ensure-id-at-line
+                               (cdr (assq 'line item)) (cdr (assq 'file item)))))))))
           ('not-found
            (skill-runtime-signal
             'skill-runtime-not-found

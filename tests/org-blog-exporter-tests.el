@@ -142,6 +142,7 @@
              (with-temp-file file (insert "changed"))
              (skill-contract-tests-assert-failure
               (org-blog-exporter-run request) 'blocked 'stale-context)
+             (should (= copy-count 1))
              (cond ((equal file source) (with-temp-file file (insert original-source)))
                    ((equal file output) (with-temp-file file (insert original-html)))
                    (t (delete-file file))))
@@ -149,15 +150,18 @@
              (skill-tests-git "config" "remote.origin.url" "/tmp/changed-origin.invalid")
              (skill-contract-tests-assert-failure
               (org-blog-exporter-run request) 'blocked 'stale-context)
+             (should (= copy-count 1))
              (skill-tests-git "config" "remote.origin.url"
                               (expand-file-name "../remote.git" blog))
              (skill-tests-git "checkout" "-qb" "other")
              (skill-tests-git "commit" "--allow-empty" "-qm" "Changed HEAD")
              (skill-contract-tests-assert-failure
               (org-blog-exporter-run request) 'blocked 'stale-context)
+             (should (= copy-count 1))
              (skill-tests-git "checkout" "-q" "main"))
            (let ((result (org-blog-exporter-run request)))
              (should (eq (plist-get result :status) 'ok))
+             (should (= copy-count 2))
              (should (= export-count 1))
              (should (= index-count 1))
              (should (file-exists-p (expand-file-name "image/sample.png" blog)))

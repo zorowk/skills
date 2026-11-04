@@ -150,7 +150,17 @@
             (should (eq (plist-get (plist-get disk :provenance) :degraded)
                         t))
             (should (eq (plist-get state :buffer-modified) t))
-            (should (eq (plist-get state :diverged) t))))
+            (should (eq (plist-get state :diverged) t)))
+          ;; Disk can change after context was read while live edits remain unsaved.
+          (with-temp-file file (insert "external-value\n"))
+          (let ((disk (emacs-code-navigator-query
+                       (list :operation 'region :file file :start-line 1
+                             :end-line 2 :source 'disk))))
+            (should (string-match-p "external-value" (plist-get disk :data)))
+            (with-current-buffer live-buffer
+              (should (buffer-modified-p))
+              (should (string-match-p "live-value" (buffer-string)))
+              (should-not (string-match-p "external-value" (buffer-string))))))
       (when (buffer-live-p live-buffer)
         (with-current-buffer live-buffer
           (set-buffer-modified-p nil))

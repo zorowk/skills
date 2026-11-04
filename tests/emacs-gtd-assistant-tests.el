@@ -126,6 +126,41 @@
       (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
       (delete-directory root t))))
 
+(ert-deftest gtd-query-is-resolved-again-after-another-task-is-added ()
+  (let* ((root (make-temp-file "gtd-reresolve-" t))
+         (file (expand-file-name "gtd.org" root))
+         (emacs-gtd-directory root)
+         (emacs-gtd-file "gtd.org")
+         (org-id-locations-file (expand-file-name "org-id-locations" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "* Personal\n** TODO Shared title\n:PROPERTIES:\n:ID: original-task\n:END:\n"))
+          (with-temp-file org-id-locations-file (insert "()\n"))
+          (let ((resolved (emacs-gtd-execute
+                           '(:operation resolve :query "Shared title"))))
+            (should (eq (plist-get resolved :status) 'ok))
+            (should (= (plist-get resolved :count) 1)))
+          (should (eq (plist-get
+                       (emacs-gtd-execute
+                        '(:operation add :title "Shared title" :headline "Personal"
+                          :authorization explicit))
+                       :status) 'ok))
+          (let* ((before (with-temp-buffer
+                           (insert-file-contents file) (buffer-string)))
+                 (result (emacs-gtd-execute
+                          '(:operation set-state :query "Shared title"
+                            :state "DONE" :authorization explicit))))
+            (skill-contract-tests-assert-failure result 'needs-input 'ambiguous)
+            (should-not (plist-get result :effects))
+            (should (equal before (with-temp-buffer
+                                    (insert-file-contents file) (buffer-string))))
+            (with-current-buffer (get-file-buffer file)
+              (should-not (buffer-modified-p))
+              (should (equal before (buffer-string))))))
+      (when-let* ((buffer (get-file-buffer file))) (kill-buffer buffer))
+      (delete-directory root t))))
+
 (ert-deftest gtd-conversation-capture-requires-confirmation-and-writes-structure ()
   (let* ((root (make-temp-file "gtd-capture-" t))
          (file (expand-file-name "gtd.org" root))
@@ -294,6 +329,71 @@
            (with-current-buffer buffer (set-buffer-modified-p nil))
            (kill-buffer buffer)))
        (delete-directory root t))))
+
+(ert-deftest gtd-read-operations-preserve-idless-unsaved-narrowed-buffers ()
+  (gtd-project-tests-with-files
+    (let* ((buffer (find-file-noselect other))
+           (disk (with-temp-buffer (insert-file-contents other) (buffer-string))))
+      (with-current-buffer buffer
+        (goto-char (point-max))
+        (insert "** TODO Idless task\nUnsaved details.\n")
+        (goto-char (point-min))
+        (search-forward "** TODO Existing")
+        (beginning-of-line)
+        (org-narrow-to-subtree)
+        (goto-char (point-max))
+        (let ((buffer-read-only t)
+              (position (point)) (minimum (point-min)) (maximum (point-max))
+              (tick (buffer-chars-modified-tick))
+              (ids (copy-tree org-id-locations)))
+          (with-temp-buffer
+            (dolist (request '((:operation list)
+                               (:operation resolve :query "Idless task")
+                               (:operation resolve :query "Existing")
+                               (:operation get :id "task")
+                               (:operation get :id "missing")))
+              (let* ((caller (current-buffer))
+                     (result (emacs-gtd-execute request)))
+                (should (eq (current-buffer) caller))
+                (should-not (plist-get result :effects))
+                (if (equal (plist-get request :id) "missing")
+                    (skill-contract-tests-assert-failure result 'needs-input 'not-found)
+                  (should (eq (plist-get result :status) 'ok)))
+                (when (equal (plist-get request :query) "Idless task")
+                  (let ((item (plist-get (plist-get result :data) :item)))
+                    (should-not (plist-get item :id))
+                    (should (equal (plist-get item :file) other))
+                    (should (natnump (plist-get item :line))))))))
+          (should (= (point) position))
+          (should (= (point-min) minimum))
+          (should (= (point-max) maximum))
+          (should (= (buffer-chars-modified-tick) tick))
+          (should (buffer-modified-p))
+          (should (equal ids org-id-locations))))
+      (should (equal disk (with-temp-buffer
+                            (insert-file-contents other) (buffer-string)))))))
+
+(ert-deftest gtd-query-mutation-creates-id-only-after-authorization ()
+  (gtd-project-tests-with-files
+    (with-temp-file file (insert "* Personal\n** TODO Idless task\n"))
+    (let* ((disk (with-temp-buffer (insert-file-contents file) (buffer-string)))
+           (resolved (emacs-gtd-execute '(:operation resolve :query "Idless task")))
+           (item (plist-get (plist-get resolved :data) :item)))
+      (should-not (plist-get item :id))
+      (should (equal (plist-get item :file) file))
+      (skill-contract-tests-assert-failure
+       (emacs-gtd-execute '(:operation set-state :query "Idless task" :state "DONE"))
+       'needs-input 'authorization-required)
+      (should (equal disk (with-temp-buffer
+                            (insert-file-contents file) (buffer-string))))
+      (let* ((changed (emacs-gtd-execute
+                       '(:operation set-state :query "Idless task" :state "DONE"
+                         :authorization explicit)))
+             (updated (plist-get changed :data)))
+        (should (eq (plist-get changed :status) 'ok))
+        (should (stringp (plist-get updated :id)))
+        (should (equal (plist-get updated :todo) "DONE"))
+        (should (plist-get (plist-get changed :effects) :mutated))))))
 
 (ert-deftest gtd-project-read-is-nonmutating-and-uses-nearest-project ()
   (gtd-project-tests-with-files
