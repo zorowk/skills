@@ -125,6 +125,23 @@
     (should (equal (plist-get target :schema)
                    '(:summary "Describe a sample operation.")))))
 
+(ert-deftest skill-runtime-describe-builds-inert-required-and-alternative-templates ()
+  (let* ((schemas '((sample :required (:name :authorization)
+                            :required-one-of (:id :query)
+                            :exactly-one-of (:file :directory)
+                            :choices ((:authorization explicit)))))
+         (description (skill-runtime-describe schemas 'sample))
+         (template (plist-get description :request-template)))
+    (should (equal template '(:operation sample :name "<name>"
+                             :authorization "<authorization>" :id "<id>" :file "<file>")))
+    (should-not (eq (plist-get template :authorization) 'explicit))
+    (should (equal schemas '((sample :required (:name :authorization)
+                                    :required-one-of (:id :query)
+                                    :exactly-one-of (:file :directory)
+                                    :choices ((:authorization explicit))))))
+    (should-error (skill-runtime-validate-request schemas template)
+                  :type 'skill-runtime-authorization-required)))
+
 (ert-deftest skill-runtime-measures-calls-without-retaining-content ()
   (let ((times '(10.0 10.042)))
     (cl-letf (((symbol-function 'float-time)

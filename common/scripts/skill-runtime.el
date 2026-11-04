@@ -599,10 +599,31 @@ operation-specific validation remains the facade's responsibility."
       (setq result (append result (list :effects effects))))
     result))
 
+(defun skill-runtime--request-template (operation schema)
+  "Return an editable request skeleton for OPERATION using SCHEMA.
+Use the first field of each alternative group; the caller may select another
+field from the schema.  Placeholders intentionally supply no real target or
+authorization.  All cross-field constraints still apply after editing."
+  (let ((fields (delete-dups
+                 (append (copy-sequence (plist-get schema :required))
+                         (when (plist-get schema :required-one-of)
+                           (list (car (plist-get schema :required-one-of))))
+                         (mapcar #'car
+                                 (skill-runtime--constraint-groups
+                                  (plist-get schema :exactly-one-of)
+                                  ":exactly-one-of")))))
+        (request (list :operation operation)))
+    (dolist (field fields)
+      (setq request (append request
+                            (list field (format "<%s>" (substring (symbol-name field) 1))))))
+    request))
+
 (defun skill-runtime-describe (schemas &optional target)
   "Describe operation SCHEMAS, optionally restricted to TARGET.
 
-SCHEMAS is an alist whose entries are (OPERATION . PLIST)."
+SCHEMAS is an alist whose entries are (OPERATION . PLIST).
+Targeted descriptions include :request-template.  Replace every <field>
+placeholder using the schema and authorized context before calling a facade."
   (if target
       (let ((schema (alist-get target schemas)))
         (unless schema
@@ -611,7 +632,8 @@ SCHEMAS is an alist whose entries are (OPERATION . PLIST)."
            :field-path '(:target)
            :expected (mapcar #'car schemas)
            :actual target))
-        (list :operation target :schema schema))
+        (list :operation target :schema schema
+              :request-template (skill-runtime--request-template target schema)))
     (list :operations (mapcar #'car schemas)
           :catalog (mapcar #'skill-runtime--catalog-entry schemas))))
 
