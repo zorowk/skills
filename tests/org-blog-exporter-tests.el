@@ -630,6 +630,26 @@
             (should (equal (org-blog-exporter--post-date plain) "2024-02-03"))))
       (delete-directory root t))))
 
+(ert-deftest blog-export-leaves-assessment-properties-to-standard-org-export ()
+  (let* ((root (make-temp-file "blog-no-assessment-" t))
+         (source (expand-file-name "article.org" root))
+         (setup (expand-file-name "setupfile.org" root))
+         (output (expand-file-name "output" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file setup (insert "#+options: toc:nil\n"))
+          (with-temp-file source
+            (insert "#+title: Article\n* Conclusion\n:PROPERTIES:\n"
+                    ":STATUS: supported\n:CREDIBILITY: high\n:END:\nReadable body.\n"))
+          (let* ((artifact (org-blog-exporter--export-file-artifact
+                            source output setup nil root))
+                 (html (with-temp-buffer
+                         (insert-file-contents (plist-get artifact :output))
+                         (buffer-string))))
+            (should (string-match-p "Readable body" html))
+            (should-not (string-match-p "assessment-summary\\|assessment-item" html))))
+      (delete-directory root t))))
+
 (provide 'org-blog-exporter-tests)
 
 ;;; org-blog-exporter-tests.el ends here

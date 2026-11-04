@@ -225,6 +225,15 @@
         (re-search-forward "^\\*\\* Child")
         (should (equal (emacs-gtd-project--drawer-text "CONTEXT") "child context"))))))
 
+(ert-deftest gtd-explicit-batch-capture-accepts-more-than-three-tasks ()
+  (gtd-project-tests-with-files
+    (let ((result (emacs-gtd-execute
+                   '(:operation add-many :authorization explicit
+                     :tasks ((:title "One") (:title "Two")
+                             (:title "Three") (:title "Four"))))))
+      (should (eq (plist-get result :status) 'ok))
+      (should (= (plist-get result :count) 4)))))
+
 (provide 'emacs-gtd-assistant-tests)
 
 ;;; emacs-gtd-assistant-tests.el ends here

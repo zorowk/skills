@@ -69,8 +69,8 @@
   :type 'positive-integer
   :group 'emacs-gtd-assistant)
 
-(defcustom emacs-gtd-capture-task-limit 3
-  "Maximum tasks accepted by one confirmed conversation capture."
+(defcustom emacs-gtd-capture-task-limit 50
+  "Maximum tasks accepted by one explicitly requested batch."
   :type 'positive-integer
   :group 'emacs-gtd-assistant)
 
@@ -344,7 +344,7 @@ When INACTIVE is non-nil, return an inactive timestamp like
   text)
 
 (defun emacs-gtd--validate-task-list (tasks)
-  "Return TASKS after validating conversation-capture cardinality."
+  "Return TASKS after validating batch cardinality."
   (unless (and (listp tasks) tasks)
     (error "TASKS must be a non-empty list"))
   (when (> (length tasks) emacs-gtd-capture-task-limit)

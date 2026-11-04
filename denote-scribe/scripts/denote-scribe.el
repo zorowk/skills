@@ -44,7 +44,7 @@
   :type 'positive-integer
   :group 'denote-scribe)
 
-(defcustom denote-scribe-linked-gtd-limit 3
+(defcustom denote-scribe-linked-gtd-limit 50
   "Maximum GTD backlinks added by one explicitly requested association."
   :type 'positive-integer
   :group 'denote-scribe)
@@ -288,8 +288,6 @@ keyword; otherwise do not filter by keywords."
                    (member keyword file-keywords))
                  keywords))))
        (denote-directory-files "[.]org$" nil nil nil t)))))
-
-(defalias 'denote-scribe-list-reports #'denote-scribe-list-notes)
 
 ;;;###autoload
 (defun denote-scribe-create

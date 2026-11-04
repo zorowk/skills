@@ -92,7 +92,9 @@
                 "20260723T120000--linked-research.org" notes))
          (tasks
           '((:id "task-one" :title "Trace action mapping")
-            (:id "task-two" :title "Build a minimal client"))))
+            (:id "task-two" :title "Build a minimal client")
+            (:id "task-three" :title "Verify behavior")
+            (:id "task-four" :title "Review result"))))
     (unwind-protect
         (progn
           (make-directory notes)
