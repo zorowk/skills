@@ -197,7 +197,7 @@
                  :effects (:mutated))
     (set-links :closed t :summary "Replace one resolved task's structured resource links."
                :required-one-of (:id :query)
-               :required (:links :authorization)
+               :required (:authorization) :required-present (:links)
                :optional (:include-done)
                :types
                ((:id non-empty-string) (:query non-empty-string)

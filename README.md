@@ -151,6 +151,7 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 公共操作 schema 拒绝未知字段；拼错参数会返回字段位置和允许字段，不会静默忽略。
 请求及嵌套任务 plist 同时拒绝重复字段，避免授权和目标选择依赖字段出现顺序；分页参数
 和布尔开关按 schema 校验，输入错误返回结构化的 `invalid-request`。
+`:required` 要求非空值；`:required-present` 要求显式提供键，并允许 `nil`，用于清空集合。
 `skill-runtime-summarize-metrics` 可汇总一次流程的全部 facade 调用，包括失败、分页和
 重试；它不保留原文，也不把 payload 和基础响应字符数重复相加。
 

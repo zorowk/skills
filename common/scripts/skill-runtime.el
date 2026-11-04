@@ -556,6 +556,7 @@ Unexpected implementation errors retain their original condition."
    (append
     '(:operation)
     (plist-get schema :required)
+    (plist-get schema :required-present)
     (plist-get schema :optional)
     (plist-get schema :required-one-of)
     (apply #'append
@@ -572,6 +573,11 @@ Unexpected implementation errors retain their original condition."
 (defun skill-runtime--validate-plist-schema (operation schema value path)
   "Validate plist VALUE against SCHEMA for OPERATION at PATH."
   (skill-runtime--validate-plist-keys value path)
+  (dolist (field (plist-get schema :required-present))
+    (unless (plist-member value field)
+      (skill-runtime-reject-request
+       (format "%S %s requires field %S (nil is allowed)" operation path field)
+       :field-path (list path field) :expected 'present)))
   (dolist (field (plist-get schema :required))
     (unless (skill-runtime--field-active-p value field)
       (if (eq field :authorization)
@@ -614,6 +620,8 @@ Unexpected implementation errors retain their original condition."
   "Validate REQUEST against operation SCHEMAS and return REQUEST.
 
 Require a known :operation and validate the selected declarative contract.
+:required fields must be non-nil; :required-present fields must be supplied
+but may explicitly be nil, for example to clear a collection.
 Schemas may declare required fields, structural types, choices, cross-field
 cardinality, dependencies, closed plists, and named custom validators.  Other
 operation-specific validation remains the facade's responsibility."
@@ -647,6 +655,7 @@ field from the schema.  Placeholders intentionally supply no real target or
 authorization.  All cross-field constraints still apply after editing."
   (let ((fields (delete-dups
                  (append (copy-sequence (plist-get schema :required))
+                         (copy-sequence (plist-get schema :required-present))
                          (when (plist-get schema :required-one-of)
                            (list (car (plist-get schema :required-one-of))))
                          (mapcar #'car

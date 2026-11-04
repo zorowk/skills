@@ -322,6 +322,27 @@
         (should (string-match-p ":ID:" (with-temp-buffer
                                         (insert-file-contents file) (buffer-string))))))))
 
+(ert-deftest gtd-resource-links-can-be-cleared-with-explicit-nil ()
+  (gtd-project-tests-with-files
+    (should (eq (plist-get
+                 (emacs-gtd-execute '(:operation set-links :id "task" :authorization explicit
+                                     :links ((:target "https://example.com" :description "Example"))))
+                 :status) 'ok))
+    (skill-contract-tests-assert-failure
+     (emacs-gtd-execute '(:operation set-links :id "task" :authorization explicit))
+     'needs-input 'invalid-request)
+    (skill-contract-tests-assert-failure
+     (emacs-gtd-execute '(:operation set-links :id "task" :links nil))
+     'needs-input 'authorization-required)
+    (should (eq (plist-get
+                 (emacs-gtd-execute '(:operation set-links :id "task" :links nil
+                                     :authorization explicit)) :status) 'ok))
+    (let ((task (plist-get (plist-get
+                           (emacs-gtd-execute '(:operation get :id "task")) :data) :task)))
+      (should (equal (plist-get task :resources) "")))
+    (should-not (string-match-p "https://example.com"
+                                (with-temp-buffer (insert-file-contents other) (buffer-string))))))
+
 (provide 'emacs-gtd-assistant-tests)
 
 ;;; emacs-gtd-assistant-tests.el ends here

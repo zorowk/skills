@@ -495,6 +495,21 @@
            (skill-contract-tests-assert-failure (funcall call) 'blocked 'unavailable))
           (_ (should-error (funcall call) :type kind)))))))
 
+(ert-deftest skill-runtime-required-presence-distinguishes-missing-from-nil ()
+  (let ((schemas '((sample :closed t :required (:authorization)
+                           :required-present (:items)
+                           :choices ((:authorization explicit))))))
+    (should (equal (skill-runtime-validate-request
+                    schemas '(:operation sample :items nil :authorization explicit))
+                   '(:operation sample :items nil :authorization explicit)))
+    (should-error (skill-runtime-validate-request
+                   schemas '(:operation sample :authorization explicit))
+                  :type 'skill-runtime-invalid-request)
+    (should-error (skill-runtime-validate-request schemas '(:operation sample :items nil))
+                  :type 'skill-runtime-authorization-required)
+    (should (plist-member (plist-get (skill-runtime-describe schemas 'sample) :request-template)
+                          :items))))
+
 (provide 'skill-runtime-tests)
 
 ;;; skill-runtime-tests.el ends here
