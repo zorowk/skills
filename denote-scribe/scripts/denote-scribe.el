@@ -34,12 +34,6 @@
   "Create Denote reports from AI conversation summaries."
   :group 'denote)
 
-(defconst denote-scribe--skill-directory
-  (file-name-directory
-   (directory-file-name
-    (file-name-directory (or load-file-name buffer-file-name))))
-  "Absolute Denote Scribe skill directory.")
-
 (defcustom denote-scribe-notes-directory "~/Dropbox/notes/"
   "Directory where `denote-scribe-create' creates Denote notes."
   :type 'directory
@@ -51,13 +45,19 @@
   :group 'denote-scribe)
 
 (defcustom denote-scribe-linked-gtd-limit 3
-  "Maximum GTD backlinks added by one confirmed conversation capture."
+  "Maximum GTD backlinks added by one explicitly requested association."
   :type 'positive-integer
   :group 'denote-scribe)
 
 (defvar denote-directory)
 (defvar denote-save-buffers)
 (declare-function denote "denote")
+(declare-function denote-directory-files "denote"
+                  (&optional regexp omit-current text-only exclude-regexp has-identifier))
+(declare-function denote-file-has-denoted-filename-p "denote" (file))
+(declare-function denote-retrieve-filename-identifier "denote" (file))
+(declare-function denote-extract-keywords-from-path "denote" (path))
+(declare-function denote-date-identifier-p "denote" (identifier))
 (defconst denote-scribe--schemas
   '((preflight :summary "Validate Denote and the notes directory."
                :optional (:notes-dir))
@@ -104,21 +104,17 @@
       (when (= (org-element-property :level headline) 1)
         (org-element-property :raw-value headline)))))
 
-(defun denote-scribe--validate-critical-body (body-file)
-  "Check that BODY-FILE is readable and nonempty, without judging its prose."
-  (unless (and (stringp body-file) (file-readable-p body-file)
-               (not (file-directory-p body-file)))
+(defun denote-scribe--validate-note-body (body-file &optional kind)
+  "Check readable, nonempty BODY-FILE; KIND may be nil or `critical'."
+  (unless (memq kind '(nil critical))
+    (error "Unknown Denote note kind: %S" kind))
+  (unless (and (stringp body-file) (file-regular-p body-file)
+               (file-readable-p body-file))
     (error "Note body is not a readable file: %S" body-file))
   (with-temp-buffer
     (insert-file-contents body-file)
     (when (string-empty-p (string-trim (buffer-string)))
       (error "Note body must not be empty"))))
-
-(defun denote-scribe--validate-note-body (body-file &optional kind)
-  "Validate BODY-FILE as KIND, which defaults to `critical'."
-  (pcase (or kind 'critical)
-    ('critical (denote-scribe--validate-critical-body body-file))
-    (other (error "Unknown Denote note kind: %S" other))))
 
 (defun denote-scribe--fill-org-buffer ()
   "Fill prose paragraphs in the current Org buffer."
@@ -150,10 +146,10 @@
                  (denote-scribe--directory
                   notes-dir denote-scribe-notes-directory))))
          (resolved (file-truename file)))
+    (require 'denote)
     (unless (and (file-in-directory-p resolved root)
-                 (string-match-p
-                  "\\`[0-9]\\{8\\}T[0-9]\\{6\\}--.+\\.org\\'"
-                  (file-name-nondirectory resolved)))
+                 (equal (file-name-extension resolved) "org")
+                 (denote-file-has-denoted-filename-p resolved))
       (error "Refusing non-Denote note outside configured notes: %s" file))
     resolved))
 
@@ -185,7 +181,7 @@ Insert links under Open Questions or 开放问题, adding that section if absent
 Existing prose and arbitrary headings are preserved."
   (let* ((note (denote-scribe--note-file file notes-dir))
          (validated (denote-scribe--validated-gtd-tasks tasks)))
-    (denote-scribe--validate-critical-body note)
+    (denote-scribe--validate-note-body note)
     (with-current-buffer (find-file-noselect note)
       (org-with-wide-buffer
        (goto-char (point-min))
@@ -217,7 +213,7 @@ Existing prose and arbitrary headings are preserved."
              (unless (save-excursion
                        (goto-char section)
                        (re-search-forward
-                        (regexp-quote target)
+                        (regexp-quote (concat "[[" target "]["))
                         (save-excursion (org-end-of-subtree t t) (point))
                         t))
                (unless (bolp) (insert "\n"))
@@ -259,17 +255,11 @@ Existing prose and arbitrary headings are preserved."
           normalized)
       (error (error "%s is not a valid calendar date: %S" label date)))))
 
-(defun denote-scribe--filename-keywords (file)
-  "Return Denote keywords encoded in FILE's base name."
-  (let ((base (file-name-base file)))
-    (when (string-match "__\\(.+\\)\\'" base)
-      (split-string (match-string 1 base) "_" t))))
-
 (defun denote-scribe-list-notes (start end &optional notes-dir keywords)
   "List Denote Org files from inclusive START through END.
 
-START and END use YYYY-MM-DD or YYYYMMDD.  When both are nil, list the full
-Denote corpus.  Supplying only one date is an error.  NOTES-DIR defaults to
+START and END use YYYY-MM-DD or YYYYMMDD.  When both are nil, list the
+Denote Org corpus recursively, respecting Denote exclusions.  Supplying only one date is an error.  NOTES-DIR defaults to
 `denote-scribe-notes-directory'.  When KEYWORDS is non-nil, require every listed
 keyword; otherwise do not filter by keywords."
   (unless (eq (null start) (null end))
@@ -282,20 +272,22 @@ keyword; otherwise do not filter by keywords."
       (error "Notes directory does not exist: %s" target-dir))
     (when (and start-id (string> start-id end-id))
       (error "START must not be after END: %s > %s" start end))
-    (seq-filter
-     (lambda (file)
-       (let* ((base (file-name-nondirectory file))
-              (date-id (substring base 0 8))
-              (file-keywords (denote-scribe--filename-keywords file)))
-         (and (or (null start-id)
-                  (and (not (string< date-id start-id))
-                       (not (string> date-id end-id))))
-              (seq-every-p (lambda (keyword)
-                             (member keyword file-keywords))
-                           keywords))))
-     (directory-files
-      target-dir t
-      "\\`[0-9]\\{8\\}T[0-9]\\{6\\}--.+\\.org\\'"))))
+    (require 'denote)
+    (let ((denote-directory target-dir))
+      (seq-filter
+       (lambda (file)
+         (let ((identifier (denote-retrieve-filename-identifier file))
+               (file-keywords (denote-extract-keywords-from-path file)))
+           (and (file-in-directory-p file target-dir)
+                (or (null start-id)
+                    (and (denote-date-identifier-p identifier)
+                         (not (string< identifier (concat start-id "T000000")))
+                         (not (string> identifier (concat end-id "T235959")))))
+                (seq-every-p
+                 (lambda (keyword)
+                   (member keyword file-keywords))
+                 keywords))))
+       (denote-directory-files "[.]org$" nil nil nil t)))))
 
 (defalias 'denote-scribe-list-reports #'denote-scribe-list-notes)
 
@@ -312,8 +304,6 @@ must be `critical'.
 Return the created file path."
   (unless (and (stringp title) (not (string= title "")))
     (error "TITLE must be a non-empty string"))
-  (unless (and (stringp body-file) (file-readable-p body-file))
-    (error "BODY-FILE is not readable: %S" body-file))
   (denote-scribe--validate-note-body body-file kind)
   (require 'denote)
   (let* ((target-dir
@@ -388,8 +378,7 @@ Use :operation `describe' to request operation schemas only when needed."
                 (plist-get request :notes-dir)
                 (plist-get request :keywords)))
               (offset (or (plist-get request :offset) 0))
-              (limit (or (plist-get request :limit)
-                         8))
+              (limit (or (plist-get request :limit) 8))
               (page (skill-runtime-page files offset limit (length files))))
          (skill-runtime-result
           operation (plist-get page :items) (length files) 'ok

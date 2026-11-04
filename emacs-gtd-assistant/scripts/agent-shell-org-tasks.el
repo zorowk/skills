@@ -17,6 +17,9 @@
   :type 'directory :group 'emacs-gtd-assistant)
 
 (defvar agent-shell-dot-subdir-function)
+(defvar agent-shell-session-choices-function)
+(defvar agent-shell--state)
+(defvar agent-shell-mode-map)
 (defvar agent-shell--transcript-file)
 (defvar agent-shell-prefer-viewport-interaction)
 (defvar emacs-gtd-agent--starting-project-id nil)
@@ -295,7 +298,7 @@ Unassociated entries keep native behavior without creating an Org identity."
   (interactive)
   (let ((marker (emacs-gtd-agent--marker)))
     (pop-to-buffer (marker-buffer marker))
-    (widen) (goto-char marker) (org-show-entry)))
+    (widen) (goto-char marker) (org-fold-show-entry)))
 
 (defun emacs-gtd-agent-enable ()
   "Install centralized storage and Org/Agenda/shell task entry points."

@@ -2,6 +2,10 @@
 
 ;;; Code:
 
+(declare-function magit-git-string "magit-git" (&rest args))
+
+(declare-function magit-git-items "magit-git" (&rest args))
+
 (require 'org)
 (require 'ox-html)
 (require 'ox-publish)
@@ -10,6 +14,11 @@
 (require 'subr-x)
 (require 'url-util)
 (require 'xml)
+(require 'dom)
+
+(declare-function denote-retrieve-filename-identifier "denote" (file))
+(declare-function denote-date-identifier-p "denote" (identifier))
+(declare-function denote-id-to-date "denote" (identifier))
 
 (unless (featurep 'skill-git)
   (let* ((script-directory
@@ -414,8 +423,10 @@ Tokens belong to this Emacs session.  A failed retry returns a new token."
 (defun org-blog-exporter--filetags (file)
   "Return FILE-level Org tags declared in FILE."
   (with-temp-buffer
-    (insert-file-contents file nil 0 4096)
-    (org-mode)
+    (insert-file-contents file)
+    (setq buffer-file-name (expand-file-name file)
+          default-directory (file-name-directory buffer-file-name))
+    (delay-mode-hooks (org-mode))
     (let* ((keywords (org-collect-keywords '("FILETAGS")))
            (values (cdr (assoc "FILETAGS" keywords)))
            (tags (and values
@@ -858,45 +869,38 @@ starting; all-file export preserves per-file error reporting."
             (org-blog-exporter-export-all notes-dir output-dir setupfile))))
 
 (defun org-blog-exporter--post-date (org-file)
-  "Return ORG-FILE's publication date as YYYY-MM-DD."
-  (let ((declared (org-blog-exporter--file-keyword org-file "DATE"))
-        (base (file-name-base org-file)))
-    (cond
-     ((and declared
-           (condition-case nil
-               (format-time-string
-                "%Y-%m-%d" (org-time-string-to-time declared))
-             (error nil))))
-     ((string-match
-       "\\`\\([0-9]\\{4\\}\\)\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)T" base)
-      (format "%s-%s-%s"
-              (match-string 1 base)
-              (match-string 2 base)
-              (match-string 3 base)))
-     (t
+  "Return Org DATE, native Denote date, or file modification date for ORG-FILE."
+  (or (when-let* ((declared (org-blog-exporter--file-keyword org-file "DATE")))
+        (condition-case nil
+            (format-time-string "%Y-%m-%d" (org-time-string-to-time declared))
+          (error nil)))
+      (when (require 'denote nil t)
+        (when-let* ((identifier (denote-retrieve-filename-identifier org-file))
+                    ((denote-date-identifier-p identifier)))
+          (denote-id-to-date identifier)))
       (format-time-string "%Y-%m-%d"
                           (file-attribute-modification-time
-                           (file-attributes org-file)))))))
+                           (file-attributes org-file)))))
 
 (defun org-blog-exporter--index-entries (index-file)
-  "Return existing blog entries parsed from INDEX-FILE."
-  (let ((entries nil))
-    (when (file-readable-p index-file)
-      (with-temp-buffer
-        (insert-file-contents index-file)
-        (goto-char (point-min))
-        (while (re-search-forward
-                (concat
-                 "<li><time datetime=\\\"\\([^\\\"]+\\)\\\">[^<]*</time>"
-                 "<a href=\\\"\\([^\\\"]+\\)\\\">\\([^<]+\\)</a></li>")
-                nil t)
-          (push (list :date (match-string-no-properties 1)
-                      :href (xml-substitute-special
-                             (match-string-no-properties 2))
-                      :title (xml-substitute-special
-                              (match-string-no-properties 3)))
-                entries))))
-    (nreverse entries)))
+  "Return blog entries from INDEX-FILE using Emacs's HTML DOM parser."
+  (when (file-readable-p index-file)
+    (unless (libxml-available-p)
+      (error "Reading an existing blog index requires Emacs libxml support"))
+    (with-temp-buffer
+      (insert-file-contents index-file)
+      (let ((tree (libxml-parse-html-region (point-min) (point-max))))
+        (delq nil
+              (mapcar
+               (lambda (item)
+                 (let* ((time (dom-child-by-tag item 'time))
+                        (anchor (dom-child-by-tag item 'a))
+                        (date (and time (dom-attr time 'datetime)))
+                        (href (and anchor (dom-attr anchor 'href))))
+                   (when (and date href)
+                     (list :date date :href href
+                           :title (string-trim (dom-texts anchor ""))))))
+               (dom-by-tag tree 'li)))))))
 
 (defun org-blog-exporter--post-entry
     (org-file output-dir setupfile &optional notes-dir)

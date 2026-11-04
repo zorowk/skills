@@ -211,21 +211,14 @@ non-nil."
       (error "Partial result must expose observed effects"))
     (unless verification
       (error "Partial result must expose completion verification")))
-  (let ((result
-         (list :protocol-version skill-runtime-envelope-version
-               :status (or status 'ok)
-               :operation operation
-               :count (or count (if (null data) 0 1))
-               :data data)))
-    (when page
-      (setq result (append result (list :page page))))
-    (when effects
-      (setq result (append result (list :effects effects))))
-    (when error
-      (setq result (append result (list :error error))))
-    (when verification
-      (setq result (append result (list :verification verification))))
-    result))
+  (append
+   (list :protocol-version skill-runtime-envelope-version
+         :status (or status 'ok) :operation operation
+         :count (or count (if (null data) 0 1)) :data data)
+   (and page (list :page page))
+   (and effects (list :effects effects))
+   (and error (list :error error))
+   (and verification (list :verification verification))))
 
 (defun skill-runtime-page-metadata (offset limit total returned)
   "Return validated page metadata for OFFSET, LIMIT, TOTAL, and RETURNED."

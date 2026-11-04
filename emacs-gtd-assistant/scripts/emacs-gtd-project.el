@@ -10,6 +10,11 @@
 (require 'json)
 (require 'cl-lib)
 
+(defvar emacs-gtd--schemas)
+(defvar emacs-gtd-default-headline)
+(defvar emacs-gtd-capture-task-limit)
+(defvar emacs-gtd-generated-content-maximum-characters)
+
 (defcustom emacs-gtd-project-task-limit 50
   "Maximum children created by one explicitly requested project breakdown."
   :type 'positive-integer :group 'emacs-gtd-assistant)
@@ -67,17 +72,13 @@
       (buffer-substring-no-properties beg (point)))))
 
 (defun emacs-gtd-project--drawer-text (name)
-  "Return current entry drawer NAME or nil."
-  (let ((text (emacs-gtd-project--own-text)))
-    (with-temp-buffer
-      (insert text)
-      (goto-char (point-min))
-      (when (re-search-forward (format "^:%s:[ \t]*$" (regexp-quote name)) nil t)
-        (forward-line 1)
-        (let ((beg (point)))
-          (unless (re-search-forward "^:END:[ \t]*$" nil t)
-            (error "Unterminated %s drawer" name))
-          (string-trim-right (buffer-substring-no-properties beg (line-beginning-position))))))))
+  "Return current entry drawer NAME's text using Org's parsed boundaries."
+  (when-let* ((drawer (emacs-gtd--entry-drawer name)))
+    (if-let* ((begin (org-element-property :contents-begin drawer)))
+        (string-trim-right
+         (buffer-substring-no-properties
+          begin (org-element-property :contents-end drawer)))
+      "")))
 
 (defun emacs-gtd-project--sessions ()
   "Read structured sessions stored on the current heading."

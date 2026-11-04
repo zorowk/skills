@@ -167,6 +167,55 @@
           (should-error (denote-scribe--validate-note-body note)))
       (delete-file note))))
 
+(ert-deftest denote-signed-notes-and-prefix-task-ids-are-preserved ()
+  (let* ((root (make-temp-file "denote-signed-" t))
+         (note (expand-file-name "20261104T120000==research--note__test.org" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file note (insert "A note.\n"))
+          (should (equal (denote-scribe-list-notes nil nil root) (list note)))
+          (denote-scribe-link-gtd note '((:id "task-one-long" :title "Long")) root)
+          (denote-scribe-link-gtd note '((:id "task-one" :title "Short")) root)
+          (denote-scribe-link-gtd note '((:id "task-one" :title "Short")) root)
+          (with-temp-buffer
+            (insert-file-contents note)
+            (should (= (how-many (regexp-quote "[[id:task-one][")
+                                 (point-min) (point-max)) 1))
+            (should (= (how-many (regexp-quote "[[id:task-one-long][")
+                                 (point-min) (point-max)) 1))))
+      (when-let* ((buffer (get-file-buffer note))) (kill-buffer buffer))
+      (delete-directory root t))))
+
+(ert-deftest denote-native-discovery-respects-components-exclusions-and-dates ()
+  (require 'denote)
+  (let* ((root (make-temp-file "denote-native-" t))
+         (nested (expand-file-name "nested" root))
+         (denote-excluded-files-regexp "excluded")
+         (denote-excluded-directories-regexp "ignored")
+         (first (expand-file-name "20261103T235959==sig--first__research.org" root))
+         (second (expand-file-name "20261104T000000==sig--second__research_test.org" nested))
+         (third (expand-file-name "20261104T235959--third__other.org" root)))
+    (unwind-protect
+        (progn
+          (make-directory nested)
+          (make-directory (expand-file-name "ignored" root))
+          (dolist (file (list first second third
+                             (expand-file-name "20261104T120000--excluded__research.org" root)
+                             (expand-file-name "ignored/20261104T120000--note__research.org" root)
+                             (expand-file-name "plain.org" root)))
+            (with-temp-file file (insert "A note.\n")))
+          (make-directory (expand-file-name "20261104T120000--directory.org" root))
+          (should (equal (sort (denote-scribe-list-notes nil nil root) #'string<)
+                         (sort (list first second third) #'string<)))
+          (should (equal (denote-scribe-list-notes "2026-11-04" "20261104" root
+                                                   '("research" "test"))
+                         (list second)))
+          (should (equal (denote-scribe-list-notes "20261103" "20261103" root)
+                         (list first)))
+          (should-error (denote-scribe-list-notes "20261104" nil root))
+          (should-error (denote-scribe-list-notes "20261105" "20261104" root)))
+      (delete-directory root t))))
+
 (provide 'denote-scribe-tests)
 
 ;;; denote-scribe-tests.el ends here

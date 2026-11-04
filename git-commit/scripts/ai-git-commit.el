@@ -2,6 +2,8 @@
 
 ;;; Code:
 
+(declare-function magit-git-items "magit-git" (&rest args))
+
 (require 'subr-x)
 (require 'seq)
 
@@ -357,16 +359,28 @@ Permit regular files, symlinks, and tracked paths deleted from the worktree."
           (error "Commit path must name a file, not a directory: %s" path))
         (unless (or (file-regular-p absolute)
                     (file-symlink-p absolute)
-                    (magit-git-lines "ls-files" "--" relative))
+                    (magit-git-lines "ls-files" "--" relative)
+                    (member relative (magit-git-items
+                                      "ls-tree" "-r" "--name-only" "-z" "HEAD"
+                                      "--" relative)))
           (error "Commit path is neither present nor tracked: %s" path))
         (push relative normalized)))
     (delete-dups (nreverse normalized))))
 
 (defun ai-git-commit--stage-paths (paths)
   "Stage explicit repository-relative PATHS through Magit."
-  (unless (zerop (apply #'magit-call-git
-                        (append '("add" "--") paths)))
-    (error "Magit failed to stage the explicit path set")))
+  (let* ((deleted (magit-git-items "diff" "--cached" "--name-only"
+                                   "--diff-filter=D" "-z"))
+         (to-stage (seq-remove
+                    (lambda (path)
+                      (and (member path deleted)
+                           (not (file-exists-p path))
+                           (not (file-symlink-p path))))
+                    paths)))
+    (when (and to-stage
+               (not (zerop (apply #'magit-call-git
+                                  (append '("add" "--") to-stage)))))
+      (error "Magit failed to stage the explicit path set"))))
 
 (defun ai-git-commit--commit (request amend)
   "Commit formatted REQUEST through Magit; AMEND means replace HEAD."

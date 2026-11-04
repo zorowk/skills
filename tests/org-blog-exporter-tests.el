@@ -583,6 +583,53 @@
            'publish '(:exported-count 1 :changed t :commit "abc" :push t))
           '(:exported-count 1 :changed t :commit "abc" :push t))))
 
+(ert-deftest blog-private-tags-beyond-header-and-in-relative-setup-are-excluded ()
+  (let* ((root (make-temp-file "blog-tags-" t))
+         (source (expand-file-name "note.org" root))
+         (setup (expand-file-name "tags.org" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file source
+            (insert "#+title: Note\n" (make-string 5000 ?\s) "\n#+filetags: :private:\n"))
+          (should (org-blog-exporter--excluded-tags-p source))
+          (with-temp-file setup (insert "#+filetags: :draft:\n"))
+          (with-temp-file source (insert "#+title: Note\n#+setupfile: tags.org\n"))
+          (should (org-blog-exporter--excluded-tags-p source)))
+      (delete-directory root t))))
+
+(ert-deftest blog-native-html-parser-preserves-formatted-index-entries ()
+  (let ((index (make-temp-file "blog-dom-" nil ".html")))
+    (unwind-protect
+        (progn
+          (with-temp-file index
+            (insert "<ul><li>Navigation</li><li>\n"
+                    "<time class='date' datetime='2026-11-04'>04 Nov</time>\n"
+                    "<a class='post' href='./note.html?a=1&amp;b=2'>A <em>note</em> &amp; more</a>\n"
+                    "</li></ul>"))
+          (should (equal (org-blog-exporter--index-entries index)
+                         '((:date "2026-11-04" :href "./note.html?a=1&b=2"
+                            :title "A note & more"))))
+          (cl-letf (((symbol-function 'libxml-available-p) (lambda () nil)))
+            (should-error (org-blog-exporter--index-entries index))))
+      (delete-file index))))
+
+(ert-deftest blog-publication-date-prefers-org-then-native-denote-then-mtime ()
+  (require 'denote)
+  (let* ((root (make-temp-file "blog-date-" t))
+         (note (expand-file-name "20261104T120000==signature--note.org" root))
+         (plain (expand-file-name "plain.org" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file note (insert "#+date: <2025-01-02 Thu>\n"))
+          (should (equal (org-blog-exporter--post-date note) "2025-01-02"))
+          (with-temp-file note (insert "#+title: Note\n"))
+          (should (equal (org-blog-exporter--post-date note) "2026-11-04"))
+          (with-temp-file plain (insert "#+title: Plain\n"))
+          (let ((stamp (encode-time 0 0 12 3 2 2024)))
+            (set-file-times plain stamp)
+            (should (equal (org-blog-exporter--post-date plain) "2024-02-03"))))
+      (delete-directory root t))))
+
 (provide 'org-blog-exporter-tests)
 
 ;;; org-blog-exporter-tests.el ends here

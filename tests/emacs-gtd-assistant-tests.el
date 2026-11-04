@@ -185,6 +185,46 @@
         :links ((:target "elisp:(message \"unsafe\")"))))))
    'needs-input 'invalid-request))
 
+(ert-deftest gtd-denote-links-handle-multiple-roots-and-preserve-search-targets ()
+  (unless (require 'denote nil t) (ert-skip "Denote is unavailable"))
+  (let* ((root (make-temp-file "gtd-denote-links-" t))
+         (first (expand-file-name "first" root))
+         (second (expand-file-name "second" root))
+         (missing (expand-file-name "missing" root))
+         (denote-directory (list first second missing))
+         (note (expand-file-name "20261104T120000==research--note.org" second))
+         (target (concat "file:" note)))
+    (unwind-protect
+        (progn
+          (make-directory first)
+          (make-directory second)
+          (with-temp-file note (insert "A note.\n"))
+          (should (equal (emacs-gtd--normalize-link-target target)
+                         "denote:20261104T120000"))
+          (should (equal (emacs-gtd--normalize-link-target (concat target "::42"))
+                         (concat target "::42")))
+          (should-not (file-exists-p missing)))
+      (delete-directory root t))))
+
+(ert-deftest gtd-native-drawers-ignore-source-examples-and-child-entries ()
+  (dolist (own-drawer '(nil ":CONTEXT:\nreal context\n:END:\n" ":CONTEXT:\n:END:\n"))
+    (with-temp-buffer
+      (org-mode)
+      (let ((example "#+begin_src text\n:CONTEXT:\nexample only\n:END:\n#+end_src\n"))
+        (insert "* Parent\n" example (or own-drawer "")
+                "** Child\n:CONTEXT:\nchild context\n:END:\n")
+        (goto-char (point-min))
+        (should (equal (emacs-gtd-project--drawer-text "CONTEXT")
+                       (cond ((null own-drawer) nil)
+                             ((string-match-p "real context" own-drawer) "real context")
+                             (t ""))))
+        (emacs-gtd--replace-drawer-content "CONTEXT" "updated")
+        (goto-char (point-min))
+        (should (equal (emacs-gtd-project--drawer-text "CONTEXT") "updated"))
+        (should (string-match-p (regexp-quote example) (buffer-string)))
+        (re-search-forward "^\\*\\* Child")
+        (should (equal (emacs-gtd-project--drawer-text "CONTEXT") "child context"))))))
+
 (provide 'emacs-gtd-assistant-tests)
 
 ;;; emacs-gtd-assistant-tests.el ends here

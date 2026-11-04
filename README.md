@@ -19,6 +19,9 @@ Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流�
 
 > **架构原则：SKILL.md 不是 facade 的使用手册，也不是错误目录。它只保存无法在 Elisp 中可靠编码的语义决策。**
 
+Elisp 实现优先复用 Emacs 及相关包的原生 API，按当前会话中的文档和源码核对行为。
+仅补充原生能力缺失的业务逻辑，不重复实现已有的查找、解析和状态管理。
+
 每个 Emacs 集成 skill 提供一个 compact 主入口：Navigator 限制 Help 长度，GTD 和博客
 限制列表结果，Git Commit 限制 diff 总量，Denote 分页返回笔记列表。AI 调用只使用
 各 skill 的统一主入口，完整上下文仅在 compact 结果不足时按需请求。

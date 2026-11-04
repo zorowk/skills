@@ -4,6 +4,7 @@
 
 (require 'org)
 (require 'org-id)
+(require 'org-element)
 (require 'seq)
 (require 'subr-x)
 
@@ -372,20 +373,26 @@ When INACTIVE is non-nil, return an inactive timestamp like
        (cons key value)))
    properties))
 
+(declare-function denote-retrieve-filename-identifier "denote" (file))
+(defvar denote-directory)
+
 (defun emacs-gtd--denote-identifier-from-file-target (target)
-  "Return Denote identifier when file TARGET points inside `denote-directory'."
+  "Return a Denote identifier for a plain file TARGET inside a note directory."
   (when (and (string-prefix-p "file:" target)
+             (not (string-match-p "::" target))
              (boundp 'denote-directory)
-             (stringp denote-directory))
-    (let* ((path (org-link-unescape (substring target (length "file:"))))
-           (absolute-path (expand-file-name path))
-           (notes-directory
-            (file-name-as-directory (expand-file-name denote-directory)))
-           (basename (file-name-nondirectory absolute-path)))
-      (when (and (file-in-directory-p absolute-path notes-directory)
-                 (string-match
-                  "\\`\\([0-9]\\{8\\}T[0-9]\\{6\\}\\)--" basename))
-        (match-string 1 basename)))))
+             (require 'denote nil t))
+    (let* ((path (expand-file-name
+                  (org-link-unescape (substring target (length "file:")))))
+           (directories (if (stringp denote-directory)
+                            (list denote-directory)
+                          denote-directory)))
+      ;; `denote-directories' creates missing directories; normalization must
+      ;; only read configuration, including multiple note roots.
+      (when (seq-some (lambda (directory)
+                        (file-in-directory-p path (expand-file-name directory)))
+                      directories)
+        (denote-retrieve-filename-identifier path)))))
 
 (defun emacs-gtd--normalize-link-target (target)
   "Return portable form of structured resource link TARGET."
@@ -460,27 +467,40 @@ When INACTIVE is non-nil, return an inactive timestamp like
     (insert (format ":%s:\n%s\n:END:\n"
                     name (emacs-gtd--drawer-content content)))))
 
+(defun emacs-gtd--entry-drawer (name)
+  "Return the Org drawer NAME belonging to the current entry, not its children."
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((heading (point)))
+      (save-restriction
+        (org-narrow-to-subtree)
+        (org-element-map (org-element-parse-buffer) 'drawer
+          (lambda (drawer)
+            (when (and (equal name (org-element-property :drawer-name drawer))
+                       (= heading (org-element-property
+                                   :begin (org-element-lineage drawer 'headline))))
+              drawer))
+          nil t)))))
+
 (defun emacs-gtd--replace-drawer-content (name content)
-  "Replace current task drawer NAME with safe CONTENT."
-  (save-restriction
-    (org-narrow-to-subtree)
-    (goto-char (point-min))
-    (let ((end (save-excursion (outline-next-heading) (point))))
-      (unless (re-search-forward
-               (format "^:%s:[ \t]*$" (regexp-quote name)) end t)
-        (goto-char (point-min))
-        (org-end-of-meta-data t)
-        (insert (format ":%s:\n:END:\n" name))
-        (forward-line -2)))
-    (forward-line 1)
-    (let ((content-start (point)))
-      (unless (re-search-forward "^:END:[ \t]*$" nil t)
-        (error "Task %s drawer has no :END:" name))
-      (beginning-of-line)
-      (delete-region content-start (point))
-      (goto-char content-start)
-      (when (and content (not (string-empty-p content)))
-        (insert (emacs-gtd--drawer-content content) "\n")))))
+  "Replace current entry drawer NAME with safe CONTENT using Org boundaries."
+  (let ((drawer (emacs-gtd--entry-drawer name)))
+    (if drawer
+        (let ((begin (or (org-element-property :contents-begin drawer)
+                         (save-excursion
+                           (goto-char (org-element-property :begin drawer))
+                           (forward-line 1)
+                           (point)))))
+          (delete-region begin (or (org-element-property :contents-end drawer) begin))
+          (goto-char begin)
+          (when (and content (not (string-empty-p content)))
+            (insert (emacs-gtd--drawer-content content) "\n")))
+      (org-back-to-heading t)
+      (org-end-of-meta-data t)
+      (insert (format ":%s:\n%s:END:\n" name
+                      (if (and content (not (string-empty-p content)))
+                          (concat (emacs-gtd--drawer-content content) "\n")
+                        ""))))))
 
 (defun emacs-gtd--resource-text (links)
   "Return an Org list for structured LINKS."
