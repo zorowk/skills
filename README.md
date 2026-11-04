@@ -137,6 +137,8 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 `:cause` 和实际产物，要求先检查，避免盲目重试；未知错误在没有这些变更时继续抛出。
 可选的顶层 `:verification` 按 artifact、workflow、repository 或领域判断分组
 返回已完成检查及其证据；`:effects` 仍只描述实际发生的副作用。
+校验器以原生 `user-error` 或明确的 `invalid-request` 拒绝输入；内部实现异常不转成
+输入错误。批量导出仅逐项收集文件操作失败，未预期的实现异常直接停止。
 
 每次成功或结构化失败调用都返回不保留原文的 `:metrics`，包括耗时、请求字符数、请求
 字段数、payload 字符数、基础响应字符数、结果数、截断、降级和来源，并用版本号保护

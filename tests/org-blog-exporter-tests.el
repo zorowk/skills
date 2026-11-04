@@ -723,6 +723,26 @@
                         :type 'skill-runtime-permission-denied))
       (delete-directory root t))))
 
+(ert-deftest blog-batch-export-distinguishes-file-failures-from-implementation-defects ()
+  (let* ((root (make-temp-file "blog-error-kinds-" t))
+         (source (expand-file-name "sample.org" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file source (insert "#+title: Sample\nText.\n"))
+          (cl-letf (((symbol-function 'org-blog-exporter--export-file-artifact)
+                     (lambda (&rest _) (signal 'file-error '("Unavailable output")))))
+            (skill-contract-tests-assert-failure
+             (org-blog-exporter-run
+              (list :operation 'export :notes-dir root :output-dir root :authorization 'explicit))
+             'partial 'partial-failure))
+          (cl-letf (((symbol-function 'org-blog-exporter--export-file-artifact)
+                     (lambda (&rest _) (signal 'void-function '(missing-export-helper)))))
+            (should-error
+             (org-blog-exporter-run
+              (list :operation 'export :notes-dir root :output-dir root :authorization 'explicit))
+             :type 'void-function)))
+      (delete-directory root t))))
+
 (provide 'org-blog-exporter-tests)
 
 ;;; org-blog-exporter-tests.el ends here

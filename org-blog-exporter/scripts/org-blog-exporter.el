@@ -378,7 +378,7 @@ Tokens belong to this Emacs session.  A failed retry returns a new token."
       (setq candidates
             (condition-case err
                 (org-blog-exporter-list-candidates notes)
-              (error
+              ((file-error user-error skill-runtime-public-error)
                (push (format "Candidate scan failed: %s"
                              (error-message-string err))
                      errors)
@@ -770,7 +770,7 @@ requires ROOT to exist, while an export may create a new output directory."
                   file output-dir setupfile asset-targets root)))
             (push artifact artifacts)
             (push (plist-get artifact :output) exported))
-        (error
+        (file-error
          (push (list file (error-message-string err)) errors))))
     (list :notes-directory root
           :output-directory (org-blog-exporter--output-directory output-dir setupfile)
@@ -1013,7 +1013,7 @@ starting; all-file export preserves per-file error reporting."
      (format "Blog publish stopped during %s: %s" stage message)
      :stage stage
      :recovery-token (plist-get failed :recovery-token)
-     :cause message
+     :cause error-data
      :data failed
      :count (or (plist-get failed :exported-count) 0)
      :effects (org-blog-exporter--effects 'publish failed)

@@ -469,6 +469,32 @@
       '(:operation sample :file "/tmp/input" :count 2
                    :tasks ((:title "One" :unknown t)))))))
 
+(ert-deftest skill-runtime-custom-validators-preserve-error-classification ()
+  (dolist (kind '(nil user-error skill-runtime-invalid-request skill-runtime-unavailable
+                     void-function void-variable wrong-type-argument))
+    (cl-letf (((symbol-function 'skill-test-validator)
+               (lambda (_value)
+                 (pcase kind
+                   ('nil nil)
+                   ('user-error (user-error "Bad input"))
+                   ('skill-runtime-invalid-request (skill-runtime-reject-request "Bad value"))
+                   ('skill-runtime-unavailable
+                    (skill-runtime-signal 'skill-runtime-unavailable "Missing environment"))
+                   (_ (signal kind '("Injected implementation defect")))))))
+      (let ((call (lambda ()
+                    (skill-runtime-measure
+                     '(:operation sample :value 1)
+                     (lambda ()
+                       (skill-runtime-validate-request
+                        '((sample :validators ((:value skill-test-validator "Value"))))
+                        '(:operation sample :value 1)))))))
+        (pcase kind
+          ((or 'nil 'user-error 'skill-runtime-invalid-request)
+           (skill-contract-tests-assert-failure (funcall call) 'needs-input 'invalid-request))
+          ('skill-runtime-unavailable
+           (skill-contract-tests-assert-failure (funcall call) 'blocked 'unavailable))
+          (_ (should-error (funcall call) :type kind)))))))
+
 (provide 'skill-runtime-tests)
 
 ;;; skill-runtime-tests.el ends here

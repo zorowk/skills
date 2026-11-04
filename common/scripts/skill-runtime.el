@@ -172,7 +172,12 @@ retaining request or result content."
               (condition-case error-data
                   (funcall function)
                 (skill-runtime-public-error
-                 (skill-runtime--public-error-result request error-data)))))
+                 (skill-runtime--public-error-result request error-data))
+                (user-error
+                 (skill-runtime--public-error-result
+                  request (list 'skill-runtime-invalid-request
+                                (list :message (error-message-string error-data)
+                                      :cause error-data)))))))
            (elapsed-ms (max 0 (round (* 1000 (- (float-time) started)))))
            (data (plist-get result :data))
            (page (plist-get result :page))
@@ -395,17 +400,19 @@ on that precedence for authorization, operation or target selection."
            :required-by (car spec)))))))
 
 (defun skill-runtime--validate-custom (operation path value validator)
-  "Validate VALUE with named VALIDATOR for OPERATION at PATH."
+  "Validate VALUE with named VALIDATOR for OPERATION at PATH.
+Validators reject input with `user-error' or a typed public invalid request.
+Unexpected implementation errors retain their original condition."
   (unless (and (symbolp validator) (fboundp validator))
     (error "Unknown schema validator: %S" validator))
   (condition-case error-data
       (unless (funcall validator value)
-        (error "validator returned nil"))
-    (error
+        (skill-runtime-reject-request "Validator rejected the value"))
+    ((user-error skill-runtime-invalid-request)
      (skill-runtime-reject-request
       (format "%S %s failed validator %S: %s"
               operation path validator (error-message-string error-data))
-      :field-path path :validator validator))))
+      :field-path path :validator validator :cause error-data))))
 
 (defun skill-runtime--validate-type (operation path value type)
   "Validate VALUE as TYPE for OPERATION at PATH."

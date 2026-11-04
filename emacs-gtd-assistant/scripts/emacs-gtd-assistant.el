@@ -282,7 +282,7 @@
   (unless (and (stringp value)
                (not (string-empty-p value))
                (not (string-match-p "[\n\r]" value)))
-    (error "%s must be a non-empty single-line string" label))
+    (user-error "%s must be a non-empty single-line string" label))
   value)
 
 (defun emacs-gtd--save ()
@@ -327,7 +327,7 @@ When INACTIVE is non-nil, return an inactive timestamp like
 \"[2026-07-03 Fri 15:00]\".  Otherwise return an active timestamp like
 \"<2026-07-03 Fri 15:00>\"."
   (unless (and (stringp text) (not (string-empty-p text)))
-    (error "TEXT must be a non-empty string"))
+    (user-error "TEXT must be a non-empty string"))
   (let* ((time (org-read-date nil t text))
          (open (if inactive "[" "<"))
          (close (if inactive "]" ">")))
@@ -354,13 +354,13 @@ When INACTIVE is non-nil, return an inactive timestamp like
 (defun emacs-gtd--validate-tags (tags)
   "Return validated Org TAGS."
   (unless (or (null tags)
-              (and (listp tags)
+              (and (proper-list-p tags)
                    (seq-every-p
                     (lambda (tag)
                       (and (stringp tag)
                            (string-match-p "\\`[^[:space:]:]+\\'" tag)))
                     tags)))
-    (error "TAGS must contain valid Org tag strings"))
+    (user-error "TAGS must contain valid Org tag strings"))
   tags)
 
 (defun emacs-gtd--validate-context-notes (text)
@@ -368,37 +368,37 @@ When INACTIVE is non-nil, return an inactive timestamp like
   (when text
     (emacs-gtd--single-line text "CONTEXT-NOTES")
     (when (> (length text) emacs-gtd-context-maximum-characters)
-      (error "CONTEXT-NOTES exceeds the configured limit of %d"
+      (user-error "CONTEXT-NOTES exceeds the configured limit of %d"
              emacs-gtd-context-maximum-characters)))
   text)
 
 (defun emacs-gtd--validate-log-note (text)
   "Return validated non-empty multiline log-note TEXT."
   (unless (stringp text)
-    (error "NOTE must be a string"))
+    (user-error "NOTE must be a string"))
   (setq text (string-trim text))
   (when (string-empty-p text)
-    (error "NOTE must not be empty"))
+    (user-error "NOTE must not be empty"))
   (when (> (length text) emacs-gtd-log-note-maximum-characters)
-    (error "NOTE exceeds the configured limit of %d"
+    (user-error "NOTE exceeds the configured limit of %d"
            emacs-gtd-log-note-maximum-characters))
   text)
 
 (defun emacs-gtd--validate-task-list (tasks)
   "Return TASKS after validating batch cardinality."
-  (unless (and (listp tasks) tasks)
-    (error "TASKS must be a non-empty list"))
+  (unless (and (proper-list-p tasks) tasks)
+    (user-error "TASKS must be a non-empty list"))
   (when (> (length tasks) emacs-gtd-capture-task-limit)
-    (error "TASKS exceeds the configured limit of %d"
+    (user-error "TASKS exceeds the configured limit of %d"
            emacs-gtd-capture-task-limit))
   tasks)
 
 (defun emacs-gtd--validate-properties (properties)
   "Return validated Org PROPERTIES without reserved keys."
   (unless (or (null properties)
-              (and (listp properties)
+              (and (proper-list-p properties)
                    (seq-every-p #'consp properties)))
-    (error "PROPERTIES must be an alist or nil"))
+    (user-error "PROPERTIES must be an alist or nil"))
   (mapcar
    (lambda (property)
      (let ((key (car property))
@@ -407,10 +407,10 @@ When INACTIVE is non-nil, return an inactive timestamp like
                     (string-match-p "\\`[A-Z][A-Z0-9_]*\\'" key)
                     (not (member key '("ID" "TODO" "PRIORITY"
                                        "SCHEDULED" "DEADLINE"))))
-         (error "Unsafe or reserved Org property: %S" key))
+         (user-error "Unsafe or reserved Org property: %S" key))
        (emacs-gtd--single-line value (format "PROPERTY %s" key))
        (when (> (length value) 500)
-         (error "Org property %s exceeds 500 characters" key))
+         (user-error "Org property %s exceeds 500 characters" key))
        (cons key value)))
    properties))
 
@@ -444,14 +444,14 @@ When INACTIVE is non-nil, return an inactive timestamp like
 
 (defun emacs-gtd--validate-links (links)
   "Return validated structured resource LINKS."
-  (unless (or (null links) (listp links))
-    (error "LINKS must be a list or nil"))
+  (unless (or (null links) (proper-list-p links))
+    (user-error "LINKS must be a list or nil"))
   (when (> (length links) emacs-gtd-link-limit)
-    (error "LINKS exceeds the configured limit of %d" emacs-gtd-link-limit))
+    (user-error "LINKS exceeds the configured limit of %d" emacs-gtd-link-limit))
   (mapcar
    (lambda (link)
-     (unless (listp link)
-       (error "Each link must be a plist"))
+     (unless (skill-runtime--well-formed-plist-p link)
+       (user-error "Each link must be a keyword plist"))
      (let ((target
             (emacs-gtd--normalize-link-target
              (emacs-gtd--single-line
@@ -461,7 +461,7 @@ When INACTIVE is non-nil, return an inactive timestamp like
            (or (string-match-p "\\`\\(?:https?\\|file\\|id\\):" target)
                (string-match-p
                 "\\`denote:[0-9]\\{8\\}T[0-9]\\{6\\}\\'" target))
-         (error "Unsupported or unsafe Org link target: %S" target))
+         (user-error "Unsupported or unsafe Org link target: %S" target))
        (when description
          (emacs-gtd--single-line description "LINK description"))
        (list :target target :description description)))
@@ -470,7 +470,7 @@ When INACTIVE is non-nil, return an inactive timestamp like
 (defun emacs-gtd--validate-task-spec (task)
   "Return a validated copy of structured TASK."
   (unless (listp task)
-    (error "TASK must be a plist"))
+    (user-error "TASK must be a plist"))
   (let* ((copy (copy-tree task))
          (title (emacs-gtd--single-line (plist-get copy :title) "TITLE"))
          (priority (plist-get copy :priority))
@@ -479,11 +479,11 @@ When INACTIVE is non-nil, return an inactive timestamp like
          (body (plist-get copy :body)))
     (when (and priority
                (not (and (stringp priority) (= (length priority) 1))))
-      (error "PRIORITY must be one character"))
+      (user-error "PRIORITY must be one character"))
     (emacs-gtd--validate-tags tags)
     (emacs-gtd--validate-context-notes context-notes)
     (when (and body (not (stringp body)))
-      (error "BODY must be a string"))
+      (user-error "BODY must be a string"))
     (let ((content-characters
            (+ (length title)
               (length (or context-notes ""))
@@ -723,13 +723,13 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
     (emacs-gtd--single-line todo "TODO")
     (with-current-buffer (emacs-gtd--buffer t)
       (unless (member todo org-todo-keywords-1)
-        (error "Unknown TODO state in the configured Org buffer: %S" todo))
+        (user-error "Unknown TODO state in the configured Org buffer: %S" todo))
       (when priority
         (unless (and (stringp priority)
                      (= (length priority) 1)
                      (<= org-priority-highest (aref priority 0)
                          org-priority-lowest))
-          (error "PRIORITY is outside the configured Org priority range: %S"
+          (user-error "PRIORITY is outside the configured Org priority range: %S"
                  priority)))
       (org-with-wide-buffer
        (emacs-gtd--goto-heading headline)
@@ -781,7 +781,7 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
   (emacs-gtd--find-id id)
   (emacs-gtd--single-line state "STATE")
   (unless (member state org-todo-keywords-1)
-    (error "Unknown TODO state in the configured Org buffer: %S" state))
+    (user-error "Unknown TODO state in the configured Org buffer: %S" state))
   (org-todo state)
   (let ((item (emacs-gtd--item-at-point t)))
     (emacs-gtd--save)
@@ -871,7 +871,7 @@ When DEFER-SAVE is non-nil, leave saving to an enclosing atomic operation."
                (not (and (listp states) (seq-every-p #'stringp states))))
       (error "STATES must be a list of strings or nil"))
     (when (and tags
-               (not (and (listp tags) (seq-every-p #'stringp tags))))
+               (not (and (proper-list-p tags) (seq-every-p #'stringp tags))))
       (error "TAGS must be a list of strings or nil"))
     (seq-filter
      (lambda (item)

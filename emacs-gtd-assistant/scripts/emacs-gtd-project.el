@@ -125,7 +125,7 @@
   "Validate and canonicalize a local existing DIRECTORY."
   (emacs-gtd--single-line directory "DIRECTORY")
   (when (or (file-remote-p directory) (not (file-directory-p directory)))
-    (error "Project directory must exist locally: %s" directory))
+    (user-error "Project directory must exist locally: %s" directory))
   (file-name-as-directory (file-truename directory)))
 
 (defun emacs-gtd-project-configure (id directory &optional links replace-links)
@@ -168,7 +168,7 @@
 (defun emacs-gtd-project-add-children (id tasks)
   "Atomically add validated unscheduled TASKS below managed heading ID."
   (unless (and (listp tasks) tasks (<= (length tasks) emacs-gtd-project-task-limit))
-    (error "TASKS must contain 1..%d project tasks" emacs-gtd-project-task-limit))
+    (user-error "TASKS must contain 1..%d project tasks" emacs-gtd-project-task-limit))
   (let* ((emacs-gtd-generated-content-maximum-characters 4000)
          (validated (mapcar #'emacs-gtd--validate-task-spec tasks))
          items)
@@ -178,10 +178,10 @@
         ;; Validate every state and all body content before changing anything.
         (dolist (task validated)
           (unless (member (or (plist-get task :todo) "TODO") org-todo-keywords-1)
-            (error "Unknown task TODO state"))
+            (user-error "Unknown task TODO state"))
           (when (and (plist-get task :body)
                      (string-match-p "^\\*+ " (plist-get task :body)))
-            (error "Task BODY cannot contain Org headings")))
+            (user-error "Task BODY cannot contain Org headings")))
         (atomic-change-group
           (org-end-of-subtree t t)
           (unless (bolp) (insert "\n"))
@@ -193,7 +193,7 @@
               (goto-char beg)
               (when-let* ((priority (plist-get task :priority)))
                 (unless (<= org-priority-highest (aref priority 0) org-priority-lowest)
-                  (error "Priority outside configured range"))
+                  (user-error "Priority outside configured range"))
                 (org-priority (aref priority 0)))
               (when-let* ((tags (plist-get task :tags))) (org-set-tags tags))
               (dolist (property (plist-get task :properties))

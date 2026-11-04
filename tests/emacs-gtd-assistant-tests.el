@@ -452,9 +452,10 @@
           (should-not (plist-get item :scheduled))
           (should (equal (car (plist-get item :outline)) "Project"))))
       (should (= (plist-get (emacs-gtd-execute '(:operation list)) :count) 5)))
-    (should-error
+    (skill-contract-tests-assert-failure
      (emacs-gtd-execute '(:operation add-children :parent-id "project" :authorization explicit
-                         :tasks ((:title "Never persists") (:title "Invalid" :todo "BOGUS")))))
+                         :tasks ((:title "Never persists") (:title "Invalid" :todo "BOGUS"))))
+     'needs-input 'invalid-request)
     (should (= (plist-get (emacs-gtd-execute '(:operation list)) :count) 5))))
 
 (ert-deftest gtd-project-session-history-and-drawers-belong-to-own-entry ()
