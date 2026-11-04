@@ -10,10 +10,11 @@
 (let ((common (expand-file-name "../../common/scripts/"
                                 (file-name-directory
                                  (or load-file-name buffer-file-name)))))
-  (unless (featurep 'skill-runtime)
-    (load (expand-file-name "skill-runtime.el" common) nil nil t))
-  (unless (featurep 'skill-git)
-    (load (expand-file-name "skill-git.el" common) nil nil t)))
+  (load (expand-file-name "skill-loader.el" common) nil t t)
+  (skill-loader-load (expand-file-name "skill-runtime.el" common)
+                     'skill-runtime-api-version 1)
+  (skill-loader-load (expand-file-name "skill-git.el" common)
+                     'skill-git-api-version 1))
 
 (defvar skill-git-message-column)
 (defvar magit-display-buffer-noselect)

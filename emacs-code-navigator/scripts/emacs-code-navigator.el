@@ -15,11 +15,12 @@
 (require 'flymake nil t)
 (require 'which-func nil t)
 
-(unless (featurep 'skill-runtime)
-  (load (expand-file-name "../../common/scripts/skill-runtime.el"
-                          (file-name-directory
-                           (or load-file-name buffer-file-name)))
-        nil nil t))
+(let ((common (expand-file-name "../../common/scripts/"
+                                (file-name-directory
+                                 (or load-file-name buffer-file-name)))))
+  (load (expand-file-name "skill-loader.el" common) nil t t)
+  (skill-loader-load (expand-file-name "skill-runtime.el" common)
+                     'skill-runtime-api-version 1))
 
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))

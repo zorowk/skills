@@ -6,6 +6,10 @@
 (require 'rx)
 (require 'seq)
 
+(defconst skill-git-api-version 1
+  "Support API level required by current self-loading facades.
+Raise this level when a facade needs a newer validation or execution contract.")
+
 (defgroup skill-git nil
   "Shared Git behavior for local skills."
   :group 'tools)

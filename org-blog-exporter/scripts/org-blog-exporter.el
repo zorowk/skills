@@ -20,21 +20,14 @@
 (declare-function denote-date-identifier-p "denote" (identifier))
 (declare-function denote-id-to-date "denote" (identifier))
 
-(unless (featurep 'skill-git)
-  (let* ((script-directory
-          (file-name-directory (or load-file-name buffer-file-name)))
-         (shared-file
-          (expand-file-name "../../common/scripts/skill-git.el"
-                            script-directory)))
-    (unless (file-readable-p shared-file)
-      (error "Shared Git helper is not readable: %s" shared-file))
-    (load shared-file nil nil t)))
-
-(unless (featurep 'skill-runtime)
-  (load (expand-file-name "../../common/scripts/skill-runtime.el"
-                          (file-name-directory
-                           (or load-file-name buffer-file-name)))
-        nil nil t))
+(let ((common (expand-file-name "../../common/scripts/"
+                                (file-name-directory
+                                 (or load-file-name buffer-file-name)))))
+  (load (expand-file-name "skill-loader.el" common) nil t t)
+  (skill-loader-load (expand-file-name "skill-runtime.el" common)
+                     'skill-runtime-api-version 1)
+  (skill-loader-load (expand-file-name "skill-git.el" common)
+                     'skill-git-api-version 1))
 
 (declare-function skill-runtime-describe "../../common/scripts/skill-runtime"
                   (schemas &optional target))

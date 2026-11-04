@@ -8,9 +8,8 @@
 (require 'cl-lib)
 (require 'map)
 (require 'org-agenda)
-(unless (featurep 'emacs-gtd-assistant)
-  (load (expand-file-name "emacs-gtd-assistant.el"
-                          (file-name-directory (or load-file-name buffer-file-name))) nil nil t))
+(load (expand-file-name "emacs-gtd-assistant.el"
+                        (file-name-directory (or load-file-name buffer-file-name))) nil t t)
 
 (defcustom emacs-gtd-agent-storage-directory "~/Dropbox/.agent-shell/"
   "Central directory for agent-shell transcripts and screenshots."

@@ -19,6 +19,9 @@
 (defvar emacs-gtd-directory)
 (defvar emacs-gtd-file)
 (defvar org-id-locations-file)
+(defvar skill-git-message-column)
+(defvar skill-runtime-api-version)
+(defvar org-blog-exporter--recoveries)
 
 (defconst skill-contract-test-facades
   '((:name navigator
@@ -342,6 +345,48 @@
           (dolist (field '(:offset :limit :full :include-done))
             (when (memq field fields)
               (should (assq field (plist-get schema :types))))))))))
+
+(ert-deftest facade-reload-refreshes-already-loaded-support-code ()
+  (dolist (file '("emacs-code-navigator/scripts/emacs-code-navigator.el"
+                  "emacs-gtd-assistant/scripts/emacs-gtd-assistant.el"
+                  "denote-scribe/scripts/denote-scribe.el"
+                  "git-commit/scripts/ai-git-commit.el"
+                  "org-blog-exporter/scripts/org-blog-exporter.el"))
+    (cl-letf (((symbol-function 'skill-runtime-describe)
+               (lambda (&rest _) (error "Stale runtime was used")))
+              ((symbol-function 'skill-git-push)
+               (lambda (&rest _) (error "Stale Git helper was used"))))
+      (skill-tests-load file)
+      (should (plist-get (skill-runtime-describe '((sample :summary "Sample")) 'sample) :request-template))
+      (should-error (skill-runtime-validate-request
+                     '((sample :summary "Sample")) '(:operation sample :operation other))
+                    :type 'skill-runtime-invalid-request)
+      (when (or (string-prefix-p "git-commit/" file)
+                (string-prefix-p "org-blog-exporter/" file))
+        (should (string-match-p "configured upstream" (documentation 'skill-git-push)))))))
+
+(ert-deftest facade-support-reload-preserves-user-options-and-recovery-state ()
+  (let ((saved-column skill-git-message-column)
+        (org-blog-exporter--recoveries '(("existing-token" :stage push))))
+    (unwind-protect
+        (progn
+          (setq skill-git-message-column 87)
+          (skill-tests-load "org-blog-exporter/scripts/org-blog-exporter.el")
+          (should (= skill-git-message-column 87))
+          (should (equal org-blog-exporter--recoveries '(("existing-token" :stage push)))))
+      (setq skill-git-message-column saved-column))))
+
+(ert-deftest facade-loader-rejects-missing-and-obsolete-api-markers ()
+  (let ((file (make-temp-file "skill-old-support-" nil ".el")))
+    (unwind-protect
+        (dolist (definition '("(provide 'skill-runtime)\n"
+                              "(defconst skill-runtime-api-version 0)\n"))
+          (with-temp-file file (insert definition))
+          (setq skill-runtime-api-version 99)
+          (should-error (skill-loader-load file 'skill-runtime-api-version 1))
+          (should-not (equal skill-runtime-api-version 99)))
+      (delete-file file)
+      (skill-tests-load "common/scripts/skill-runtime.el"))))
 
 (provide 'contract-conformance-tests)
 

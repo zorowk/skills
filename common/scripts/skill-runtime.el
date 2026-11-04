@@ -5,6 +5,10 @@
 (require 'seq)
 (require 'subr-x)
 
+(defconst skill-runtime-api-version 1
+  "Support API level required by current self-loading facades.
+Raise this level when a facade needs a newer validation or execution contract.")
+
 (defconst skill-runtime-envelope-version 2
   "Version of the public skill result envelope.")
 

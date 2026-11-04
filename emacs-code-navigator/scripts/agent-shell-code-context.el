@@ -10,11 +10,8 @@
 (require 'seq)
 (require 'subr-x)
 
-(unless (featurep 'emacs-code-navigator)
-  (load (expand-file-name "emacs-code-navigator.el"
-                          (file-name-directory
-                           (or load-file-name buffer-file-name)))
-        nil nil t))
+(load (expand-file-name "emacs-code-navigator.el"
+                        (file-name-directory (or load-file-name buffer-file-name))) nil t t)
 
 (declare-function emacs-code-navigator-query "emacs-code-navigator"
                   (request))
