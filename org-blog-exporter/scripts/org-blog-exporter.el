@@ -510,7 +510,7 @@ Each result entry is (raw-link absolute-path exists)."
                  (string-match-p "\\`[^/\\\\.][^/\\\\]*\\'" name)
                  (not (member name '("." ".."))))
       (error "Invalid blog assets directory name: %S" name))
-    (file-name-as-directory (expand-file-name name repository-root))))
+    (file-name-as-directory (org-blog-exporter--output-target name repository-root))))
 
 (defun org-blog-exporter--supported-asset-p (file)
   "Return non-nil when FILE has a configured resource extension."
@@ -547,8 +547,8 @@ into the configured assets directory, so conflicting basenames are rejected."
         (let ((source (expand-file-name (nth 1 asset))))
           ;; Org-to-Org links are page navigation, not static resources.
           (unless (string= (downcase (or (file-name-extension source) "")) "org")
-            (let* ((target (expand-file-name (file-name-nondirectory source)
-                                             directory))
+            (let* ((target (org-blog-exporter--output-target
+                            (file-name-nondirectory source) directory))
                    (previous (gethash target by-target)))
               (unless (file-regular-p source)
                 (error "Local blog resource is missing or not a file: %s" source))
@@ -646,12 +646,28 @@ export buffer is changed."
              :html-link (plist-get replacement :rewritten)))
      (nreverse replacements))))
 
+(defun org-blog-exporter--output-target (relative root)
+  "Resolve RELATIVE below ROOT without allowing symlinks to expand that scope.
+Use native truename/relative-name resolution because `file-in-directory-p'
+requires ROOT to exist, while an export may create a new output directory."
+  (let* ((target (expand-file-name relative root))
+         (resolved-root (file-name-as-directory (file-truename root)))
+         (resolved-relative (file-relative-name (file-truename target) resolved-root)))
+    (when (or (file-name-absolute-p resolved-relative)
+              (member resolved-relative '("." ".."))
+              (string-prefix-p "../" resolved-relative))
+      (skill-runtime-signal
+       'skill-runtime-permission-denied "Blog output target escapes the configured root"
+       :target target :expected resolved-root :retry 'after-input
+       :required-action 'revise-request))
+    target))
+
 (defun org-blog-exporter--target-file (org-file &optional output-dir notes-dir setupfile)
   "Return the HTML target path for ORG-FILE."
   (let* ((relative (org-blog-exporter--relative-to-notes org-file notes-dir))
          (html-relative (concat (file-name-sans-extension relative) ".html")))
-    (expand-file-name html-relative
-                      (org-blog-exporter--output-directory output-dir setupfile))))
+    (org-blog-exporter--output-target
+     html-relative (org-blog-exporter--output-directory output-dir setupfile))))
 
 (defun org-blog-exporter--has-setupfile-p ()
   "Return non-nil when current buffer already has a setupfile directive."
@@ -716,6 +732,8 @@ export buffer is changed."
 (defun org-blog-exporter--export-file-artifacts
     (org-files &optional output-dir setupfile asset-targets notes-dir)
   "Export ORG-FILES and return verified artifact descriptions."
+  (dolist (file org-files)
+    (org-blog-exporter--target-file file output-dir notes-dir setupfile))
   (let (artifacts)
     (dolist (file org-files)
       (condition-case err
@@ -743,6 +761,8 @@ export buffer is changed."
          (artifacts nil)
          (exported nil)
          (errors nil))
+    (dolist (file files)
+      (org-blog-exporter--target-file file output-dir root setupfile))
     (dolist (file files)
       (condition-case err
           (let ((artifact
@@ -864,7 +884,7 @@ starting; all-file export preserves per-file error reporting."
     (org-files &optional output-dir setupfile notes-dir)
   "Update index.html with ORG-FILES and return its absolute path."
   (let* ((output (org-blog-exporter--output-directory output-dir setupfile))
-         (index-file (expand-file-name "index.html" output))
+         (index-file (org-blog-exporter--output-target "index.html" output))
          (entries
           (org-blog-exporter--merge-index-entries
            (org-blog-exporter--index-entries index-file)
@@ -905,6 +925,7 @@ starting; all-file export preserves per-file error reporting."
            repository-url directory))
          (root (plist-get repository :git-root)))
     (skill-git-assert-clean root)
+    (org-blog-exporter--output-target "index.html" root)
     (skill-git-pull-ff-only root)
     (skill-git-assert-clean root)
     (let ((ahead (skill-git-upstream-ahead-count root)))

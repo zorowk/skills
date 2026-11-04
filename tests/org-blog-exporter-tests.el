@@ -663,6 +663,66 @@
             (should-not (string-match-p "assessment-summary\\|assessment-item" html))))
       (delete-directory root t))))
 
+(ert-deftest blog-export-rejects-symlink-escapes-before-writing-any-page ()
+  (dolist (kind '(directory file))
+    (let* ((root (make-temp-file "blog-output-boundary-" t))
+           (notes (expand-file-name "notes" root))
+           (output (expand-file-name "output" root))
+           (outside (expand-file-name "outside" root))
+           (source (expand-file-name "sub/sample.org" notes))
+           (safe (expand-file-name "safe.org" notes))
+           (setup (expand-file-name "setup.org" root))
+           (sentinel (expand-file-name "sample.html" outside)))
+      (unwind-protect
+          (progn
+            (make-directory (file-name-directory source) t)
+            (make-directory output) (make-directory outside)
+            (with-temp-file setup (insert "#+options: toc:nil\n"))
+            (with-temp-file source (insert "#+title: Sample\nText.\n"))
+            (with-temp-file safe (insert "#+title: Safe\nText.\n"))
+            (with-temp-file sentinel (insert "Do not replace"))
+            (if (eq kind 'directory)
+                (make-symbolic-link outside (expand-file-name "sub" output))
+              (make-directory (expand-file-name "sub" output))
+              (make-symbolic-link sentinel (expand-file-name "sub/sample.html" output)))
+            (skill-contract-tests-assert-failure
+             (org-blog-exporter-run
+              (list :operation 'export :files (list safe source) :notes-dir notes
+                    :output-dir output :setupfile setup :authorization 'explicit))
+             'blocked 'permission-denied)
+            (should-not (file-exists-p (expand-file-name "safe.html" output)))
+            (should (equal "Do not replace"
+                           (with-temp-buffer (insert-file-contents sentinel) (buffer-string)))))
+        (delete-directory root t)))))
+
+(ert-deftest blog-output-boundary-supports-new-roots-and-protects-index-and-assets ()
+  (let* ((root (make-temp-file "blog-targets-" t))
+         (output (expand-file-name "new-output" root))
+         (outside (expand-file-name "outside" root))
+         (source (expand-file-name "sub/sample.org" root))
+         (setup (expand-file-name "setup.org" root)))
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory source) t)
+          (make-directory outside)
+          (with-temp-file source (insert "#+title: Sample\nText.\n"))
+          (with-temp-file setup (insert "#+options: toc:nil\n"))
+          (should (eq (plist-get
+                       (org-blog-exporter-run
+                        (list :operation 'export :files (list source) :notes-dir root
+                              :output-dir output :setupfile setup :authorization 'explicit))
+                       :status) 'ok))
+          (should (file-exists-p (expand-file-name "sub/sample.html" output)))
+          (make-symbolic-link (expand-file-name "index.html" outside)
+                              (expand-file-name "index.html" output))
+          (should-error (org-blog-exporter-update-index (list source) output setup root)
+                        :type 'skill-runtime-permission-denied)
+          (should-not (file-exists-p (expand-file-name "index.html" outside)))
+          (make-symbolic-link outside (expand-file-name "image" output))
+          (should-error (org-blog-exporter--assets-directory output)
+                        :type 'skill-runtime-permission-denied))
+      (delete-directory root t))))
+
 (provide 'org-blog-exporter-tests)
 
 ;;; org-blog-exporter-tests.el ends here
