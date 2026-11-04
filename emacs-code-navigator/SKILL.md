@@ -22,8 +22,6 @@ Invoke the facade with one self-loading expression:
   (emacs-code-navigator-query REQUEST))
 ```
 
-The facade owns request validation, source constraints, provenance, and recovery metadata.
-
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if

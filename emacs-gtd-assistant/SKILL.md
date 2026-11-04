@@ -33,8 +33,7 @@ Use `describe` for the relevant operation's schema when needed. `get` reads a
 known ID's own entry, nearest project, resource links and session history.
 `create-project` / `configure-project` establish a project directory and links;
 `add-children` writes unscheduled implementation tasks below an explicit parent ID.
-The facade manages explicitly configured files, validates requests, disambiguates
-identities, and owns all Org mutations. Never bypass it to edit managed Org.
+Use the facade for all mutations to managed Org files.
 
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket

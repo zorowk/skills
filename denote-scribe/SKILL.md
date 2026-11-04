@@ -34,8 +34,8 @@ counter-evidence and alternatives, and qualify conclusions by uncertainty and sc
 Keep sources traceable. Choose a readable structure for the content; no fixed
 headings, mandatory concept extraction, or full deliberation transcript.
 
-Propose the note before capture; explicit confirmation permits
-`capture(authorization=explicit)`. Do not proactively suggest GTD tasks.
+An explicit request to save agreed content authorizes `capture(authorization=explicit)`.
+If the content is not yet agreed, propose it before saving. Do not proactively suggest GTD tasks.
 When the user explicitly requests task creation or association, use
 `emacs-gtd-assistant`; use `link-gtd` only for requested Denote backlinks.
 

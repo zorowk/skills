@@ -150,7 +150,7 @@ v2 主入口 envelope 统一返回 `:protocol-version`、`:status`、`:operation
 Actions 中调用 AI，也不会持久化调用内容。
 
 用户在 agent-shell 对话中要求审阅本轮 skill 使用时，Agent 直接触发
-`skill-usage-review`，使用对话中已经可见的调用和 metrics 进行四维独立评价和恢复成本
+`skill-usage-review`，使用对话中已经可见的调用和 metrics 评价质量、效率和恢复成本
 诊断；它不重新运行任务、不把 tool 输出复制进 Emacs，也不增加自动上下文。评价得到的
 具体工作或长期经验仍由用户显式选择 GTD 或 Denote 捕获，不会自动写入。
 

@@ -24,9 +24,6 @@ Invoke the facade with one self-loading expression:
   (ai-git-commit-run REQUEST))
 ```
 
-The facade owns schema validation, authorization, path-scoped staging, message
-formatting, mutation effects, and post-commit verification.
-
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if

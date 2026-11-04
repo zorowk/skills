@@ -19,9 +19,6 @@ Invoke the facade with one self-loading expression:
   (org-blog-exporter-run REQUEST))
 ```
 
-The facade owns source validation, authorization, asset planning, partial effects,
-commit/push gates, recovery metadata, and completion verification.
-
 Run `emacsclient --eval` with `sandbox_permissions: "require_escalated"` on the
 first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
