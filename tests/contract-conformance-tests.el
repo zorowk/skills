@@ -118,10 +118,10 @@
             (ai-git-commit-run '(:operation describe :target commit))
             :data)
            :schema))
-         (template
+         (capture
           (plist-get
            (plist-get
-            (denote-scribe-run '(:operation describe :target template))
+            (denote-scribe-run '(:operation describe :target capture))
             :data)
            :schema))
          (publish
@@ -138,7 +138,7 @@
      (= (plist-get (plist-get commit :output-constraints)
                    :maximum-line-width)
         100))
-    (should (assq :language (plist-get template :choices)))
+    (should (assq :authorization (plist-get capture :choices)))
     (should (plist-get publish :verification))))
 
 (ert-deftest skill-facades-describe-with-standard-envelope ()

@@ -47,9 +47,7 @@
   (let* ((root (make-temp-file "denote-create-" t))
          (notes (expand-file-name "notes" root))
          (sentinel (expand-file-name "outside.txt" root))
-         (body (expand-file-name
-                "denote-scribe/assets/critical-note-template.org"
-                skill-contract-tests-root))
+         (body (make-temp-file "denote-body-" nil ".org" "A direct answer with supporting evidence.\n"))
          (created (expand-file-name "20260720T120000--test-note.org" notes))
          (original-require (symbol-function 'require)))
     (unwind-protect
@@ -77,7 +75,7 @@
           (should (file-in-directory-p (file-truename created)
                                        (file-truename notes)))
           (should (string-match-p
-                   "\\* Question"
+                   "A direct answer with supporting evidence"
                    (with-temp-buffer
                      (insert-file-contents created)
                      (buffer-string))))
@@ -88,6 +86,7 @@
               (buffer-string))
             "unchanged")))
       (when-let* ((buffer (get-file-buffer created))) (kill-buffer buffer))
+      (delete-file body)
       (delete-directory root t))))
 
 (ert-deftest denote-create-and-capture-share-authorized-facade-behavior ()
@@ -108,52 +107,16 @@
                          "/tmp/created.org"))
           (should (equal (plist-get result :effects) '(:created t))))))))
 
-(ert-deftest denote-script-templates-are-bilingual-and-validated ()
-  (dolist (language '(en zh))
-    (let ((template (denote-scribe-template-file 'script language)))
-      (should (file-readable-p template))
-      (should (progn (denote-scribe--validate-script-body template) t))))
-  (let ((invalid (make-temp-file "denote-script-invalid-" nil ".org")))
-    (unwind-protect
-        (progn
-          (with-temp-file invalid
-            (insert "* Purpose\n* When to Use\n* Prerequisites\n"
-                    "* Inputs and Side Effects\n* Script\n* How to Run\n"
-                    "* Verification and Recovery\n* Maintenance Notes\n* Provenance\n"))
-          (should-error (denote-scribe--validate-script-body invalid)))
-      (delete-file invalid))))
-
-(ert-deftest denote-script-validation-enforces-execution-without-tangling ()
-  (let ((template (denote-scribe-template-file 'script 'en)))
-    (dolist (replacement '("" ":eval query :tangle /tmp/generated.sh"))
-      (let ((body (make-temp-file "denote-script-policy-" nil ".org")))
-        (unwind-protect
-            (progn
-              (with-temp-file body
-                (insert-file-contents template)
-                (goto-char (point-min))
-                (search-forward "#+begin_src shell :eval query")
-                (replace-match
-                 (string-trim-right
-                  (concat "#+begin_src shell " replacement))
-                 t t))
-              (should-error (denote-scribe--validate-script-body body)))
-          (delete-file body))))))
-
-(ert-deftest denote-capture-forwards-script-kind ()
-  (let (received-kind)
+(ert-deftest denote-removed-script-workflow-rejects-without-side-effects ()
+  (let (called)
     (cl-letf (((symbol-function 'denote-scribe-create-with-review-context)
-               (lambda (&rest args)
-                 (setq received-kind (car (last args)))
-                 '(:file "/tmp/script.org" :review-state (:review-due nil)))))
-      (let ((result
-             (denote-scribe-run
-              '(:operation capture :kind script :title "Contextual script"
-                :body-file "/tmp/body.org" :keywords ("script")
-                :authorization explicit))))
-        (should (eq received-kind 'script))
-        (should (equal (plist-get (plist-get result :data) :file)
-                       "/tmp/script.org"))))))
+               (lambda (&rest _) (setq called t))))
+      (dolist (request '((:operation template :kind script :language zh)
+                         (:operation capture :kind script :title "Old script"
+                          :body-file "/tmp/body.org" :authorization explicit)))
+        (skill-contract-tests-assert-failure
+         (denote-scribe-run request) 'needs-input 'invalid-request))
+      (should-not called))))
 
 (ert-deftest denote-review-separates-delivery-from-note-assessment ()
   (let ((summary
@@ -254,14 +217,11 @@
           (should-error (denote-scribe--valid-review-verification-p verification)))
       (delete-file note))))
 
-(ert-deftest denote-gtd-backlinks-preserve-critical-top-level-structure ()
+(ert-deftest denote-gtd-backlinks-support-freeform-notes ()
   (let* ((root (make-temp-file "denote-gtd-link-" t))
          (notes (expand-file-name "notes" root))
          (note (expand-file-name
                 "20260723T120000--linked-research.org" notes))
-         (template (expand-file-name
-                    "denote-scribe/assets/critical-note-template.org"
-                    skill-contract-tests-root))
          (tasks
           '((:id "task-one" :title "Trace action mapping")
             (:id "task-two" :title "Build a minimal client"))))
@@ -269,7 +229,7 @@
         (progn
           (make-directory notes)
           (with-temp-file note
-            (insert-file-contents template))
+            (insert "A direct answer.\n* Supporting observations\nEvidence.\n"))
           (skill-contract-tests-assert-failure
            (denote-scribe-run
             (list :operation 'link-gtd :file note :tasks tasks
@@ -296,7 +256,7 @@
              (equal
               (denote-scribe--top-level-headings
                (denote-scribe--org-tree))
-              denote-scribe-critical-headings))))
+              '( "Supporting observations" "Open Questions")))))
       (when-let* ((buffer (get-file-buffer note))) (kill-buffer buffer))
       (delete-directory root t))))
 
@@ -336,6 +296,30 @@
     (should (string-prefix-p "feat(notes): record result" captured))
     (should (string-match-p "\n\n" captured))
     (should-not (string-match-p skill-git--body-label-regexp captured))))
+
+(ert-deftest denote-freeform-bodies-and-summaries-preserve-all-content ()
+  (let ((note (make-temp-file "denote-freeform-" nil ".org")))
+    (unwind-protect
+        (progn
+          (dolist (body '("A concise answer without headings."
+                          "Opening judgment.\n* Why this happens\nEvidence.\n** Detail\nTrace.\n* Limits\nUncertainty."))
+            (with-temp-file note (insert body))
+            (should (progn (denote-scribe--validate-note-body note) t))
+            (let* ((summary (denote-scribe-note-summary note 1000))
+                   (sections (plist-get summary :sections)))
+              (should (equal (plist-get (car sections) :text)
+                             (car (split-string body "\n"))))
+              (when (string-match-p "Why this happens" body)
+                (should (equal (mapcar (lambda (section) (plist-get section :heading))
+                                      sections)
+                               '(nil "Why this happens" "Limits")))
+                (should (string-match-p "Trace" (plist-get (cadr sections) :text)))))
+            (should (plist-get
+                     (car (plist-get (denote-scribe-note-summary note 5) :sections))
+                     :truncated)))
+          (with-temp-file note (insert "  \n"))
+          (should-error (denote-scribe--validate-note-body note)))
+      (delete-file note))))
 
 (provide 'denote-scribe-tests)
 

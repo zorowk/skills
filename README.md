@@ -7,8 +7,7 @@ Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流�
 
 | Skill | 功能 | 典型请求 |
 | --- | --- | --- |
-| [`ai-constitution`](ai-constitution/SKILL.md) | 在复杂、不确定或高影响任务中应用轻量可靠性原则：先理解和验证，再执行最小、可逆的改动；简单任务仍保持直接。 | “严格分析这个问题并验证结论” |
-| [`denote-scribe`](denote-scribe/SKILL.md) | 将确认的技术讨论与脚本保存为 Denote 笔记，支持笔记回顾、Org 任务链接，以及明确授权后的 Git 提交。 | “输出 Denote 报告” |
+| [`denote-scribe`](denote-scribe/SKILL.md) | 将确认的技术讨论保存为 Denote 笔记，支持笔记回顾、Org 任务链接，以及明确授权后的 Git 提交。 | “输出 Denote 报告” |
 | [`emacs-code-navigator`](emacs-code-navigator/SKILL.md) | 将运行中的 Emacs 作为能力注册表和代码上下文来源：区分 live buffer 与磁盘内容并报告来源和分歧，同时支持 Help、项目搜索、Imenu、xref、Eldoc/Eglot 和 Flymake。 | “Emacs 里有什么函数能完成这个任务？”“查看这个符号的文档和源码” |
 | [`emacs-gtd-assistant`](emacs-gtd-assistant/SKILL.md) | 从 Org/Agenda 任务进入 AI 会话，关联项目文档、实施子任务和接续进度；也支持常规任务管理。 | “列出今天的任务”“把这个任务标记为 DONE” |
 | [`org-blog-exporter`](org-blog-exporter/SKILL.md) | 将 `~/Dropbox/notes` 中符合条件的 Org 笔记导出为静态 HTML；支持单篇、批量和全量导出。明确要求发布时，还可更新索引、复制并重写本地资源、提交并推送博客仓库。 | “预览这篇 Org 笔记”“发布博客” |
@@ -60,7 +59,6 @@ flowchart LR
         SCRIBE["denote-scribe"]
         BLOG["org-blog-exporter"]
         USAGE["skill-usage-review"]
-        CONSTITUTION["ai-constitution"]
     end
 
     USER -->|"提问、选择、明确授权"| AS
@@ -82,7 +80,6 @@ flowchart LR
 
     AGENT -->|"按 SKILL.md 触发"| NAV
     AGENT --> BLOG
-    CONSTITUTION -.->|"高影响任务约束"| AGENT
 
     NAV --> RUNTIME
     COMMIT --> RUNTIME
@@ -122,11 +119,10 @@ project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。它
 `~/Dropbox/.agent-shell/`；该目录不替代 agent 后端的原生会话存储。设置与操作见
 [工作流说明](emacs-gtd-assistant/references/workflow.org)。
 
-用户在 agent-shell 对话中要求记录当前讨论时，Agent 直接触发 `denote-scribe`，先生成
-符合 critical template 的笔记提案，并从提取的问题中提出零至三个真正有价值、可执行的
-GTD 后续任务。确认后先创建 Denote，再把该文件作为 `file:` resource 写入每个 GTD，
-最后把返回的 GTD `id:` 链接写回 Denote 的 `Related GTD / 相关 GTD` 二级小节。跨文件
-操作不伪装成原子事务；后续步骤失败时必须报告已完成部分并提供修复。该流程不会自动 commit 或 push。
+用户在 agent-shell 对话中要求记录当前讨论时，Agent 触发 `denote-scribe`，生成
+按批判性思维要求组织、结构随内容选择的笔记提案，确认后创建 Denote，不主动建议 GTD 任务。
+明确要求新建任务时使用 `emacs-gtd-assistant`；要求关联笔记时添加资源链接及所需回链。
+跨文件操作若部分失败，报告已完成部分并提供修复。该流程不会自动 commit 或 push。
 
 提交信息中的 `validation` 仍是 AI 必须提供的内部证据，用于判断声明是否可靠；`git-commit`
 默认不把测试命令、通过数量等 validation 内容写入 commit body，而是在操作完成后向用户
@@ -162,9 +158,9 @@ Actions 中调用 AI，也不会持久化调用内容。
 
 ### Denote 与 AI Review
 
-`denote-scribe` 通过 Denote 创建笔记，支持中文与英文的推理笔记和 Org Babel 脚本笔记。
+`denote-scribe` 通过 Denote 创建笔记，支持中文与英文的推理笔记。
 项目专属的需求、架构保留在项目仓库；实施步骤与接续进度保留在 Org 项目和任务中。
-Denote 用于值得长期保存的研究、排障推理，以及具有用途、运行条件和恢复说明的脚本。
+Denote 用于值得长期保存的研究和排障推理。
 
 回顾按已有 Git 提交间隔判断是否到期，首次包括全部笔记；按页读取摘要，对截断或有争议
 的证据按需读取全文。回顾结论记录笔记证据、结论和未解决问题，不再生成另一套 Wiki 页面。
@@ -211,7 +207,6 @@ token 仅在当前 Emacs 会话有效，最多保留最近 16 个，开始恢复
 - `git-commit`：Magit（用于从任意当前仓库收集提交证据）；
 - agent-shell 自动上下文：agent-shell 支持 `agent-shell-context-sources`；
 - `skill-usage-review`：无额外运行时依赖；
-- `ai-constitution`：无额外运行时依赖。
 
 ## Install
 
@@ -224,7 +219,6 @@ Git formatter，因此安装任意 Emacs skill 时必须保留 `common/`。
 ```text
 skills/
 ├── common/
-├── ai-constitution/
 ├── denote-scribe/
 ├── emacs-code-navigator/
 ├── emacs-gtd-assistant/
@@ -237,7 +231,7 @@ skills/
 
 ```bash
 zip -r ai-skills.zip \
-  common ai-constitution denote-scribe emacs-code-navigator \
+  common denote-scribe emacs-code-navigator \
   emacs-gtd-assistant org-blog-exporter git-commit skill-usage-review
 ```
 

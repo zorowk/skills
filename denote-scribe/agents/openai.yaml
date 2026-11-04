@@ -1,4 +1,4 @@
 interface:
   display_name: "Denote Scribe"
-  short_description: "Capture reasoning and contextual Org scripts"
-  default_prompt: "Use $denote-scribe to capture this confirmed discussion as either a critical reasoning note or a contextual Org Babel script note, without creating separate script files."
+  short_description: "Capture and review Denote reasoning notes"
+  default_prompt: "Use $denote-scribe to capture this confirmed discussion as a readable Denote reasoning note with evidence and appropriate uncertainty."

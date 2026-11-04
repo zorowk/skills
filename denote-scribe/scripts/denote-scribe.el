@@ -103,50 +103,19 @@
 (declare-function skill-git-root
                   "../../common/scripts/skill-git" (directory))
 
-(defconst denote-scribe-critical-headings
-  '("Goal" "Question" "Context" "Evidence" "Hypotheses" "Investigation"
-    "Analysis" "Conclusion" "Reflection" "Open Questions" "Extract Concepts")
-  "Required English headings for a critical Denote body, in order.")
-
-(defconst denote-scribe-critical-headings-zh
-  '("目标" "核心问题" "背景" "证据" "假设" "探究过程" "分析" "结论" "反思"
-    "开放问题" "提取概念")
-  "Required Chinese headings for a critical Denote body, in order.")
-
-(defconst denote-scribe-script-headings
-  '("Purpose" "When to Use" "Prerequisites" "Inputs and Side Effects"
-    "Script" "How to Run" "Verification and Recovery" "Maintenance Notes"
-    "Provenance")
-  "Required English headings for a contextual script note, in order.")
-
-(defconst denote-scribe-script-headings-zh
-  '("用途" "适用场景" "前置条件" "输入与副作用" "脚本" "运行方法"
-    "验证与恢复" "维护说明" "来源")
-  "Required Chinese headings for a contextual script note, in order.")
-
-(defconst denote-scribe-review-summary-headings
-  '("Question" "Evidence" "Conclusion" "Open Questions" "Extract Concepts"
-    "核心问题" "证据" "结论" "开放问题" "提取概念"
-    "Purpose" "Script" "Verification and Recovery" "Maintenance Notes"
-    "用途" "脚本" "验证与恢复" "维护说明")
-  "Note headings included in compact AI-review summaries.")
-
 (defconst denote-scribe--schemas
   '((preflight :summary "Validate Denote and repository configuration."
                :optional (:notes-dir :git-dir))
-    (template :summary "Return the exact critical-note or script-note template."
-              :required (:kind :language)
-              :choices ((:kind critical script) (:language en zh)))
     (create :summary "Create one Denote note from a completed body file."
             :required (:title :body-file :authorization)
             :optional (:kind :keywords :notes-dir :signature :date :git-dir)
-            :choices ((:kind critical script) (:authorization explicit))
+            :choices ((:kind critical) (:authorization explicit))
             :effects (:created))
     (capture
      :summary "Create one confirmed conversation note with explicit authorization."
      :required (:title :body-file :authorization)
      :optional (:kind :keywords :notes-dir :signature :date :git-dir)
-     :choices ((:kind critical script) (:authorization explicit))
+     :choices ((:kind critical) (:authorization explicit))
      :effects (:created))
     (link-gtd
      :summary "Add confirmed GTD id links below the note's open questions."
@@ -228,27 +197,6 @@
       (error "Completed review requires a substantive note assessment"))
     t))
 
-;;;###autoload
-(defun denote-scribe-template-file (kind &optional language)
-  "Return the bundled template for KIND and LANGUAGE.
-
-KIND is `critical' or `script'.  LANGUAGE is `en' or `zh' and defaults to
-`en'.  Signal an error if the selected template is unavailable."
-  (let* ((lang (or language 'en))
-         (name
-          (pcase (cons kind lang)
-            (`(critical . en) "critical-note-template.org")
-            (`(critical . zh) "critical-note-template-zh.org")
-            (`(script . en) "script-note-template.org")
-            (`(script . zh) "script-note-template-zh.org")
-            (_ (error "Unknown template kind/language: %S/%S" kind lang))))
-         (file (expand-file-name name
-                                 (expand-file-name "assets"
-                                                   denote-scribe--skill-directory))))
-    (unless (file-readable-p file)
-      (error "Denote Scribe template is not readable: %s" file))
-    file))
-
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
   (and (stringp value) (not (string-empty-p value)) value))
@@ -268,77 +216,20 @@ KIND is `critical' or `script'.  LANGUAGE is `en' or `zh' and defaults to
       (when (= (org-element-property :level headline) 1)
         (org-element-property :raw-value headline)))))
 
-(defun denote-scribe--validate-headings (tree schemas label)
-  "Return the matching heading schema for Org TREE.
-
-SCHEMAS is a list of accepted top-level heading lists for LABEL."
-  (let* ((actual (denote-scribe--top-level-headings tree))
-         (matched (seq-find (lambda (schema) (equal actual schema)) schemas)))
-    (unless matched
-      (error "%s has invalid top-level headings: %S" label actual))
-    matched))
-
 (defun denote-scribe--validate-critical-body (body-file)
-  "Validate critical-note structure in readable Org BODY-FILE."
+  "Check that BODY-FILE is readable and nonempty, without judging its prose."
+  (unless (and (stringp body-file) (file-readable-p body-file)
+               (not (file-directory-p body-file)))
+    (error "Note body is not a readable file: %S" body-file))
   (with-temp-buffer
     (insert-file-contents body-file)
-    (delay-mode-hooks (org-mode))
-    (let* ((tree (denote-scribe--org-tree))
-           (schema
-            (denote-scribe--validate-headings
-             tree
-             (list denote-scribe-critical-headings
-                   denote-scribe-critical-headings-zh)
-             "Critical body"))
-           (concept-parent (car (last schema)))
-           (concept
-            (org-element-map
-                tree 'headline
-              (lambda (headline)
-                (when (= (org-element-property :level headline) 2)
-                  (let ((parent (org-element-lineage headline 'headline)))
-                    (and parent
-                         (string= (org-element-property :raw-value parent)
-                                  concept-parent)))))
-              nil t)))
-      (unless concept
-        (error "%s must contain a level-2 concept heading" concept-parent)))))
-
-(defun denote-scribe--validate-script-body (body-file)
-  "Validate contextual Org Babel script structure in readable BODY-FILE."
-  (with-temp-buffer
-    (insert-file-contents body-file)
-    (delay-mode-hooks (org-mode))
-    (let* ((tree (denote-scribe--org-tree))
-           (blocks
-            (org-element-map tree 'src-block
-              (lambda (block)
-                (list (org-element-property :language block)
-                      (org-element-property :value block)
-                      (org-element-property :parameters block))))))
-      (denote-scribe--validate-headings
-       tree
-       (list denote-scribe-script-headings denote-scribe-script-headings-zh)
-       "Script body")
-      (unless blocks
-        (error "Script body must contain at least one Org Babel source block"))
-      (dolist (block blocks)
-        (unless (denote-scribe--nonempty (car block))
-          (error "Every script source block must declare a Babel language"))
-        (unless (denote-scribe--nonempty (string-trim (or (cadr block) "")))
-          (error "Every script source block must contain executable content"))
-        (let ((arguments
-               (org-babel-parse-header-arguments (or (caddr block) ""))))
-          (unless (equal (alist-get :eval arguments) "query")
-            (error "Every script source block must declare :eval query"))
-          (when (assq :tangle arguments)
-            (error "Script source blocks must not declare :tangle")))))))
+    (when (string-empty-p (string-trim (buffer-string)))
+      (error "Note body must not be empty"))))
 
 (defun denote-scribe--validate-note-body (body-file &optional kind)
   "Validate BODY-FILE as KIND, which defaults to `critical'."
   (pcase (or kind 'critical)
     ('critical (denote-scribe--validate-critical-body body-file))
-    ('script (denote-scribe--validate-script-body body-file))
     (other (error "Unknown Denote note kind: %S" other))))
 
 (defun denote-scribe--fill-org-buffer ()
@@ -402,8 +293,8 @@ SCHEMAS is a list of accepted top-level heading lists for LABEL."
 (defun denote-scribe-link-gtd (file tasks &optional notes-dir)
   "Add bidirectional GTD TASK backlinks to Denote FILE.
 
-Insert links below a level-2 heading under Open Questions or 开放问题 without
-changing the critical template's required top-level headings."
+Insert links under Open Questions or 开放问题, adding that section if absent.
+Existing prose and arbitrary headings are preserved."
   (let* ((note (denote-scribe--note-file file notes-dir))
          (validated (denote-scribe--validated-gtd-tasks tasks)))
     (denote-scribe--validate-critical-body note)
@@ -412,7 +303,10 @@ changing the critical template's required top-level headings."
        (goto-char (point-min))
        (unless (re-search-forward "^\\* \\(Open Questions\\|开放问题\\)[ \t]*$"
                                   nil t)
-         (error "Denote note has no Open Questions heading"))
+         (goto-char (point-max))
+         (unless (bolp) (insert "\n"))
+         (insert "* Open Questions\n")
+         (forward-line -1))
        (beginning-of-line)
        (let* ((chinese (string= (org-get-heading t t t t) "开放问题"))
               (heading (if chinese "相关 GTD" "Related GTD"))
@@ -547,11 +441,10 @@ Denote commit that has not yet been created."
             :truncated t))))
 
 (defun denote-scribe-note-summary (file &optional section-maximum)
-  "Return compact critical-review sections from Org FILE.
+  "Return bounded sections from Org FILE regardless of heading names.
 
-SECTION-MAXIMUM defaults to
-`denote-scribe-summary-section-maximum-characters'.  Read the full file only
-when a returned section is truncated or requires deeper evidence checking."
+Include introductory prose and headingless notes.  SECTION-MAXIMUM caps each
+section; truncated sections require reading the full note for assessment."
   (unless (and (stringp file) (file-readable-p file))
     (error "Review note is not readable: %S" file))
   (let ((maximum (or section-maximum
@@ -562,27 +455,29 @@ when a returned section is truncated or requires deeper evidence checking."
       (insert-file-contents file)
       (delay-mode-hooks (org-mode))
       (let* ((tree (org-element-parse-buffer))
-             (sections
-              (org-element-map
-                  tree 'headline
-                (lambda (headline)
-                  (let ((heading (org-element-property :raw-value headline)))
-                    (when (and (= (org-element-property :level headline) 1)
-                               (member heading
-                                       denote-scribe-review-summary-headings))
-                      (let ((summary
-                             (denote-scribe--truncate-summary
-                              (org-element-interpret-data
-                               (org-element-contents headline))
-                              maximum)))
-                        (list :heading heading
-                              :text (plist-get summary :text)
-                              :truncated
-                              (plist-get summary :truncated)))))))))
+             (headlines (org-element-map tree 'headline
+                          (lambda (headline)
+                            (when (= (org-element-property :level headline) 1)
+                              headline))))
+             (intro-end (if headlines
+                            (org-element-property :begin (car headlines))
+                          (point-max)))
+             (intro (buffer-substring-no-properties (point-min) intro-end))
+             sections)
+        (unless (string-empty-p (string-trim intro))
+          (push (cons :heading (cons nil
+                     (denote-scribe--truncate-summary intro maximum))) sections))
+        (dolist (headline headlines)
+          (push (cons :heading
+                      (cons (org-element-property :raw-value headline)
+                            (denote-scribe--truncate-summary
+                             (org-element-interpret-data
+                              (org-element-contents headline)) maximum)))
+                sections))
         (list :file (expand-file-name file)
               :title (or (org-get-title (current-buffer))
                          (file-name-base file))
-              :sections sections)))))
+              :sections (nreverse sections))))))
 
 (defun denote-scribe-review-summaries
     (files &optional offset limit section-maximum)
@@ -821,8 +716,8 @@ keyword; otherwise do not filter by keywords."
 
 KEYWORDS is a list of strings.  When nil, do not add keywords.
 NOTES-DIR overrides `denote-scribe-notes-directory'.
-SIGNATURE and DATE are passed to Denote when non-nil.  KIND is `critical' or
-`script' and defaults to `critical'.
+SIGNATURE and DATE are passed to Denote when non-nil.  KIND, when supplied,
+must be `critical'.
 
 Return the created file path."
   (unless (and (stringp title) (not (string= title "")))
@@ -877,12 +772,6 @@ Use :operation `describe' to request operation schemas only when needed."
         operation
         (skill-runtime-describe
          denote-scribe--schemas (plist-get request :target))))
-      ('template
-       (skill-runtime-result
-        operation
-        (denote-scribe-template-file
-         (plist-get request :kind)
-         (plist-get request :language))))
       ((or 'create 'capture)
        (let ((created
               (denote-scribe-create-with-review-context

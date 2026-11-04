@@ -3,7 +3,8 @@ name: emacs-gtd-assistant
 description: >
   Work from user-selected Org/Agenda projects and tasks: link project documents,
   turn an agreed design into implementation subtasks, read task/session context,
-  and save progress or handoffs through Emacs. Also manage existing Org tasks.
+  and save progress or handoffs through Emacs. Create tasks when explicitly requested,
+  and manage existing Org tasks.
   Do not create follow-up tasks merely because they appear in conversation.
 ---
 
@@ -18,8 +19,7 @@ Discussion may precede any task breakdown. Read existing project documents and
 code before drafting a breakdown. When the user asks to create the breakdown,
 write actionable child tasks with acceptance criteria under the selected parent;
 existing explicit authorization is sufficient. Merely discussing possible next
-steps does not authorize creating tasks. Do not limit a requested project
-breakdown to the small conversation-capture limit.
+steps does not authorize creating tasks.
 
 Invoke the facade with one self-loading expression:
 
@@ -55,7 +55,8 @@ the result or explicitly requests that state. Do not implicitly commit or push.
 Store queryable metadata in `:properties`, short handoffs in `:context-notes`,
 and repository/document references in structured `:links`. `set-links` replaces
 that entry's resources: read and preserve existing links when adding one.
-For ordinary task capture, use `add` / `add-many` with explicit authorization.
+For explicit task-creation requests, use `add` / `add-many`; the request itself
+provides authorization. Link a Denote note only when association is requested.
 
 For the human-facing commands, data conventions and example, read
 [references/workflow.org](references/workflow.org) when setting up or explaining

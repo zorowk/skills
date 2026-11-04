@@ -128,16 +128,6 @@
      :control execute
      :completion allowed
      :reason "The user asks for a post-task review of visible skill calls.")
-    (:id constitution-rigorous-high-impact-review
-     :case-class positive
-     :request "Strictly verify the evidence, boundaries, and reversibility of this high-risk migration."
-     :expected (ai-constitution)
-     :excluded ()
-     :expected-operation nil
-     :mutation forbidden
-     :control execute
-     :completion allowed
-     :reason "The request is explicitly rigorous and high impact.")
     (:id git-unrelated-changes-ambiguous
      :case-class ambiguous
      :request "Commit this round of changes; the repository also contains unrelated changes."
