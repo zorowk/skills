@@ -2,8 +2,8 @@
 name: denote-scribe
 description: >-
   Capture confirmed technical or research conversations as Denote reasoning notes, optionally
-  link follow-up Org GTD tasks, and review existing notes. Use when the user explicitly asks
-  to record or review persistent Denote knowledge.
+  link Org GTD tasks when requested. Use when the user explicitly asks to record
+  persistent Denote knowledge.
 ---
 
 # Denote Scribe
@@ -39,17 +39,5 @@ Propose the note before capture; explicit confirmation permits
 When the user explicitly requests task creation or association, use
 `emacs-gtd-assistant`; use `link-gtd` only for requested Denote backlinks.
 
-## Review
-
-Review notes for evidence, conclusions, unresolved questions, and useful links.
-Read full notes for truncated or disputed evidence. Complete every review page
-before marking a review complete; returning summaries alone is not assessment.
-
-When explicitly asked to commit a completed review, supply `:review-verification`
-with body/provenance checks (`:templates-valid` means body validation), complete coverage,
-and `:note-assessment` containing `:outcome reviewed` and a substantive `:summary`.
-Use the facade's `describe` operation for the exact schema when needed.
-
-Preserve provenance and existing note links. Do not create a separate wiki or
-copy notes into another knowledge system. Never commit, push, or create GTD tasks
-without explicit user intent.
+Preserve sources and existing note links. Use `git-commit` for explicitly requested
+commits; saving a note does not authorize committing or pushing.

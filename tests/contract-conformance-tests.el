@@ -33,7 +33,7 @@
     (:name denote
      :call denote-scribe-run
      :required-operations (preflight)
-     :paged-operations (review list))
+     :paged-operations (list))
     (:name blog
      :call org-blog-exporter-run
      :paged-operations (export publish))
@@ -45,8 +45,6 @@
 (defconst skill-contract-test-destructive-requests
   '((:facade gtd :operation delete
      :request (:operation delete :id "sample"))
-    (:facade denote :operation commit
-     :request (:operation commit :title "Review note" :paths ("note.org")))
     (:facade blog :operation publish
      :request (:operation publish))
     (:facade git :operation commit

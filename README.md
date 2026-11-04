@@ -7,7 +7,7 @@ Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流�
 
 | Skill | 功能 | 典型请求 |
 | --- | --- | --- |
-| [`denote-scribe`](denote-scribe/SKILL.md) | 将确认的技术讨论保存为 Denote 笔记，支持笔记回顾、Org 任务链接，以及明确授权后的 Git 提交。 | “输出 Denote 报告” |
+| [`denote-scribe`](denote-scribe/SKILL.md) | 将确认的技术讨论保存为 Denote 笔记，支持按明确要求关联 Org 任务。 | “输出 Denote 报告” |
 | [`emacs-code-navigator`](emacs-code-navigator/SKILL.md) | 将运行中的 Emacs 作为能力注册表和代码上下文来源：区分 live buffer 与磁盘内容并报告来源和分歧，同时支持 Help、项目搜索、Imenu、xref、Eldoc/Eglot 和 Flymake。 | “Emacs 里有什么函数能完成这个任务？”“查看这个符号的文档和源码” |
 | [`emacs-gtd-assistant`](emacs-gtd-assistant/SKILL.md) | 从 Org/Agenda 任务进入 AI 会话，关联项目文档、实施子任务和接续进度；也支持常规任务管理。 | “列出今天的任务”“把这个任务标记为 DONE” |
 | [`org-blog-exporter`](org-blog-exporter/SKILL.md) | 将 `~/Dropbox/notes` 中符合条件的 Org 笔记导出为静态 HTML；支持单篇、批量和全量导出。明确要求发布时，还可更新索引、复制并重写本地资源、提交并推送博客仓库。 | “预览这篇 Org 笔记”“发布博客” |
@@ -21,7 +21,7 @@ Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流�
 > **架构原则：SKILL.md 不是 facade 的使用手册，也不是错误目录。它只保存无法在 Elisp 中可靠编码的语义决策。**
 
 每个 Emacs 集成 skill 提供一个 compact 主入口：Navigator 限制 Help 长度，GTD 和博客
-限制列表结果，Git Commit 限制 diff 总量，Denote Review 分页返回关键章节。AI 调用只使用
+限制列表结果，Git Commit 限制 diff 总量，Denote 分页返回笔记列表。AI 调用只使用
 各 skill 的统一主入口，完整上下文仅在 compact 结果不足时按需请求。
 
 ## 当前架构
@@ -156,19 +156,14 @@ Actions 中调用 AI，也不会持久化调用内容。
 
 ## 主要工作流
 
-### Denote 与 AI Review
+### Denote 笔记
 
 `denote-scribe` 通过 Denote 创建笔记，支持中文与英文的推理笔记。
 项目专属的需求、架构保留在项目仓库；实施步骤与接续进度保留在 Org 项目和任务中。
 Denote 用于值得长期保存的研究和排障推理。
 
-回顾按已有 Git 提交间隔判断是否到期，首次包括全部笔记；按页读取摘要，对截断或有争议
-的证据按需读取全文。回顾结论记录笔记证据、结论和未解决问题，不再生成另一套 Wiki 页面。
-明确授权提交时，仅提交本次指定的 `notes/*.org`；回顾完成标记要求完整分页覆盖和实质评估。
-不会自动提交或推送。
-
-默认笔记目录为 `~/Dropbox/notes/`，Git 仓库为 `~/Dropbox/`；默认每 5 次仓库提交
-到期一次 review。每页默认返回 8 篇笔记，每个关键章节最多 500 个字符，均可配置。
+默认笔记目录为 `~/Dropbox/notes/`。保存笔记不触发回顾、提交或推送；
+明确要求提交时使用 `git-commit`。
 
 ### Org 博客导出与发布
 
@@ -200,7 +195,7 @@ token 仅在当前 Emacs 会话有效，最多保留最近 16 个，开始恢复
 
 额外依赖如下：
 
-- `denote-scribe`：Denote、Magit，以及包含 `notes/` 的 Git 仓库；
+- `denote-scribe`：Denote；
 - `emacs-code-navigator`：Emacs 的 `project`、`xref`、Imenu；Eglot 和 Flymake 为按需能力；
 - `emacs-gtd-assistant`：Org mode 和已有的 GTD 文件及目标 heading；
 - `org-blog-exporter`：Org HTML exporter；发布流程还需要 Magit、Git 仓库和远端权限；

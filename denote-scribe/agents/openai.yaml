@@ -1,4 +1,4 @@
 interface:
   display_name: "Denote Scribe"
-  short_description: "Capture and review Denote reasoning notes"
+  short_description: "Capture readable Denote reasoning notes"
   default_prompt: "Use $denote-scribe to capture this confirmed discussion as a readable Denote reasoning note with evidence and appropriate uncertainty."

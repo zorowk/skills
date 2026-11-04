@@ -10,16 +10,6 @@
 (require 'org)
 (require 'org-element)
 
-(unless (featurep 'skill-git)
-  (let* ((script-directory
-          (file-name-directory (or load-file-name buffer-file-name)))
-         (shared-file
-          (expand-file-name "../../common/scripts/skill-git.el"
-                            script-directory)))
-    (unless (file-readable-p shared-file)
-      (error "Shared Git helper is not readable: %s" shared-file))
-    (load shared-file nil nil t)))
-
 (unless (featurep 'skill-runtime)
   (load (expand-file-name "../../common/scripts/skill-runtime.el"
                           (file-name-directory
@@ -55,28 +45,8 @@
   :type 'directory
   :group 'denote-scribe)
 
-(defcustom denote-scribe-git-directory "~/Dropbox/"
-  "Git repository containing Denote notes."
-  :type 'directory
-  :group 'denote-scribe)
-
-(defcustom denote-scribe-review-commit-interval 5
-  "Number of repository commits between AI reviews."
-  :type 'positive-integer
-  :group 'denote-scribe)
-
 (defcustom denote-scribe-fill-column 100
   "Column used to fill prose paragraphs in generated Org files."
-  :type 'positive-integer
-  :group 'denote-scribe)
-
-(defcustom denote-scribe-summary-section-maximum-characters 500
-  "Maximum characters returned for each section in compact note summaries."
-  :type 'positive-integer
-  :group 'denote-scribe)
-
-(defcustom denote-scribe-review-summary-limit 8
-  "Default notes returned in each compact AI-review summary page."
   :type 'positive-integer
   :group 'denote-scribe)
 
@@ -85,36 +55,21 @@
   :type 'positive-integer
   :group 'denote-scribe)
 
-(defconst denote-scribe-review-commit-marker "🔒"
-  "Literal commit-subject marker for a completed AI review.")
-
 (defvar denote-directory)
 (defvar denote-save-buffers)
 (declare-function denote "denote")
-(declare-function magit-git-lines "magit-git" (&rest args))
-(declare-function magit-git-string "magit-git" (&rest args))
-(declare-function skill-git-commit-paths
-                  "../../common/scripts/skill-git"
-                  (root message paths &optional predicate description))
-(declare-function skill-git-format-message
-                  "../../common/scripts/skill-git" (spec))
-(declare-function skill-git-directory
-                  "../../common/scripts/skill-git" (directory))
-(declare-function skill-git-root
-                  "../../common/scripts/skill-git" (directory))
-
 (defconst denote-scribe--schemas
-  '((preflight :summary "Validate Denote and repository configuration."
-               :optional (:notes-dir :git-dir))
+  '((preflight :summary "Validate Denote and the notes directory."
+               :optional (:notes-dir))
     (create :summary "Create one Denote note from a completed body file."
             :required (:title :body-file :authorization)
-            :optional (:kind :keywords :notes-dir :signature :date :git-dir)
+            :optional (:kind :keywords :notes-dir :signature :date)
             :choices ((:kind critical) (:authorization explicit))
             :effects (:created))
     (capture
      :summary "Create one confirmed conversation note with explicit authorization."
      :required (:title :body-file :authorization)
-     :optional (:kind :keywords :notes-dir :signature :date :git-dir)
+     :optional (:kind :keywords :notes-dir :signature :date)
      :choices ((:kind critical) (:authorization explicit))
      :effects (:created))
     (link-gtd
@@ -123,79 +78,11 @@
      :optional (:notes-dir)
      :choices ((:authorization explicit))
      :effects (:mutated))
-    (review
-     :summary "Return one bounded review page with pending assessment evidence."
-     :required (:file :review-state)
-     :optional (:notes-dir :offset :limit :section-maximum)
-     :verification
-     (:artifact (:review-files :summaries-returned :truncated-files)
-      :workflow
-      (:review-due :page-offset :page-limit :items-returned :item-total
-                   :next-offset :all-pages-returned :completion)
-      :note-assessment (:outcome)))
-    (summarize :summary "Extract bounded critical sections from one note."
-               :required (:file) :optional (:section-maximum))
     (list :summary "Return a filtered page of Denote notes."
           :optional (:start :end :notes-dir :keywords :offset :limit))
-    (commit
-     :summary "Commit note files; mark review complete only from structured evidence."
-     :required (:title :paths :authorization)
-     :optional (:review-verification :kind :git-dir)
-     :closed t
-     :types
-     ((:title non-empty-string)
-      (:paths non-empty-string-list)
-      (:review-verification
-       (plist
-        :required (:artifact :workflow :note-assessment)
-        :closed t
-        :types
-        ((:artifact
-          (plist :required (:review-files :templates-valid :provenance-valid)
-                 :closed t
-                 :types ((:review-files (list-of existing-file :min-items 1)))
-                 :choices ((:templates-valid valid) (:provenance-valid valid))))
-         (:workflow
-          (plist :required (:pages-reviewed :page-total :items-reviewed :item-total :completion)
-                 :optional (:review-marker-commit) :closed t
-                 :types ((:pages-reviewed (integer :min 1)) (:page-total (integer :min 1))
-                         (:items-reviewed (integer :min 1)) (:item-total (integer :min 1))
-                         (:review-marker-commit string))
-                 :choices ((:completion complete))))
-         (:note-assessment
-          (plist :required (:outcome :summary) :closed t
-                 :types ((:summary non-empty-string))
-                 :choices ((:outcome reviewed))))))))
-     :validators
-     ((:review-verification denote-scribe--valid-review-verification-p
-                            "Review evidence must prove complete coverage and a note assessment."))
-     :choices ((:authorization explicit) (:kind feat fix))
-     :effects (:committed)
-     :verification
-     (:artifact (:review-files :templates-valid :provenance-valid :committed-paths)
-      :workflow (:pages-reviewed :page-total :items-reviewed :item-total :completion :review-completed)
-      :note-assessment (:outcome :summary)))
     (describe :summary "Return operation names or one complete schema."
               :optional (:target)))
   "Compact request schemas for `denote-scribe-run'.")
-
-(defun denote-scribe--valid-review-verification-p (verification)
-  "Return non-nil when VERIFICATION proves full note review coverage."
-  (let* ((artifact (plist-get verification :artifact))
-         (workflow (plist-get verification :workflow))
-         (assessment (plist-get verification :note-assessment))
-         (files (plist-get artifact :review-files)))
-    (unless (and (eq (plist-get workflow :completion) 'complete)
-                 (= (plist-get workflow :pages-reviewed) (plist-get workflow :page-total))
-                 (= (plist-get workflow :items-reviewed) (plist-get workflow :item-total))
-                 (= (plist-get workflow :item-total) (length files))
-                 (= (length (delete-dups (mapcar #'file-truename files))) (length files)))
-      (error "Review pagination or item coverage is incomplete"))
-    (unless (and (eq (plist-get assessment :outcome) 'reviewed)
-                 (stringp (plist-get assessment :summary))
-                 (not (string-empty-p (string-trim (plist-get assessment :summary)))))
-      (error "Completed review requires a substantive note assessment"))
-    t))
 
 (defun denote-scribe--nonempty (value)
   "Return VALUE when it is a non-empty string, otherwise nil."
@@ -203,7 +90,8 @@
 
 (defun denote-scribe--directory (override default)
   "Return OVERRIDE or DEFAULT expanded as a directory name."
-  (skill-git-directory (or (denote-scribe--nonempty override) default)))
+  (file-name-as-directory
+   (expand-file-name (or (denote-scribe--nonempty override) default))))
 
 (defun denote-scribe--org-tree ()
   "Return a parsed Org tree for the current buffer."
@@ -340,316 +228,18 @@ Existing prose and arbitrary headings are preserved."
          (save-buffer))))
     (list :file note :tasks validated)))
 
-(defun denote-scribe-preflight (&optional notes-dir git-dir)
-  "Describe whether Denote, Magit, notes and repository are available."
+(defun denote-scribe-preflight (&optional notes-dir)
+  "Describe whether Denote and the notes directory are available."
   (let* ((target-dir (denote-scribe--directory notes-dir denote-scribe-notes-directory))
          (denote-available (require 'denote nil t))
-         (magit-available (require 'magit nil t))
-         (target-git-dir (denote-scribe--directory git-dir denote-scribe-git-directory))
-         (git-root (and magit-available
-                        (ignore-errors (skill-git-root target-git-dir))))
          errors)
     (unless (file-directory-p target-dir)
       (push (format "Notes directory does not exist: %s" target-dir) errors))
-    (unless denote-available (push "Denote is not available in this Emacs session" errors))
-    (unless magit-available (push "Magit is not available in this Emacs session" errors))
-    (unless git-root (push (format "Not inside a Git repository: %s" target-git-dir) errors))
-    (list :notes-directory target-dir :notes-directory-exists (file-directory-p target-dir)
-          :denote-available (and denote-available t) :git-directory target-git-dir
-          :git-root git-root :magit-available (and magit-available t)
-          :errors (nreverse errors))))
-
-(defun denote-scribe--git-root (&optional git-dir)
-  "Return the Magit repository root for GIT-DIR or signal an error."
-  (skill-git-root
-   (denote-scribe--directory git-dir denote-scribe-git-directory)))
-
-(defun denote-scribe--git-review-marker-commit (root)
-  "Return the newest AI-review commit in ROOT."
-  (let ((default-directory root))
-    (magit-git-string
-     "log" "-1" "--perl-regexp"
-     (concat "--grep=^[^\\n]*" denote-scribe-review-commit-marker)
-     "--format=%H")))
-
-(defun denote-scribe-git-review-state (&optional git-dir)
-  "Return AI-review commit cadence state for GIT-DIR.
-
-The returned plist contains :marker-commit, :existing-distance,
-:pending-distance, :due, and :bootstrap.  The pending distance includes the
-Denote commit that has not yet been created."
-  (let* ((root (denote-scribe--git-root git-dir))
-         (default-directory root)
-         (marker (denote-scribe--git-review-marker-commit root))
-         (existing-distance
-          (when marker
-            (string-to-number
-             (magit-git-string "rev-list" "--count"
-                               (concat marker "..HEAD")))))
-         (pending-distance (and existing-distance (1+ existing-distance)))
-         (bootstrap (null marker))
-         (due (or bootstrap
-                  (>= pending-distance denote-scribe-review-commit-interval))))
-    (list :git-root root
-          :marker-commit marker
-          :review-marker-commit marker
-          :existing-distance existing-distance
-          :pending-distance pending-distance
-          :due due
-          :review-due due
-          :bootstrap bootstrap)))
-
-(defun denote-scribe--review-files (new-note state &optional notes-dir)
-  "Return the Denote files to review for NEW-NOTE according to STATE."
-  (let* ((root (plist-get state :git-root))
-         (notes-root
-          (file-name-as-directory
-           (file-truename
-            (denote-scribe--directory
-             notes-dir denote-scribe-notes-directory))))
-         (marker (plist-get state :marker-commit))
-         (notes-relative (file-relative-name notes-root root))
-         (_ (when (or (string= notes-relative "../")
-                      (string-prefix-p "../" notes-relative))
-              (error "Notes directory is outside the Git repository: %s"
-                     notes-root)))
-         (files
-          (if (plist-get state :bootstrap)
-              (denote-scribe-list-notes nil nil notes-root)
-            (let ((default-directory root))
-              (mapcar
-               (lambda (relative) (expand-file-name relative root))
-               (magit-git-items
-                "diff" "--name-only" "-z" "--diff-filter=ACMRT"
-                (concat marker "..HEAD") "--" notes-relative)))))
-         (candidate-files (delete-dups (append files (list new-note)))))
-    (seq-filter
-     (lambda (file)
-       (and (string-equal (file-name-extension file) "org")
-            (file-regular-p file)
-            (file-in-directory-p (file-truename file) notes-root)))
-     candidate-files)))
-
-(defun denote-scribe--truncate-summary (text maximum)
-  "Return trimmed TEXT capped at MAXIMUM characters."
-  (let ((clean (string-trim
-                (substring-no-properties (or text "")))))
-    (if (<= (length clean) maximum)
-        (list :text clean :truncated nil)
-      (list :text (concat (substring clean 0 maximum)
-                          "\n[section truncated]")
-            :truncated t))))
-
-(defun denote-scribe-note-summary (file &optional section-maximum)
-  "Return bounded sections from Org FILE regardless of heading names.
-
-Include introductory prose and headingless notes.  SECTION-MAXIMUM caps each
-section; truncated sections require reading the full note for assessment."
-  (unless (and (stringp file) (file-readable-p file))
-    (error "Review note is not readable: %S" file))
-  (let ((maximum (or section-maximum
-                     denote-scribe-summary-section-maximum-characters)))
-    (unless (and (integerp maximum) (> maximum 0))
-      (error "SECTION-MAXIMUM must be a positive integer: %S" maximum))
-    (with-temp-buffer
-      (insert-file-contents file)
-      (delay-mode-hooks (org-mode))
-      (let* ((tree (org-element-parse-buffer))
-             (headlines (org-element-map tree 'headline
-                          (lambda (headline)
-                            (when (= (org-element-property :level headline) 1)
-                              headline))))
-             (intro-end (if headlines
-                            (org-element-property :begin (car headlines))
-                          (point-max)))
-             (intro (buffer-substring-no-properties (point-min) intro-end))
-             sections)
-        (unless (string-empty-p (string-trim intro))
-          (push (cons :heading (cons nil
-                     (denote-scribe--truncate-summary intro maximum))) sections))
-        (dolist (headline headlines)
-          (push (cons :heading
-                      (cons (org-element-property :raw-value headline)
-                            (denote-scribe--truncate-summary
-                             (org-element-interpret-data
-                              (org-element-contents headline)) maximum)))
-                sections))
-        (list :file (expand-file-name file)
-              :title (or (org-get-title (current-buffer))
-                         (file-name-base file))
-              :sections (nreverse sections))))))
-
-(defun denote-scribe-review-summaries
-    (files &optional offset limit section-maximum)
-  "Return one bounded page of compact summaries for review FILES."
-  (unless (listp files)
-    (error "FILES must be a list"))
-  (let* ((start (or offset 0))
-         (page-size (or limit denote-scribe-review-summary-limit))
-         (count (length files)))
-    (unless (and (integerp start) (>= start 0))
-      (error "OFFSET must be a non-negative integer: %S" start))
-    (unless (and (integerp page-size) (> page-size 0))
-      (error "LIMIT must be a positive integer: %S" page-size))
-    (let* ((page (seq-take (nthcdr start files) page-size))
-           (next (+ start (length page)))
-           (truncated (< next count)))
-      (list :count count
-            :offset start
-            :limit page-size
-            :truncated truncated
-            :next-offset (and truncated next)
-            :summaries
-            (mapcar (lambda (file)
-                      (denote-scribe-note-summary file section-maximum))
-                    page)))))
-
-(defun denote-scribe-review-context
-    (new-note state &optional notes-dir offset limit section-maximum)
-  "Return a paged compact AI-review context for NEW-NOTE and cadence STATE."
-  (if (not (plist-get state :review-due))
-      (list :count 0 :offset 0 :limit (or limit 0)
-            :truncated nil :summaries nil)
-    (denote-scribe-review-summaries
-     (denote-scribe--review-files new-note state notes-dir)
-     offset limit section-maximum)))
-
-(defun denote-scribe--pending-review-verification (review state)
-  "Return honest pending verification for delivered REVIEW under STATE."
-  (let* ((summaries (plist-get review :summaries))
-         (truncated-files
-          (delq
-           nil
-           (mapcar
-            (lambda (summary)
-              (and
-               (seq-some
-                (lambda (section)
-                  (plist-get section :truncated))
-                (plist-get summary :sections))
-               (plist-get summary :file)))
-            summaries))))
-    (list
-     :artifact
-     (list :review-files
-           (mapcar (lambda (summary) (plist-get summary :file))
-                   summaries)
-           :summaries-returned (length summaries)
-           :truncated-files truncated-files)
-     :workflow
-     (list :review-due (and (plist-get state :review-due) t)
-           :page-offset (plist-get review :offset)
-           :page-limit (plist-get review :limit)
-           :items-returned (length summaries)
-           :item-total (plist-get review :count)
-           :next-offset (plist-get review :next-offset)
-           :all-pages-returned
-           (not (plist-get review :truncated))
-           :completion 'pending-assessment)
-     :note-assessment (list :outcome 'pending))))
-
-;;;###autoload
-(defun denote-scribe-create-with-review-context
-    (title body-file &optional keywords notes-dir signature date git-dir kind)
-  "Create a Denote report and return its complete AI-review context.
-
-The creation arguments match `denote-scribe-create'; GIT-DIR selects the
-repository used for review cadence.  Return :file, :review-state, and, only
-when review is due, :review-files.  A bootstrap review includes the full
-Denote corpus; later reviews include notes changed since the last completed
-review plus the newly created report."
-  (let* ((state (denote-scribe-git-review-state git-dir))
-         (file (denote-scribe-create
-                title body-file keywords notes-dir signature date kind)))
-    (let ((review-files
-           (and (plist-get state :review-due)
-                (denote-scribe--review-files file state notes-dir))))
-      (list :file file
-            :review-state state
-            :review-files review-files
-            :review
-            (and review-files
-                 (denote-scribe-review-summaries review-files))))))
-
-;;;###autoload
-(defun denote-scribe-git-commit
-    (title paths review-verification &optional kind git-dir)
-  "Commit explicit PATHS with TITLE through noninteractive Magit APIs.
-
-REVIEW-VERIFICATION non-nil must prove complete pagination and a substantive
-note assessment.  It inserts
-`denote-scribe-review-commit-marker' in the subject.  KIND defaults to \"feat\"
-and may be \"feat\" or \"fix\".  Return the commit and separated verification."
-  (unless (and (stringp title) (not (string-empty-p title))
-               (not (string-match-p "[\n\r]" title)))
-    (error "TITLE must be non-empty and contain no newline"))
-  (setq kind (or kind "feat"))
-  (unless (member kind '("feat" "fix"))
-    (error "KIND must be feat or fix: %S" kind))
-  (unless (and (listp paths) paths)
-    (error "PATHS must be a non-empty list"))
-  (when review-verification
-    (denote-scribe--valid-review-verification-p review-verification))
-  (let* ((root (denote-scribe--git-root git-dir))
-         (review-completed (and review-verification t))
-         (summary
-          (concat (if review-completed
-                      (concat denote-scribe-review-commit-marker " ")
-                    "")
-                  title))
-         (message
-          (skill-git-format-message
-           (list
-            :type kind :scope "notes" :summary summary
-            :risk 'low :detail 'compact
-            :context
-            (concat "This commit records durable reasoning or reviewed knowledge from an "
-                    "authorized Denote Scribe run.")
-            :changes
-            (delq nil
-                  (list
-                   (format "Create or update %d path-scoped Denote Org file(s)."
-                           (length paths))
-                   (and review-completed
-                        "Record that every due AI-review page was evaluated.")))
-            :reason
-            "Keeping reasoning and its review evidence together preserves traceability."
-            :validation
-            "Validated the explicit files and restricted the commit to notes/*.org."
-            :boundary
-            "No unrelated repository paths are staged and this workflow never pushes.")))
-         (result
-          (skill-git-commit-paths
-           root message paths
-           (lambda (relative)
-             (string-match-p
-              "\\`notes/[^/]+\\.org\\'" relative))
-           "notes/*.org")))
-    (let ((verification
-           (if review-verification
-               (list
-                :artifact
-                (append
-                 (copy-tree
-                  (plist-get review-verification :artifact))
-                 (list :committed-paths (plist-get result :paths)))
-                :workflow
-                (append
-                 (copy-tree
-                  (plist-get review-verification :workflow))
-                 (list :review-completed t))
-                :note-assessment
-                (copy-tree
-                 (plist-get review-verification
-                            :note-assessment)))
-             (list
-              :artifact
-              (list :committed-paths (plist-get result :paths))
-              :workflow (list :review-completed nil)
-              :note-assessment (list :outcome 'not-requested)))))
-      (append result
-              (list :review-completed review-completed
-                    :verification verification)))))
+    (unless denote-available
+      (push "Denote is not available in this Emacs session" errors))
+    (list :notes-directory target-dir
+          :notes-directory-exists (file-directory-p target-dir)
+          :denote-available (and denote-available t) :errors (nreverse errors))))
 
 (defun denote-scribe--date-id (date label)
   "Normalize DATE to YYYYMMDD or signal an error mentioning LABEL."
@@ -749,7 +339,6 @@ Return the created file path."
     file))
 
 ;;;###autoload
-;;;###autoload
 (defun denote-scribe--run (request)
   "Execute Denote Scribe REQUEST through one compact public entry point.
 
@@ -762,8 +351,7 @@ Use :operation `describe' to request operation schemas only when needed."
       ('preflight
        (let ((data
               (denote-scribe-preflight
-               (plist-get request :notes-dir)
-               (plist-get request :git-dir))))
+               (plist-get request :notes-dir))))
          (skill-runtime-result
           operation data 1
           (if (plist-get data :errors) 'blocked 'ok))))
@@ -774,16 +362,15 @@ Use :operation `describe' to request operation schemas only when needed."
          denote-scribe--schemas (plist-get request :target))))
       ((or 'create 'capture)
        (let ((created
-              (denote-scribe-create-with-review-context
+              (denote-scribe-create
                (plist-get request :title)
                (plist-get request :body-file)
                (plist-get request :keywords)
                (plist-get request :notes-dir)
                (plist-get request :signature)
                (plist-get request :date)
-               (plist-get request :git-dir)
                (plist-get request :kind))))
-         (skill-runtime-result operation created 1 nil nil
+         (skill-runtime-result operation (list :file created) 1 nil nil
                                (list :created t))))
       ('link-gtd
        (skill-runtime-result
@@ -793,32 +380,6 @@ Use :operation `describe' to request operation schemas only when needed."
          (plist-get request :tasks)
          (plist-get request :notes-dir))
         1 nil nil (list :mutated t)))
-      ('review
-       (let ((review
-              (denote-scribe-review-context
-               (plist-get request :file)
-               (plist-get request :review-state)
-               (plist-get request :notes-dir)
-               (plist-get request :offset)
-               (plist-get request :limit)
-               (plist-get request :section-maximum))))
-         (skill-runtime-result
-          operation (plist-get review :summaries) (plist-get review :count)
-          'ok
-          (list :offset (plist-get review :offset)
-                :limit (plist-get review :limit)
-                :total (plist-get review :count)
-                :truncated (plist-get review :truncated)
-                :next-offset (plist-get review :next-offset))
-          nil nil
-          (denote-scribe--pending-review-verification
-           review (plist-get request :review-state)))))
-      ('summarize
-       (skill-runtime-result
-        operation
-        (denote-scribe-note-summary
-         (plist-get request :file)
-         (plist-get request :section-maximum))))
       ('list
        (let* ((files
                (denote-scribe-list-notes
@@ -828,22 +389,11 @@ Use :operation `describe' to request operation schemas only when needed."
                 (plist-get request :keywords)))
               (offset (or (plist-get request :offset) 0))
               (limit (or (plist-get request :limit)
-                         denote-scribe-review-summary-limit))
+                         8))
               (page (skill-runtime-page files offset limit (length files))))
          (skill-runtime-result
           operation (plist-get page :items) (length files) 'ok
           (plist-get page :page))))
-      ('commit
-       (let ((committed
-              (denote-scribe-git-commit
-               (plist-get request :title)
-               (plist-get request :paths)
-               (plist-get request :review-verification)
-               (plist-get request :kind)
-               (plist-get request :git-dir))))
-         (skill-runtime-result
-          operation committed 1 nil nil (list :committed t) nil
-          (plist-get committed :verification))))
       (_ (error "Unknown Denote Scribe operation %S; expected %S"
                 operation (mapcar #'car denote-scribe--schemas))))))
 
