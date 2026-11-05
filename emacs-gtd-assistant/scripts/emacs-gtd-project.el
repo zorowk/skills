@@ -10,7 +10,6 @@
 (require 'json)
 (require 'cl-lib)
 
-(defvar emacs-gtd--schemas)
 (defvar emacs-gtd-default-headline)
 (defvar emacs-gtd-capture-task-limit)
 (defvar emacs-gtd-generated-content-maximum-characters)
@@ -23,44 +22,10 @@
   "Maximum own-entry text returned by a project context read."
   :type 'positive-integer :group 'emacs-gtd-assistant)
 
-(setq emacs-gtd--schemas
-      (append emacs-gtd--schemas
-              '((get :closed t :summary "Read a managed entry, nearest project and session history without mutation."
-                     :required (:id))
-                (ensure-id :closed t :summary "Give the heading at FILE and LINE its own identity."
-                           :required (:file :line :authorization)
-                           :types ((:file string) (:line (integer :min 1)))
-                           :choices ((:authorization explicit)) :effects (:mutated))
-                (create-project :closed t :summary "Create a project container with directory and document resources."
-                                :required (:title :directory :authorization)
-                                :optional (:headline :links)
-                                :choices ((:authorization explicit)) :effects (:mutated))
-                (configure-project :closed t :summary "Set an existing heading's project directory and optionally resources."
-                                   :required (:id :directory :authorization)
-                                   :optional (:links)
-                                   :choices ((:authorization explicit)) :effects (:mutated))
-                (add-children :closed t :summary "Atomically append unscheduled tasks below an explicit parent ID; supports up to 50 tasks."
-                              :required (:parent-id :tasks :authorization)
-                              :choices ((:authorization explicit)) :effects (:mutated))
-                (attach-session :closed t :summary "Record agent, session ID, cwd and transcript under a task; leaves task state unchanged."
-                                :required (:id :agent :session-id :cwd :authorization)
-                                :optional (:transcript)
-                                :choices ((:authorization explicit)) :effects (:mutated)))))
-
 (defun emacs-gtd-project--validate-children (tasks)
   "Validate the project breakdown shape using the existing capture contract."
   (let ((emacs-gtd-capture-task-limit emacs-gtd-project-task-limit))
     (emacs-gtd--validate-task-list tasks)))
-
-;; Reuse the structured task schema without inheriting capture cardinality.
-(let* ((schema (copy-tree (alist-get 'add-many emacs-gtd--schemas)))
-       (children (alist-get 'add-children emacs-gtd--schemas)))
-  (setq children (plist-put children :types (plist-get schema :types)))
-  (setq children
-        (plist-put children :validators
-                   '((:tasks emacs-gtd-project--validate-children
-                             "Project breakdown is bounded by emacs-gtd-project-task-limit."))))
-  (setf (alist-get 'add-children emacs-gtd--schemas) children))
 
 (defun emacs-gtd-project--own-text ()
   "Return current entry body excluding descendant entries."
@@ -236,29 +201,6 @@
                                            (json-serialize (vconcat sessions)))
           (emacs-gtd--save))))
     (emacs-gtd-project-context id)))
-
-(defun emacs-gtd-project-execute (request)
-  "Dispatch project operations validated by the shared facade."
-  (let* ((operation (plist-get request :operation))
-         (mutated (not (eq operation 'get)))
-         (data
-          (pcase operation
-            ('get (emacs-gtd-project-context (plist-get request :id)))
-            ('ensure-id
-             (emacs-gtd--compact-item
-              (emacs-gtd-ensure-id-at-line (plist-get request :line) (plist-get request :file))))
-            ('create-project (emacs-gtd-project-create request))
-            ('configure-project
-             (emacs-gtd-project-configure (plist-get request :id) (plist-get request :directory)
-                                          (plist-get request :links) (plist-member request :links)))
-            ('add-children
-             (mapcar #'emacs-gtd--compact-item
-                     (emacs-gtd-project-add-children (plist-get request :parent-id)
-                                                     (plist-get request :tasks))))
-            ('attach-session (emacs-gtd-project-attach-session request))
-            (_ (error "Unknown GTD operation: %s" operation)))))
-    (skill-runtime-result operation data (if (eq operation 'add-children) (length data) 1)
-                          nil nil (when mutated (list :mutated t)))))
 
 (provide 'emacs-gtd-project)
 ;;; emacs-gtd-project.el ends here

@@ -95,8 +95,52 @@
   :type 'positive-integer
   :group 'emacs-gtd-assistant)
 
+(defconst emacs-gtd--task-schema
+  '(:required (:title)
+              :optional (:headline :context :todo :scheduled :deadline :priority
+                                   :tags :body :context-notes :links :properties)
+              :types
+              ((:title
+                (custom emacs-gtd--validate-single-line-contract
+                        :description
+                        "A non-empty title within the task's 100-character content budget."))
+               (:headline
+                (custom emacs-gtd--validate-single-line-contract
+                        :description "A non-empty single-line Org heading."))
+               (:todo
+                (custom emacs-gtd--validate-single-line-contract
+                        :description "A single-line configured Org TODO state."))
+               (:scheduled
+                (custom emacs-gtd-normalize-timestamp
+                        :description "An Org date or timestamp."))
+               (:deadline
+                (custom emacs-gtd-normalize-timestamp
+                        :description "An Org date or timestamp."))
+               (:priority (string :length 1))
+               (:tags
+                (custom emacs-gtd--validate-tags
+                        :description "Org tags without whitespace or colons."))
+               (:body
+                (string
+                 :description
+                 "Optional body within the task's 100-character content budget."))
+               (:context-notes
+                (custom emacs-gtd--validate-context-notes
+                        :description
+                        "Plain context within the task's 100-character content budget."))
+               (:links
+                (custom emacs-gtd--validate-links
+                        :description
+                        "Safe HTTP, file, id, or Denote identifier resource links."))
+               (:properties
+                (custom emacs-gtd--validate-properties
+                        :description "Safe non-reserved Org properties.")))
+              :choices ((:context personal work))
+              :closed t)
+  "Shared structured task fields for single, batch, and project capture.")
+
 (defconst emacs-gtd--schemas
-  '((preflight :closed t :summary "Validate the configured GTD file without mutation.")
+  `((preflight :closed t :summary "Validate the configured GTD file without mutation.")
     (list :closed t :summary "Return a filtered page with explicit continuation metadata."
           :optional (:query :states :tags :include-done :offset :limit)
           :types ((:query non-empty-string) (:states (list-of string))
@@ -109,62 +153,27 @@
          :required (:title :authorization)
          :optional (:headline :context :todo :scheduled :deadline :priority :tags
                               :body :context-notes :links :properties :task)
+         :types ,(append
+                  (copy-tree (plist-get emacs-gtd--task-schema :types))
+                  (list (list :task
+                              (cons 'plist
+                                    (plist-put (copy-tree emacs-gtd--task-schema)
+                                               :required nil)))))
          :choices ((:context personal work) (:authorization explicit))
          :effects (:mutated))
     (add-many :closed t
-     :summary "Atomically add confirmed structured tasks from a conversation."
-     :required (:tasks :authorization)
-     :types
-     ((:tasks
-       (list-of
-        (plist
-         :required (:title)
-         :optional (:headline :context :todo :scheduled :deadline :priority
-                              :tags :body :context-notes :links :properties)
-         :types
-         ((:title
-           (custom emacs-gtd--validate-single-line-contract
-                   :description
-                   "A non-empty title within the task's 100-character content budget."))
-          (:headline
-           (custom emacs-gtd--validate-single-line-contract
-                   :description "A non-empty single-line Org heading."))
-          (:todo
-           (custom emacs-gtd--validate-single-line-contract
-                   :description "A single-line configured Org TODO state."))
-          (:scheduled
-           (custom emacs-gtd-normalize-timestamp
-                   :description "An Org date or timestamp."))
-          (:deadline
-           (custom emacs-gtd-normalize-timestamp
-                   :description "An Org date or timestamp."))
-          (:priority (string :length 1))
-          (:tags
-           (custom emacs-gtd--validate-tags
-                   :description "Org tags without whitespace or colons."))
-          (:body
-           (string
-            :description
-            "Optional body within the task's 100-character content budget."))
-          (:context-notes
-           (custom emacs-gtd--validate-context-notes
-                   :description
-                   "Plain context within the task's 100-character content budget."))
-          (:links
-           (custom emacs-gtd--validate-links
-                   :description
-                   "Safe HTTP, file, id, or Denote identifier resource links."))
-          (:properties
-           (custom emacs-gtd--validate-properties
-                   :description "Safe non-reserved Org properties.")))
-         :choices ((:context personal work))
-         :closed t)
-        :min-items 1)))
-     :validators
-     ((:tasks emacs-gtd--validate-task-list
-              "Task count is bounded by emacs-gtd-capture-task-limit."))
-     :choices ((:authorization explicit))
-     :effects (:mutated))
+              :summary "Atomically add confirmed structured tasks from a conversation."
+              :required (:tasks :authorization)
+              :types
+              ((:tasks
+                (list-of
+                 (plist ,@emacs-gtd--task-schema)
+                 :min-items 1)))
+              :validators
+              ((:tasks emacs-gtd--validate-task-list
+                       "Task count is bounded by emacs-gtd-capture-task-limit."))
+              :choices ((:authorization explicit))
+              :effects (:mutated))
     (set-state :closed t :summary "Resolve an ID or unique query, then update its state."
                :required-one-of (:id :query) :required (:state :authorization)
                :optional (:include-done)
@@ -231,21 +240,35 @@
              :choices ((:authorization explicit))
              :effects (:mutated))
     (describe :closed t :summary "Return operation names or one complete schema."
-              :optional (:target)))
+              :optional (:target))
+    (get :closed t :summary "Read a managed entry, nearest project and session history without mutation."
+         :required (:id))
+    (ensure-id :closed t :summary "Give the heading at FILE and LINE its own identity."
+               :required (:file :line :authorization)
+               :types ((:file string) (:line (integer :min 1)))
+               :choices ((:authorization explicit)) :effects (:mutated))
+    (create-project :closed t :summary "Create a project container with directory and document resources."
+                    :required (:title :directory :authorization)
+                    :optional (:headline :links)
+                    :choices ((:authorization explicit)) :effects (:mutated))
+    (configure-project :closed t :summary "Set an existing heading's project directory and optionally resources."
+                       :required (:id :directory :authorization)
+                       :optional (:links)
+                       :choices ((:authorization explicit)) :effects (:mutated))
+    (add-children :closed t :summary "Atomically append unscheduled tasks below an explicit parent ID; supports up to 50 tasks."
+                  :required (:parent-id :tasks :authorization)
+                  :types ((:tasks (list-of
+                                   (plist ,@emacs-gtd--task-schema)
+                                   :min-items 1)))
+                  :validators
+                  ((:tasks emacs-gtd-project--validate-children
+                           "Project breakdown is bounded by emacs-gtd-project-task-limit."))
+                  :choices ((:authorization explicit)) :effects (:mutated))
+    (attach-session :closed t :summary "Record agent, session ID, cwd and transcript under a task; leaves task state unchanged."
+                    :required (:id :agent :session-id :cwd :authorization)
+                    :optional (:transcript)
+                    :choices ((:authorization explicit)) :effects (:mutated)))
   "Compact request schemas for `emacs-gtd-execute'.")
-
-;; Single capture and batch capture accept the same task fields.  The legacy
-;; :task form inherits TITLE from the outer request, so its own title is optional.
-(let* ((task-type (cadr (assq :tasks
-                             (plist-get (alist-get 'add-many emacs-gtd--schemas)
-                                        :types))))
-       (task-schema (cdr (cadr task-type)))
-       (nested (plist-put (copy-tree task-schema) :required nil))
-       (add (alist-get 'add emacs-gtd--schemas)))
-  (setf (alist-get 'add emacs-gtd--schemas)
-        (plist-put add :types
-                   (append (copy-tree (plist-get task-schema :types))
-                           (list (list :task (cons 'plist nested)))))))
 
 (defun emacs-gtd--file ()
   "Return the absolute GTD file path."
@@ -1031,7 +1054,32 @@ Use :operation `describe' to request operation schemas only when needed."
             operation
             (if (stringp value) value (emacs-gtd--compact-item value))
             1 nil nil (list :mutated t)))))
-      (_ (emacs-gtd-project-execute request)))))
+      ('get
+       (skill-runtime-result operation (emacs-gtd-project-context (plist-get request :id)) 1))
+      ('ensure-id
+       (skill-runtime-result
+        operation
+        (emacs-gtd--compact-item
+         (emacs-gtd-ensure-id-at-line (plist-get request :line) (plist-get request :file)))
+        1 nil nil (list :mutated t)))
+      ('create-project
+       (skill-runtime-result operation (emacs-gtd-project-create request)
+                             1 nil nil (list :mutated t)))
+      ('configure-project
+       (skill-runtime-result
+        operation
+        (emacs-gtd-project-configure (plist-get request :id) (plist-get request :directory)
+                                    (plist-get request :links) (plist-member request :links))
+        1 nil nil (list :mutated t)))
+      ('add-children
+       (let ((items (emacs-gtd-project-add-children (plist-get request :parent-id)
+                                                   (plist-get request :tasks))))
+         (skill-runtime-result operation (mapcar #'emacs-gtd--compact-item items)
+                               (length items) nil nil (list :mutated t))))
+      ('attach-session
+       (skill-runtime-result operation (emacs-gtd-project-attach-session request)
+                             1 nil nil (list :mutated t)))
+      (_ (error "Unknown GTD operation: %s" operation)))))
 
 (defun emacs-gtd--file-state (file)
   "Return native content hashes for FILE's disk and any live buffer.
