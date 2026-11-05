@@ -713,35 +713,28 @@ uses `find-library-name', the noninteractive engine behind `find-library'."
         (expand-file-name (project-root project))
       (file-name-as-directory (expand-file-name directory)))))
 
-(defun emacs-code-navigator-project-files (directory &optional limit)
-  "Return project files for DIRECTORY, capped at LIMIT."
+(defun emacs-code-navigator--project-file-data (directory)
+  "Return a root and absolute file list for DIRECTORY.
+Use the native project backend when available, including an empty result.
+When it fails, restrict fallback traversal to the requested directory."
   (let* ((project (emacs-code-navigator--project directory))
-         (project-files
-          (and project
-               (condition-case nil
-                   (project-files project)
-                 (error :unavailable))))
-         (root (if (eq project-files :unavailable)
-                   (file-name-as-directory (expand-file-name directory))
-                 (emacs-code-navigator-project-root directory)))
-         (max-count (or limit 500))
-         (files (if (or (null project) (eq project-files :unavailable))
-                    (emacs-code-navigator--directory-files root)
-                  project-files))
-         (relative-files (mapcar (lambda (file) (file-relative-name file root)) files)))
-    (seq-take relative-files max-count)))
+         (files (and project
+                     (condition-case nil
+                         (project-files project)
+                       (error :unavailable))))
+         (native (and project (not (eq files :unavailable))))
+         (root (if native
+                   (expand-file-name (project-root project))
+                 (file-name-as-directory (expand-file-name directory)))))
+    (list :root root
+          :files (if native files (emacs-code-navigator--directory-files root)))))
 
-(defun emacs-code-navigator--project-file-list (directory)
-  "Return absolute project file names for DIRECTORY."
-  (let* ((project (emacs-code-navigator--project directory))
-         (project-files
-          (and project
-               (condition-case nil
-                   (project-files project)
-                 (error :unavailable)))))
-    (if (or (null project) (eq project-files :unavailable))
-        (emacs-code-navigator--directory-files directory)
-      project-files)))
+(defun emacs-code-navigator-project-files (directory &optional limit)
+  "Return project-relative files for DIRECTORY, capped at LIMIT."
+  (let* ((data (emacs-code-navigator--project-file-data directory))
+         (root (plist-get data :root)))
+    (mapcar (lambda (file) (file-relative-name file root))
+            (seq-take (plist-get data :files) (or limit 500)))))
 
 (defun emacs-code-navigator-read-region (file start-line &optional end-line)
   "Return FILE lines from START-LINE to END-LINE with line numbers."
@@ -943,7 +936,7 @@ fixed-string search.  Results are (file line summary)."
     (if (plist-get ripgrep-result :available)
         (plist-get ripgrep-result :matches)
       (let ((files (seq-filter #'file-regular-p
-                               (emacs-code-navigator--project-file-list directory))))
+                               (plist-get (emacs-code-navigator--project-file-data directory) :files))))
         (if (null files)
             nil
           (mapcar #'emacs-code-navigator--xref-location-data
@@ -1233,7 +1226,7 @@ currently knows after visiting the files."
         (visited 0)
         (results nil))
     (catch 'done
-      (dolist (file (emacs-code-navigator--project-file-list directory))
+      (dolist (file (plist-get (emacs-code-navigator--project-file-data directory) :files))
         (when (and (file-regular-p file)
                    (< visited max-files))
           (setq visited (1+ visited))
