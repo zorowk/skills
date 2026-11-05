@@ -33,76 +33,45 @@ self-loading 入口通过 `common/scripts/skill-loader.el` 重新加载同一目
 
 ## 当前架构
 
-调用关系如下。实线表示直接调用或事件传递，虚线表示上下文返回、请求插入或 metrics
-汇总：
+下图展示主要执行依赖。五个 facade 共用 runtime；Git Commit 和博客还共用 Git
+辅助库。self-loading 的源码加载与版本检查由前述 loader 负责。
 
 ```mermaid
-flowchart LR
-    USER["用户"]
-    AGENT["Codex / Agent"]
-
-    subgraph EMACS["运行中的 Emacs"]
-        AS["agent-shell"]
-        SOURCES["agent-shell-context-sources"]
-        BUFFER["live buffer<br/>光标与未保存内容"]
-        CODEAPI["project / Imenu / xref<br/>Eldoc / Eglot / Flymake"]
-        ORG["Org / Denote<br/>Org exporter"]
-        MAGIT["Magit / Git<br/>最终 Git 事实"]
+flowchart TB
+    subgraph CALLERS["调用方"]
+        AGENT["Codex / Agent"]
+        CODECTX["agent-shell-code-context.el<br/>自动代码上下文"]
+        ORGTASKS["agent-shell-org-tasks.el<br/>Org / Agenda 会话入口"]
     end
 
-    subgraph COMMON["common 共享层"]
-        RUNTIME["skill-runtime.el<br/>schema、envelope、metrics"]
-        GITCORE["skill-git.el<br/>路径约束与 message formatter"]
+    subgraph FACADES["五个公开入口"]
+        NAV["Navigator<br/>emacs-code-navigator-query"]
+        GTD["GTD<br/>emacs-gtd-execute"]
+        SCRIBE["Denote<br/>denote-scribe-run"]
+        COMMIT["Git Commit<br/>ai-git-commit-run"]
+        BLOG["博客<br/>org-blog-exporter-run"]
     end
 
-    subgraph ADAPTERS["自动上下文 adapter"]
-        CODECTX["agent-shell-code-context.el<br/>代码上下文 provider"]
+    subgraph COMMON["公共库"]
+        RUNTIME["skill-runtime.el<br/>schema、结果、错误、分页、metrics"]
+        GITCORE["skill-git.el<br/>提交消息、仓库操作、推送"]
     end
 
-    subgraph SKILLS["Skills 与 compact facades"]
-        NAV["emacs-code-navigator<br/>emacs-code-navigator-query"]
-        COMMIT["git-commit<br/>ai-git-commit-run"]
-        GTD["emacs-gtd-assistant"]
-        SCRIBE["denote-scribe"]
-        BLOG["org-blog-exporter"]
-    end
+    NATIVE["运行中的 Emacs 原生 API<br/>project / xref / Eldoc / Flymake<br/>Org / Denote / exporter / Magit"]
 
-    USER -->|"提问、选择、明确授权"| AS
-    AS <-->|"ACP 对话与工具调用"| AGENT
-
-    AS -->|"发送前请求上下文"| SOURCES
-    SOURCES --> CODECTX
+    AGENT --> NAV & GTD & SCRIBE & COMMIT & BLOG
     CODECTX --> NAV
-    NAV --> BUFFER
-    NAV --> CODEAPI
-    CODECTX -.->|"bounded live context"| SOURCES
-    SOURCES -.-> AS
-
-    AGENT -->|"用户要求管理或捕获任务"| GTD
-    AGENT -->|"用户要求记录当前讨论"| SCRIBE
-    AGENT -->|"用户要求审阅或提交"| COMMIT
-    SCRIBE -->|"Denote file: 写入 RESOURCES"| GTD
-    GTD -.->|"GTD id: 回写开放问题"| SCRIBE
-
-    AGENT -->|"按 SKILL.md 触发"| NAV
-    AGENT --> BLOG
-
-    NAV --> RUNTIME
-    COMMIT --> RUNTIME
-    GTD --> RUNTIME
-    SCRIBE --> RUNTIME
-    BLOG --> RUNTIME
-    COMMIT --> GITCORE
-    SCRIBE --> GITCORE
-    BLOG --> GITCORE
-
-    GTD --> ORG
-    SCRIBE -->|"确认后 capture"| ORG
-    BLOG --> ORG
-    COMMIT --> MAGIT
-    GITCORE --> MAGIT
-
+    ORGTASKS --> GTD
+    NAV & GTD & SCRIBE & COMMIT & BLOG --> RUNTIME
+    COMMIT & BLOG --> GITCORE
+    NAV & GTD & SCRIBE & COMMIT & BLOG --> NATIVE
+    GITCORE --> NATIVE
 ```
+
+GTD 的全部操作 schema 和分发集中在 `emacs-gtd-assistant.el`；
+`emacs-gtd-project.el` 只提供项目和会话记录的实现，不在加载时修改操作表。
+Git context 的共同字段统一组装；博客的完整与分页模式共用一个结果封装函数。
+Denote 与 GTD 的关联由 Agent 按用户要求分别调用入口完成。
 
 代码上下文 adapter 仍由 `emacs-code-navigator` 负责：读取 live buffer、光标、未保存状态、
 project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。它直接接入
