@@ -9,7 +9,7 @@ Denote、Org GTD、Org 导出和 Magit 等能力封装成可验证的工作流�
 | --- | --- | --- |
 | [`denote-scribe`](denote-scribe/SKILL.md) | 将确认的技术讨论保存为 Denote 笔记，支持按明确要求关联 Org 任务。 | “输出 Denote 报告” |
 | [`emacs-code-navigator`](emacs-code-navigator/SKILL.md) | 将运行中的 Emacs 作为能力注册表和代码上下文来源：区分 live buffer 与磁盘内容并报告来源和分歧，同时支持 Help、项目搜索、Imenu、xref、Eldoc/Eglot 和 Flymake。 | “Emacs 里有什么函数能完成这个任务？”“查看这个符号的文档和源码” |
-| [`emacs-gtd-assistant`](emacs-gtd-assistant/SKILL.md) | 从 Org/Agenda 任务进入 AI 会话，关联项目文档、实施子任务和接续进度；也支持常规任务管理。 | “列出今天的任务”“把这个任务标记为 DONE” |
+| [`emacs-gtd-assistant`](emacs-gtd-assistant/SKILL.md) | 按需管理 Org 任务、项目文档、实施子任务和接续进度。 | “列出今天的任务”“把这个任务标记为 DONE” |
 | [`org-blog-exporter`](org-blog-exporter/SKILL.md) | 将 `~/Dropbox/notes` 中符合条件的 Org 笔记导出为静态 HTML；支持单篇、批量和全量导出。明确要求发布时，还可更新索引、复制并重写本地资源、提交并推送博客仓库。 | “预览这篇 Org 笔记”“发布博客” |
 | [`git-commit`](git-commit/SKILL.md) | 为任意仓库生成便于 AI 和人理解的提交信息；读取含未跟踪文件的实际 diff，按风险选择详细度，并可暂存和提交明确的文件集合。 | “生成 commit message”“提交这些修改” |
 
@@ -41,7 +41,6 @@ flowchart TB
     subgraph CALLERS["调用方"]
         AGENT["Codex / Agent"]
         CODECTX["agent-shell-code-context.el<br/>自动代码上下文"]
-        ORGTASKS["agent-shell-org-tasks.el<br/>Org / Agenda 会话入口"]
     end
 
     subgraph FACADES["五个公开入口"]
@@ -61,7 +60,6 @@ flowchart TB
 
     AGENT --> NAV & GTD & SCRIBE & COMMIT & BLOG
     CODECTX --> NAV
-    ORGTASKS --> GTD
     NAV & GTD & SCRIBE & COMMIT & BLOG --> RUNTIME
     COMMIT & BLOG --> GITCORE
     NAV & GTD & SCRIBE & COMMIT & BLOG --> NATIVE
@@ -69,7 +67,7 @@ flowchart TB
 ```
 
 GTD 的全部操作 schema 和分发集中在 `emacs-gtd-assistant.el`；
-`emacs-gtd-project.el` 只提供项目和会话记录的实现，不在加载时修改操作表。
+`emacs-gtd-project.el` 只提供项目、子任务与条目上下文的实现，不在加载时修改操作表。
 Git context 的共同字段统一组装；博客的完整与分页模式共用一个结果封装函数。
 Denote 与 GTD 的关联由 Agent 按用户要求分别调用入口完成。
 
@@ -83,14 +81,10 @@ project、scope、Eglot/Eldoc、少量 xref 定义和已有 Flymake 诊断。它
 合并提交，也不会因为修改过文件而自动触发审阅或提交。限定路径的 context 只返回这些路径
 的状态和内容；无关变更只报告数量，不暴露文件名。
 
-用户在 Org/Agenda 项目或任务上沿用 `C-z a`，先选 AI，再选该 AI 在此项目的会话。
-`agent-shell-org-tasks.el` 按明确的 PROJECT_DIR 识别项目，普通待办保留原生行为；
-任务 ID 独立于项目路径与会话 ID。先讨论形成项目需求、
-架构文档，再按用户指令通过 `add-children` 写入实施子任务；Org 条目本身承担实施计划，
-项目 RESOURCES 链接到仓库和文档。收尾时通过 facade 的 `add-note` 和 `set-context`
-更新日志与接续点，不因 AI 回合结束自动标记 DONE。新会话资料集中保存到
-`~/Dropbox/.agent-shell/`；该目录不替代 agent 后端的原生会话存储。设置与操作见
-[工作流说明](emacs-gtd-assistant/references/workflow.org)。
+GTD 技能通过 `emacs-gtd-execute` 按需调用，保留任务管理、项目文档、实施子任务、
+日志与接续点。它不安装 Org/Agenda/Agent Shell 快捷键，不绑定或筛选 AI 会话，
+也不改变 Agent Shell 的存储方式。管理文件需显式配置，Agenda 文件不会自动加入；
+配置与数据约定见[工作流说明](emacs-gtd-assistant/references/workflow.org)。
 
 用户在 agent-shell 对话中要求记录当前讨论时，Agent 触发 `denote-scribe`，生成
 按批判性思维要求组织、结构随内容选择的笔记提案，确认后创建 Denote，不主动建议 GTD 任务。

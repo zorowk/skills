@@ -1,13 +1,12 @@
-;;; emacs-gtd-project.el --- Project tasks and session identities -*- lexical-binding: t; -*-
+;;; emacs-gtd-project.el --- Project tasks and context -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 ;; Loaded by emacs-gtd-assistant.el. All AI mutations use emacs-gtd-execute.
 ;; PROJECT_DIR belongs to a project heading. IDs always belong to one heading.
 ;; CONTEXT holds the current handoff; LOGBOOK holds dated history;
-;; RESOURCES holds document links; AI_SESSIONS holds JSON session records.
+;; RESOURCES holds document links.
 
 ;;; Code:
-(require 'json)
 (require 'cl-lib)
 
 (defvar emacs-gtd-default-headline)
@@ -45,15 +44,10 @@
           begin (org-element-property :contents-end drawer)))
       "")))
 
-(defun emacs-gtd-project--sessions ()
-  "Read structured sessions stored on the current heading."
-  (when-let* ((text (emacs-gtd-project--drawer-text "AI_SESSIONS")))
-    (unless (string-empty-p text)
-      (json-parse-string text :object-type 'plist :array-type 'list))))
-
 (defun emacs-gtd-project--snapshot ()
   "Read bounded own-entry context, identity and resources."
   (let ((text (emacs-gtd-project--own-text)))
+    ;; Omit legacy session metadata from prose without parsing or rewriting it.
     (setq text (replace-regexp-in-string
                 "^:AI_SESSIONS:[ \t]*\n[^\n]*\n:END:[ \t]*\n?" "" text))
     (list :id (org-entry-get nil "ID" nil)
@@ -74,7 +68,6 @@
           (org-with-wide-buffer
            (goto-char marker)
            (let ((task (emacs-gtd-project--snapshot))
-                 (sessions (emacs-gtd-project--sessions))
                  project)
              (while (and (not project) (org-at-heading-p))
                (when (org-entry-get nil "PROJECT_DIR" nil)
@@ -82,8 +75,7 @@
                (unless (or project (org-up-heading-safe))
                  (goto-char (point-min))
                  (unless project (setq project 'absent))))
-             (list :task task :project (unless (eq project 'absent) project)
-                   :sessions sessions))))
+             (list :task task :project (unless (eq project 'absent) project)))))
       (set-marker marker nil))))
 
 (defun emacs-gtd-project--directory (directory)
@@ -177,30 +169,6 @@
               (unless (bolp) (insert "\n"))))
           (emacs-gtd--save))))
     (nreverse items)))
-
-(defun emacs-gtd-project-attach-session (request)
-  "Persist one session identity from REQUEST on its task."
-  (let* ((id (plist-get request :id))
-         (agent (emacs-gtd--single-line (plist-get request :agent) "AGENT"))
-         (session (emacs-gtd--single-line (plist-get request :session-id) "SESSION-ID"))
-         (cwd (emacs-gtd-project--directory (plist-get request :cwd)))
-         (transcript (plist-get request :transcript)))
-    (when transcript (emacs-gtd--single-line transcript "TRANSCRIPT"))
-    (save-current-buffer
-      (emacs-gtd--find-id id)
-      (let* ((sessions (emacs-gtd-project--sessions))
-             (existing (seq-find (lambda (item)
-                                   (and (equal (plist-get item :agent) agent)
-                                        (equal (plist-get item :session-id) session))) sessions))
-             (record (list :agent agent :session-id session :cwd cwd
-                           :updated (format-time-string "%FT%T%z")
-                           :transcript (or transcript (plist-get existing :transcript) ""))))
-        (setq sessions (cons record (delete existing sessions)))
-        (atomic-change-group
-          (emacs-gtd--replace-drawer-content "AI_SESSIONS"
-                                           (json-serialize (vconcat sessions)))
-          (emacs-gtd--save))))
-    (emacs-gtd-project-context id)))
 
 (provide 'emacs-gtd-project)
 ;;; emacs-gtd-project.el ends here

@@ -241,7 +241,7 @@
              :effects (:mutated))
     (describe :closed t :summary "Return operation names or one complete schema."
               :optional (:target))
-    (get :closed t :summary "Read a managed entry, nearest project and session history without mutation."
+    (get :closed t :summary "Read a managed entry, nearest project and resources without mutation."
          :required (:id))
     (ensure-id :closed t :summary "Give the heading at FILE and LINE its own identity."
                :required (:file :line :authorization)
@@ -263,11 +263,7 @@
                   :validators
                   ((:tasks emacs-gtd-project--validate-children
                            "Project breakdown is bounded by emacs-gtd-project-task-limit."))
-                  :choices ((:authorization explicit)) :effects (:mutated))
-    (attach-session :closed t :summary "Record agent, session ID, cwd and transcript under a task; leaves task state unchanged."
-                    :required (:id :agent :session-id :cwd :authorization)
-                    :optional (:transcript)
-                    :choices ((:authorization explicit)) :effects (:mutated)))
+                  :choices ((:authorization explicit)) :effects (:mutated)))
   "Compact request schemas for `emacs-gtd-execute'.")
 
 (defun emacs-gtd--file ()
@@ -1076,9 +1072,6 @@ Use :operation `describe' to request operation schemas only when needed."
                                                    (plist-get request :tasks))))
          (skill-runtime-result operation (mapcar #'emacs-gtd--compact-item items)
                                (length items) nil nil (list :mutated t))))
-      ('attach-session
-       (skill-runtime-result operation (emacs-gtd-project-attach-session request)
-                             1 nil nil (list :mutated t)))
       (_ (error "Unknown GTD operation: %s" operation)))))
 
 (defun emacs-gtd--file-state (file)

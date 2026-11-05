@@ -479,7 +479,7 @@
      'needs-input 'invalid-request)
     (should (= (plist-get (emacs-gtd-execute '(:operation list)) :count) 5))))
 
-(ert-deftest gtd-project-session-history-and-drawers-belong-to-own-entry ()
+(ert-deftest gtd-project-drawers-belong-to-own-entry ()
   (gtd-project-tests-with-files
     ;; Inserting a missing parent drawer must never overwrite its child's drawer.
     (emacs-gtd-execute '(:operation set-context :id "task" :context-notes "Child context"
@@ -489,19 +489,31 @@
     (should (equal (plist-get (plist-get (plist-get
                               (emacs-gtd-execute '(:operation get :id "task")) :data) :task) :context)
                    "Child context"))
-    (dolist (session '("first" "second" "first"))
-      (should (eq (plist-get
-                   (emacs-gtd-execute (list :operation 'attach-session :id "task"
-                                            :agent "codex" :session-id session :cwd root
-                                            :transcript "/tmp/example.md" :authorization 'explicit))
-                   :status) 'ok)))
-    (let* ((data (plist-get (emacs-gtd-execute '(:operation get :id "task")) :data))
-           (sessions (plist-get data :sessions)))
-      (should (= (length sessions) 2))
-      (should (equal (plist-get (car sessions) :session-id) "first"))
-      (should (equal (plist-get (plist-get data :task) :state) "TODO")))
+    (let ((data (plist-get (emacs-gtd-execute '(:operation get :id "task")) :data)))
+      (should (equal (plist-get (plist-get data :task) :state) "TODO"))
+      (should-not (plist-member data :sessions)))
     (emacs-gtd-execute '(:operation set-state :id "task" :state "DONE" :authorization explicit))
     (should (= (plist-get (emacs-gtd-execute '(:operation list)) :count) 0))))
+
+(ert-deftest gtd-project-preserves-retired-session-metadata ()
+  (gtd-project-tests-with-files
+    (let ((legacy ":AI_SESSIONS:\nlegacy session data, no longer parsed\n:END:\n"))
+      (with-current-buffer (find-file-noselect other)
+        (goto-char (point-max))
+        (insert legacy)
+        (save-buffer))
+      (let* ((result (emacs-gtd-execute '(:operation get :id "task")))
+             (data (plist-get result :data)))
+        (should (eq (plist-get result :status) 'ok))
+        (should-not (plist-member data :sessions))
+        (should-not (string-match-p "AI_SESSIONS" (plist-get (plist-get data :task) :text))))
+      (should (eq (plist-get
+                   (emacs-gtd-execute '(:operation set-context :id "task"
+                                       :context-notes "Current handoff"
+                                       :authorization explicit)) :status) 'ok))
+      (with-temp-buffer
+        (insert-file-contents other)
+        (should (search-forward legacy nil t))))))
 
 (ert-deftest gtd-project-create-and-own-task-id ()
   (gtd-project-tests-with-files
@@ -523,117 +535,6 @@
       (should-not (equal id "project"))
       (should (eq (plist-get (emacs-gtd-execute (list :operation 'get :id id)) :status) 'ok)))))
 
-(skill-tests-load "emacs-gtd-assistant/scripts/agent-shell-org-tasks.el")
-(defvar-local gtd-agent-test-session nil)
-
-(ert-deftest gtd-agent-open-selects-agent-then-native-project-session ()
-  (require 'agent-shell)
-  (gtd-project-tests-with-files
-    (let (shell starts inserts events)
-      (unwind-protect
-          (cl-letf (((symbol-function 'agent-shell-select-config)
-                     (lambda (&rest _) (push 'agent events) '((:identifier . codex))))
-                    ((symbol-function 'agent-shell-cwd) (lambda () default-directory))
-                    ((symbol-function 'agent-shell-session-id) (lambda (&rest _) gtd-agent-test-session))
-                    ((symbol-function 'agent-shell-subscribe-to) (lambda (&rest _) 1))
-                    ((symbol-function 'agent-shell-insert)
-                     (lambda (&rest args) (push args inserts)))
-                    ((symbol-function 'emacs-gtd-agent--start)
-                     (lambda (config cwd new)
-                       (push 'sessions events)
-                       (push (list config cwd new) starts)
-                       (setq shell (generate-new-buffer " *gtd-project-picker*"))
-                       (with-current-buffer shell
-                         (setq major-mode 'agent-shell-mode default-directory cwd))
-                       shell)))
-            (with-current-buffer (find-file-noselect other)
-              (goto-char (point-min)) (search-forward "** TODO")
-              (emacs-gtd-agent-open))
-            (should (equal (reverse events) '(agent sessions)))
-            (should (emacs-gtd-agent--same-directory-p (nth 1 (car starts)) root))
-            (should-not (nth 2 (car starts)))
-            (should-not (plist-get (car inserts) :submit))
-            (with-current-buffer shell
-              (should (equal emacs-gtd-agent-task-id "task"))
-              (setq-local gtd-agent-test-session "selected-project-session")
-              (emacs-gtd-agent--record shell)
-              (emacs-gtd-agent-wrap-up))
-            (should (string-match-p "add-note" (plist-get (car inserts) :text)))
-            (should (= (length starts) 1))
-            (should (equal (plist-get (car (plist-get
-                                           (emacs-gtd-agent--call '(:operation get :id "task")) :sessions))
-                                     :session-id) "selected-project-session")))
-        (when (buffer-live-p shell) (kill-buffer shell))))))
-
-(ert-deftest gtd-agent-unassociated-entry-preserves-native-behavior-and-does-not-mutate ()
-  (require 'agent-shell)
-  (gtd-project-tests-with-files
-    (let (called)
-      (cl-letf (((symbol-function 'agent-shell)
-                 (lambda () (interactive) (setq called t))))
-        (with-current-buffer (find-file-noselect file)
-          (goto-char (point-min))
-          (emacs-gtd-agent-open)
-          (should called)
-          (should-not (org-entry-get nil "ID" nil))
-          (should-not (buffer-modified-p)))))))
-
-(ert-deftest gtd-agent-session-picker-filters-project-and-live-agent ()
-  (require 'agent-shell)
-  (gtd-project-tests-with-files
-    (let ((emacs-gtd-agent-project-id "project")
-          (emacs-gtd-agent-config-id "codex")
-          (default-directory root)
-          (sessions `(((sessionId . "yes") (cwd . ,root))
-                      ((sessionId . "no") (cwd . "/different-project"))
-                      ((sessionId . "unknown"))))
-          buffers)
-      (unwind-protect
-          (progn
-            (dolist (spec `(("codex" ,root) ("other-ai" ,root) ("codex" "/different-project/")))
-              (let ((buffer (generate-new-buffer " *gtd-scope*")))
-                (push buffer buffers)
-                (with-current-buffer buffer
-                  (setq default-directory (cadr spec))
-                  (setq-local agent-shell--state
-                              `((:agent-config . ((:identifier . ,(intern (car spec))))))))))
-            (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () default-directory))
-                      ((symbol-function 'agent-shell-buffers) (lambda (&rest _) buffers)))
-              (emacs-gtd-agent--project-session-picker
-               (lambda (filtered)
-                 (should (= (length filtered) 1))
-                 (should (equal (map-elt (car filtered) 'sessionId) "yes"))
-                 (should (= (length (agent-shell-buffers)) 1))
-                 (should (equal (funcall agent-shell-session-choices-function
-                                        '(("New" . :new-shell) ("Downloads" . :downloads-shell)))
-                                '(("New" . :new-shell)))))
-               sessions)))
-        (mapc #'kill-buffer buffers)))))
-
-(ert-deftest gtd-agent-storage-is-portable-and-does-not-create-directories ()
-  (gtd-project-tests-with-files
-    (let ((emacs-gtd-agent-storage-directory (expand-file-name ".agent-shell" root))
-          (emacs-gtd-agent-project-id "portable-id")
-          (default-directory root))
-      (cl-letf (((symbol-function 'agent-shell-cwd) (lambda () default-directory)))
-        (let ((first (emacs-gtd-agent-dot-subdir "transcripts")))
-          (setq default-directory temporary-file-directory)
-          (should (equal first (emacs-gtd-agent-dot-subdir "transcripts")))
-          (should-not (file-exists-p emacs-gtd-agent-storage-directory))
-          (let ((emacs-gtd-agent-project-id nil))
-            (should-not (equal first (emacs-gtd-agent-dot-subdir "transcripts")))))))))
-
-(ert-deftest gtd-agent-agenda-marker-routes-to-original-entry ()
-  (gtd-project-tests-with-files
-    (let ((marker (with-current-buffer (find-file-noselect other)
-                    (goto-char (point-min)) (search-forward "** TODO")
-                    (beginning-of-line) (point-marker))))
-      (with-temp-buffer
-        (insert (propertize "Existing task\n" 'org-hd-marker marker))
-        (setq major-mode 'org-agenda-mode)
-        (goto-char (point-min))
-        (should (equal (emacs-gtd-agent--ensure-identity (emacs-gtd-agent--marker)) "task"))))))
-
 (ert-deftest gtd-project-id-survives-moves-and-rejects-duplicates ()
   (gtd-project-tests-with-files
     (with-current-buffer (find-file-noselect other)
@@ -645,7 +546,7 @@
           (goto-char (point-max))
           (insert (replace-regexp-in-string "Existing" "Renamed" text))
           (save-buffer))))
-    (let ((data (emacs-gtd-agent--call '(:operation get :id "task"))))
+    (let ((data (plist-get (emacs-gtd-execute '(:operation get :id "task")) :data)))
       (should (equal (plist-get (plist-get data :task) :title) "Renamed"))
       (should (equal (plist-get (plist-get data :task) :file) file))
       (should-not (plist-get data :project)))

@@ -1,8 +1,8 @@
 ---
 name: emacs-gtd-assistant
 description: >
-  Work from user-selected Org/Agenda projects and tasks: link project documents,
-  turn an agreed design into implementation subtasks, read task/session context,
+  Work from user-selected Org projects and tasks: link project documents,
+  turn an agreed design into implementation subtasks, read task context,
   and save progress or handoffs through Emacs. Create tasks when explicitly requested,
   and manage existing Org tasks.
   Do not create follow-up tasks merely because they appear in conversation.
@@ -30,7 +30,7 @@ Invoke the facade with one self-loading expression:
 ```
 
 Use `describe` for the relevant operation's schema when needed. `get` reads a
-known ID's own entry, nearest project, resource links and session history.
+known ID's own entry, nearest project and resource links.
 `create-project` / `configure-project` establish a project directory and links;
 `add-children` writes unscheduled implementation tasks below an explicit parent ID.
 Use the facade for all mutations to managed Org files.
@@ -40,8 +40,7 @@ first attempt and request `prefix_rule: ["emacsclient", "--eval"]`. Treat socket
 permission denial as a permission failure; report the server unavailable only if
 the escalated call fails.
 
-When a task ID is supplied by agent-shell, use it as the current work item; do
-not infer identity from a buffer name, similar title, or project directory alone.
+Use the task ID selected by the user; resolve an ambiguous title before changing it.
 Keep work within the user's current instruction. Read linked documents as needed;
 URLs and links are references, not proof that their contents have been read.
 
@@ -57,6 +56,5 @@ that entry's resources: read and preserve existing links when adding one.
 For explicit task-creation requests, use `add` / `add-many`; the request itself
 provides authorization. Link a Denote note only when association is requested.
 
-For the human-facing commands, data conventions and example, read
-[references/workflow.org](references/workflow.org) when setting up or explaining
-the Org/agent-shell integration.
+For managed-file configuration, data conventions and the project workflow, read
+[references/workflow.org](references/workflow.org).
