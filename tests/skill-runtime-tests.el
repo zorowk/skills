@@ -14,7 +14,7 @@
 (ert-deftest skill-runtime-rejects-improper-and-circular-list-values ()
   (let ((cycle (list "one")))
     (setcdr cycle cycle)
-    (dolist (type '(non-empty-string-list list-of-plists (list-of string)))
+    (dolist (type '(non-empty-string-list (list-of plist) (list-of string)))
       (dolist (value (list '("one" . "two") cycle))
         (skill-contract-tests-assert-failure
          (skill-runtime-measure
@@ -38,7 +38,7 @@
       (should (= (length (plist-get failure :field-path)) 1)))))
 
 (ert-deftest skill-runtime-rejects-duplicate-keys-in-nested-request-plists ()
-  (dolist (type '(plist (plist :optional (:title)) list-of-plists
+  (dolist (type '(plist (plist :optional (:title)) (list-of plist)
                        (list-of (plist :required (:title)))))
     (let* ((value (if (memq type '(plist))
                       '(:title "first" :title "second")
@@ -379,48 +379,30 @@
                           :mode verbose)))))
 
 (ert-deftest skill-runtime-validates-parameterized-and-path-types ()
-  (let* ((file (make-temp-file "skill-runtime-contract-"))
-         (schemas
-          '((sample
-             :summary "Validate richer primitive types."
-             :required (:count :enabled :kind :root :file)
-             :types
-             ((:count (integer :min 1 :max 3))
-              (:enabled boolean)
-              (:kind symbol)
-              (:root absolute-path)
-              (:file existing-file))))))
-    (unwind-protect
-        (progn
-          (should
-           (equal
-            (skill-runtime-validate-request
-             schemas
-             `(:operation sample :count 2 :enabled t :kind compact
-                          :root ,temporary-file-directory :file ,file))
-            `(:operation sample :count 2 :enabled t :kind compact
-                         :root ,temporary-file-directory :file ,file)))
-          (should-error
-           (skill-runtime-validate-request
-            schemas
-            `(:operation sample :count 4 :enabled t :kind compact
-                         :root ,temporary-file-directory :file ,file)))
-          (should-error
-           (skill-runtime-validate-request
-            schemas
-            `(:operation sample :count 2 :enabled yes :kind compact
-                         :root ,temporary-file-directory :file ,file))))
-      (delete-file file))))
+  (let ((schemas
+         '((sample
+            :summary "Validate bounded values and path strings."
+            :required (:count :enabled :kind :root)
+            :types ((:count (integer :min 1 :max 3))
+                    (:enabled boolean) (:kind symbol) (:root path))))))
+    (should
+     (equal
+      (skill-runtime-validate-request
+       schemas '(:operation sample :count 2 :enabled t :kind compact :root "/tmp"))
+      '(:operation sample :count 2 :enabled t :kind compact :root "/tmp")))
+    (dolist (request '((:operation sample :count 4 :enabled t :kind compact :root "/tmp")
+                       (:operation sample :count 2 :enabled yes :kind compact :root "/tmp")
+                       (:operation sample :count 2 :enabled t :kind compact :root 1)))
+      (should-error (skill-runtime-validate-request schemas request)
+                    :type 'skill-runtime-invalid-request))))
 
 (ert-deftest skill-runtime-validates-nested-and-relational-contracts ()
   (let ((schemas
          '((sample
-            :summary "Validate nested and dependent fields."
+            :summary "Validate nested fields and exclusive targets."
             :required (:tasks :count)
-            :optional (:file :directory :left :right :replace :authorization)
+            :optional (:file :directory)
             :exactly-one-of (:file :directory)
-            :mutually-exclusive (:left :right)
-            :requires ((:replace :authorization))
             :types
             ((:count integer)
              (:tasks
@@ -447,16 +429,6 @@
      (skill-runtime-validate-request
       schemas
       '(:operation sample :file "/tmp/input" :directory "/tmp"
-                   :count 2 :tasks ((:title "One")))))
-    (should-error
-     (skill-runtime-validate-request
-      schemas
-      '(:operation sample :file "/tmp/input" :left t :right t
-                   :count 2 :tasks ((:title "One")))))
-    (should-error
-     (skill-runtime-validate-request
-      schemas
-      '(:operation sample :file "/tmp/input" :replace t
                    :count 2 :tasks ((:title "One")))))
     (should-error
      (skill-runtime-validate-request

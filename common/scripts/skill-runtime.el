@@ -371,37 +371,7 @@ on that precedence for authorization, operation or target selection."
         (skill-runtime-reject-request
          (format "%S %s requires exactly one of %S" operation path group)
          :field-path path :expected (list :exactly-one-of group)
-         :actual count))))
-  (dolist (group
-           (skill-runtime--constraint-groups
-            (plist-get schema :mutually-exclusive) ":mutually-exclusive"))
-    (let ((count
-           (length
-            (seq-filter
-             (lambda (field) (skill-runtime--field-active-p value field))
-             group))))
-      (when (> count 1)
-        (skill-runtime-reject-request
-         (format "%S %s fields are mutually exclusive: %S"
-                 operation path group)
-         :field-path path :expected (list :at-most-one-of group)
          :actual count)))))
-
-(defun skill-runtime--validate-dependencies (operation schema value path)
-  "Validate dependent fields in VALUE against SCHEMA at PATH."
-  (dolist (spec (plist-get schema :requires))
-    (unless (and (listp spec) (> (length spec) 1)
-                 (seq-every-p #'keywordp spec))
-      (error ":requires entries must contain a trigger and dependent fields: %S"
-             spec))
-    (when (skill-runtime--field-active-p value (car spec))
-      (dolist (dependent (cdr spec))
-        (unless (skill-runtime--field-active-p value dependent)
-          (skill-runtime-reject-request
-           (format "%S %s %S requires non-nil %S"
-                   operation path (car spec) dependent)
-           :field-path (list path dependent)
-           :required-by (car spec)))))))
 
 (defun skill-runtime--validate-custom (operation path value validator)
   "Validate VALUE with named VALIDATOR for OPERATION at PATH.
@@ -439,19 +409,7 @@ Unexpected implementation errors retain their original condition."
           ('symbol (symbolp value))
           ('path
            (and (stringp value) (not (string-empty-p value))))
-          ('absolute-path
-           (and (stringp value) (not (string-empty-p value))
-                (file-name-absolute-p value)))
-          ('existing-file
-           (and (stringp value) (not (string-empty-p value))
-                (file-regular-p (expand-file-name value))))
           ('plist (progn (skill-runtime--validate-plist-keys value path) t))
-          ('list-of-plists
-           (and (proper-list-p value)
-                (progn
-                  (mapc (lambda (item)
-                          (skill-runtime--validate-plist-keys item path)) value)
-                  t)))
           (_ (error "Unknown schema field type: %S" type)))
       (skill-runtime-reject-request
        (format "%S %s must be %S" operation path type)
@@ -566,10 +524,6 @@ Unexpected implementation errors retain their original condition."
     (apply #'append
            (skill-runtime--constraint-groups
             (plist-get schema :exactly-one-of) ":exactly-one-of"))
-    (apply #'append
-           (skill-runtime--constraint-groups
-            (plist-get schema :mutually-exclusive) ":mutually-exclusive"))
-    (apply #'append (plist-get schema :requires))
     (mapcar #'car (plist-get schema :types))
     (mapcar #'car (plist-get schema :choices))
     (mapcar #'car (plist-get schema :validators)))))
@@ -603,7 +557,6 @@ Unexpected implementation errors retain their original condition."
        (format "%S %s requires one of %S" operation path fields)
        :field-path path :expected (list :at-least-one-of fields))))
   (skill-runtime--validate-cardinality operation schema value path)
-  (skill-runtime--validate-dependencies operation schema value path)
   (skill-runtime--validate-field-types operation schema value path)
   (skill-runtime--validate-field-choices operation schema value path)
   (skill-runtime--validate-field-validators operation schema value path)
@@ -627,7 +580,7 @@ Require a known :operation and validate the selected declarative contract.
 :required fields must be non-nil; :required-present fields must be supplied
 but may explicitly be nil, for example to clear a collection.
 Schemas may declare required fields, structural types, choices, cross-field
-cardinality, dependencies, closed plists, and named custom validators.  Other
+cardinality, closed plists, and named custom validators.  Other
 operation-specific validation remains the facade's responsibility."
   (skill-runtime--validate-plist-keys request nil)
   (let* ((operation (plist-get request :operation))
