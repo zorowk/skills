@@ -237,67 +237,56 @@ report unrelated repository changes only as `:excluded-change-count'."
            (untracked (ai-git-commit--untracked-diff scope-paths))
            (untracked-text (plist-get untracked :text))
            (untracked-files (plist-get untracked :files)))
-      (if compact
-          (let* ((has-head (magit-git-success "rev-parse" "--verify" "HEAD"))
-                 (combined
-                  (if has-head
-                      (ai-git-commit--git-output-for-paths
-                       '("diff" "HEAD" "--no-ext-diff") scope-paths)
-                    (string-join
-                     (seq-remove
-                      #'string-empty-p
-                      (list
+      (append
+       (list :git-root root
+             :status reported-status
+             :scoped-status scoped-status
+             :change-count reported-change-count
+             :diff-scope (or scope-paths 'all)
+             :excluded-change-count (max 0 (- change-count scoped-change-count))
+             :unstaged-stat unstaged-stat
+             :staged-stat staged-stat
+             :untracked-files untracked-files
+             :untracked-truncated (plist-get untracked :truncated))
+       (if compact
+           (let* ((has-head (magit-git-success "rev-parse" "--verify" "HEAD"))
+                  (combined
+                   (if has-head
                        (ai-git-commit--git-output-for-paths
-                        '("diff" "--cached" "--no-ext-diff") scope-paths)
-                       (ai-git-commit--git-output-for-paths
-                        '("diff" "--no-ext-diff") scope-paths)))
-                     "\n")))
-                 (combined (ai-git-commit--join-diffs combined untracked-text))
-                 (bounded
-                  (ai-git-commit--bounded-diff
-                   combined ai-git-commit-compact-maximum-characters 'diff)))
-            (list :git-root root
-                  :status reported-status
-                  :scoped-status scoped-status
-                  :change-count reported-change-count
-                  :diff-scope (or scope-paths 'all)
-                  :excluded-change-count
-                  (max 0 (- change-count scoped-change-count))
-                  :unstaged-stat unstaged-stat
-                  :staged-stat staged-stat
-                  :untracked-files untracked-files
-                  :untracked-truncated (plist-get untracked :truncated)
-                  :diff-base (if has-head "HEAD" "index/worktree")
-                  :diff (plist-get bounded :text)
-                  :truncated (plist-get bounded :truncated)
-                  :original-length (plist-get bounded :original-length)))
-        (let* ((unstaged
-                (ai-git-commit--bounded-diff
-                 (ai-git-commit--join-diffs
+                        '("diff" "HEAD" "--no-ext-diff") scope-paths)
+                     (string-join
+                      (seq-remove
+                       #'string-empty-p
+                       (list
+                        (ai-git-commit--git-output-for-paths
+                         '("diff" "--cached" "--no-ext-diff") scope-paths)
+                        (ai-git-commit--git-output-for-paths
+                         '("diff" "--no-ext-diff") scope-paths)))
+                      "\n")))
+                  (combined (ai-git-commit--join-diffs combined untracked-text))
+                  (bounded
+                   (ai-git-commit--bounded-diff
+                    combined ai-git-commit-compact-maximum-characters 'diff)))
+             (list :diff-base (if has-head "HEAD" "index/worktree")
+                   :diff (plist-get bounded :text)
+                   :truncated (plist-get bounded :truncated)
+                   :original-length (plist-get bounded :original-length)))
+         (let* ((unstaged
+                 (ai-git-commit--bounded-diff
+                  (ai-git-commit--join-diffs
+                   (ai-git-commit--git-output-for-paths
+                    '("diff" "--no-ext-diff") scope-paths)
+                   untracked-text)
+                  ai-git-commit-context-maximum-characters 'unstaged-diff))
+                (staged
+                 (ai-git-commit--bounded-diff
                   (ai-git-commit--git-output-for-paths
-                   '("diff" "--no-ext-diff") scope-paths)
-                  untracked-text)
-                 ai-git-commit-context-maximum-characters 'unstaged-diff))
-               (staged
-                (ai-git-commit--bounded-diff
-                 (ai-git-commit--git-output-for-paths
-                  '("diff" "--cached" "--no-ext-diff") scope-paths)
-                 ai-git-commit-context-maximum-characters 'staged-diff)))
-          (list :git-root root
-                :status reported-status
-                :scoped-status scoped-status
-                :change-count reported-change-count
-                :diff-scope (or scope-paths 'all)
-                :excluded-change-count
-                (max 0 (- change-count scoped-change-count))
-                :unstaged-stat unstaged-stat
-                :staged-stat staged-stat
-                :untracked-files untracked-files
-                :untracked-truncated (plist-get untracked :truncated)
-                :unstaged-diff (plist-get unstaged :text)
-                :unstaged-truncated (plist-get unstaged :truncated)
-                :staged-diff (plist-get staged :text)
-                :staged-truncated (plist-get staged :truncated)))))))
+                   '("diff" "--cached" "--no-ext-diff") scope-paths)
+                  ai-git-commit-context-maximum-characters 'staged-diff)))
+           (list :unstaged-diff (plist-get unstaged :text)
+                 :unstaged-truncated (plist-get unstaged :truncated)
+                 :staged-diff (plist-get staged :text)
+                 :staged-truncated (plist-get staged :truncated))))))))
 
 ;;;###autoload
 (defun ai-git-commit-format (spec)

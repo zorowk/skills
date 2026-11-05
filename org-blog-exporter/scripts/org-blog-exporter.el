@@ -1243,46 +1243,45 @@ publishing authorization before invoking it."
     (org-blog-exporter-publish-all
      title notes-dir repository-dir setupfile)))
 
-(defun org-blog-exporter--compact-result
-    (operation result &optional offset limit)
-  "Return token-bounded standard RESULT for blog OPERATION."
-  (let* ((start (or offset 0))
-         (maximum (or limit org-blog-exporter-result-limit))
-         (exported (plist-get result :exported))
+(defun org-blog-exporter--result
+    (operation result &optional full offset limit)
+  "Wrap blog RESULT once, paging its contents unless FULL is non-nil."
+  (let* ((exported (plist-get result :exported))
          (artifacts (plist-get result :artifacts))
          (assets (plist-get result :assets))
          (errors (plist-get result :errors))
          (error-count (or (plist-get result :error-count) 0))
-         (total (max (length exported) (length assets) (length errors)))
-         (exported-page (skill-runtime-page exported start maximum
-                                            (length exported)))
-         (artifacts-page (skill-runtime-page artifacts start maximum
-                                             (length artifacts)))
-         (assets-page (skill-runtime-page assets start maximum (length assets)))
-         (errors-page (skill-runtime-page errors start maximum (length errors)))
-         (page (skill-runtime-page-metadata
-                start maximum total (min maximum (max 0 (- total start))))))
+         (count (or (plist-get result :exported-count)
+                    (if full 1 (length exported))))
+         (data result)
+         page)
+    (unless full
+      (let* ((start (or offset 0))
+             (maximum (or limit org-blog-exporter-result-limit))
+             (total (max (length exported) (length assets) (length errors))))
+        (setq artifacts (plist-get (skill-runtime-page artifacts start maximum
+                                                       (length artifacts)) :items)
+              errors (plist-get (skill-runtime-page errors start maximum (length errors)) :items)
+              page (skill-runtime-page-metadata
+                    start maximum total (min maximum (max 0 (- total start))))
+              data (list :scope (plist-get result :scope)
+                         :candidate-count (plist-get result :candidate-count)
+                         :exported-count (or (plist-get result :exported-count)
+                                             (length exported))
+                         :exported (plist-get (skill-runtime-page exported start maximum
+                                                                  (length exported)) :items)
+                         :assets-count (length assets)
+                         :assets (plist-get (skill-runtime-page assets start maximum
+                                                                (length assets)) :items)
+                         :error-count error-count
+                         :errors errors
+                         :output-directory (plist-get result :output-directory)
+                         :index (plist-get result :index)))))
     (skill-runtime-result
-     operation
-     (list :scope (plist-get result :scope)
-           :candidate-count (plist-get result :candidate-count)
-           :exported-count (or (plist-get result :exported-count)
-                               (length exported))
-           :exported (plist-get exported-page :items)
-           :assets-count (length assets)
-           :assets (plist-get assets-page :items)
-           :error-count error-count
-           :errors (plist-get errors-page :items)
-           :output-directory (plist-get result :output-directory)
-           :index (plist-get result :index))
-     (or (plist-get result :exported-count) (length exported))
-     (if (zerop error-count) 'ok 'partial)
-     page
+     operation data count (if (zerop error-count) 'ok 'partial) page
      (org-blog-exporter--effects operation result)
-     (org-blog-exporter--partial-error
-      result (plist-get errors-page :items))
-     (org-blog-exporter--verification
-      operation result (plist-get artifacts-page :items)))))
+     (org-blog-exporter--partial-error result errors)
+     (org-blog-exporter--verification operation result artifacts))))
 
 (defun org-blog-exporter--partial-error (result &optional causes)
   "Return a structured partial-failure error for RESULT, or nil.
@@ -1354,23 +1353,14 @@ Use :operation `describe' to request operation schemas only when needed."
     (cond
      ((eq operation 'describe)
       (skill-runtime-result operation result))
-     ((plist-get request :full)
-     (skill-runtime-result
-       operation result
-       (or (plist-get result :exported-count) 1)
-       (if (zerop (or (plist-get result :error-count) 0)) 'ok 'partial)
-       nil
-       (org-blog-exporter--effects operation result)
-       (org-blog-exporter--partial-error result)
-       (org-blog-exporter--verification operation result)))
-     ((eq operation 'preflight)
-     (skill-runtime-result
+     ((and (eq operation 'preflight) (not (plist-get request :full)))
+      (skill-runtime-result
        operation result 1
        (if (plist-get result :errors) 'blocked 'ok)))
      (t
-      (org-blog-exporter--compact-result
-       operation result (plist-get request :offset)
-       (plist-get request :limit))))))
+      (org-blog-exporter--result
+       operation result (plist-get request :full)
+       (plist-get request :offset) (plist-get request :limit))))))
 
 ;;;###autoload
 (defun org-blog-exporter-run (request)
